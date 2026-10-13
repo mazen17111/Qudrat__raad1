@@ -216,6 +216,8 @@ export async function seedInitialPlatformData() {
         createdAt: new Date().toISOString()
       });
 
+      const baseTime = Date.now() - 3600000 * 24; // 24 hours ago
+
       // Seed items under res_analogy: video, quiz, file
       const item1Ref = doc(db, 'content_items', 'item_video_1');
       await setDoc(item1Ref, {
@@ -226,7 +228,7 @@ export async function seedInitialPlatformData() {
         description: 'الفيديو التأسيسي الأول لضبط جميع علاقات التناظر والوصول للـ 100%',
         url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
         durationMinutes: 15,
-        createdAt: new Date().toISOString()
+        createdAt: new Date(baseTime).toISOString()
       });
 
       const item2Ref = doc(db, 'content_items', 'item_exam_1');
@@ -275,7 +277,7 @@ export async function seedInitialPlatformData() {
             explanation: 'العلاقة: مكان الاستقرار والوعاء المخصص (السيف موضعه الغمد والأسد موضعه العرين).'
           }
         ],
-        createdAt: new Date().toISOString()
+        createdAt: new Date(baseTime + 60000 * 10).toISOString()
       });
 
       const item3Ref = doc(db, 'content_items', 'item_file_1');
@@ -288,7 +290,7 @@ export async function seedInitialPlatformData() {
         url: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
         fileName: 'relations_guide_raad.pdf',
         fileSize: '2.4 MB',
-        createdAt: new Date().toISOString()
+        createdAt: new Date(baseTime + 60000 * 20).toISOString()
       });
 
       // Quant item
@@ -317,7 +319,7 @@ export async function seedInitialPlatformData() {
             explanation: 'المحيط = 2 × (الطول + العرض) = 36، إذن الطول + العرض = 18. إذا كان العرض س والطول 2س => 3س = 18 => س = 6 (العرض)، والطول = 12. المساحة = 12 × 6 = 72 سم²'
           }
         ],
-        createdAt: new Date().toISOString()
+        createdAt: new Date(baseTime + 60000 * 30).toISOString()
       });
 
       const item5Ref = doc(db, 'content_items', 'item_video_2');
@@ -329,7 +331,7 @@ export async function seedInitialPlatformData() {
         description: 'شرح مبسط لقوانين الهندسة وحساب المساحات المعقدة',
         url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
         durationMinutes: 20,
-        createdAt: new Date().toISOString()
+        createdAt: new Date(baseTime + 60000 * 40).toISOString()
       });
     }
   } catch (err) {

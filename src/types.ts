@@ -147,5 +147,6 @@ export interface SystemSettings {
   announcement: SystemAnnouncement;
   liveStream: SystemLiveStream;
   activeTheme: ThemeConfig;
+  logoUrl?: string;
   updatedAt?: string;
 }

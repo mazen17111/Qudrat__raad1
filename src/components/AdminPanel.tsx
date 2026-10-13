@@ -212,6 +212,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     const unsubItems = onSnapshot(collection(db, 'content_items'), (snap) => {
       const list: ContentItem[] = [];
       snap.forEach((d) => list.push({ id: d.id, ...d.data() } as ContentItem));
+      // Sort strictly from oldest to newest (من الأقدم للأحدث)
+      list.sort((a, b) => {
+        const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        if (tA !== tB) return tA - tB;
+        return (a.id || '').localeCompare(b.id || '');
+      });
       setItems(list);
     });
 
@@ -930,7 +937,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
   };
 
   const currentResources = resources.filter((r) => r.sectionId === selectedSectionId);
-  const currentItems = items.filter((i) => i.resourceId === selectedResourceId);
+  const currentItems = items
+    .filter((i) => i.resourceId === selectedResourceId)
+    .sort((a, b) => {
+      const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      if (tA !== tB) return tA - tB;
+      return (a.id || '').localeCompare(b.id || '');
+    });
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col text-right">
@@ -1868,7 +1882,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
               {/* Items Column (Videos, Files, Exams with Edit & Delete) */}
               <div className="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-3xl p-4 space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-800 text-xs font-bold text-slate-400">
-                  <span>العناصر التعليمية (فيديوهات واختبارات وملفات)</span>
+                  <span className="flex items-center gap-1.5 text-slate-300">
+                    <span>العناصر التعليمية</span>
+                    <span className="text-[10px] text-amber-400/90 font-medium bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full">
+                      مرتبة من الأقدم للأحدث ⏳
+                    </span>
+                  </span>
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
@@ -1922,12 +1941,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                       لا توجد عناصر تعليمية بعد في هذا المصدر. اضغط "إضافة عنصر" لإضافة فيديو أو اختبار أو ملف!
                     </div>
                   ) : (
-                    currentItems.map((it) => (
+                    currentItems.map((it, itIdx) => (
                       <div
                         key={it.id}
                         className="p-3 rounded-2xl bg-slate-800/60 border border-slate-700/60 flex items-center justify-between gap-3 text-xs group"
                       >
                         <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                          {/* Chronological order sequence number (#1, #2, #3...) */}
+                          <span
+                            className="w-5 h-5 rounded-full text-[10px] font-black font-mono flex items-center justify-center shrink-0 bg-slate-700/80 text-amber-300 border border-slate-600"
+                            title={`العنصر رقم ${itIdx + 1} وفق تاريخ الإضافة (من الأقدم للأحدث)`}
+                          >
+                            {itIdx + 1}
+                          </span>
+
                           {it.type === 'video' ? (
                             <div className="p-2 rounded-xl bg-blue-500/20 text-blue-400 shrink-0">
                               <Video className="w-4 h-4" />
@@ -1943,12 +1970,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                           )}
                           <div className="flex-1 min-w-0">
                             <div className="font-bold text-white truncate">{it.title}</div>
-                            <div className="text-[10px] text-slate-400">
-                              {it.type === 'video'
-                                ? 'فيديو'
-                                : it.type === 'exam'
-                                ? `اختبار (${it.questions?.length || 0} أسئلة)`
-                                : `ملف (${it.fileSize || 'PDF'})`}
+                            <div className="text-[10px] text-slate-400 flex items-center gap-2">
+                              <span>
+                                {it.type === 'video'
+                                  ? 'فيديو'
+                                  : it.type === 'exam'
+                                  ? `اختبار (${it.questions?.length || 0} أسئلة)`
+                                  : `ملف (${it.fileSize || 'PDF'})`}
+                              </span>
+                              {it.createdAt && (
+                                <span className="text-[9px] text-slate-500 font-mono">
+                                  • {new Date(it.createdAt).toLocaleDateString('ar-SA')}
+                                </span>
+                              )}
                             </div>
                             {it.type === 'video' && ((it.linkedExamIds?.length || 0) > 0 || (it.linkedFileIds?.length || 0) > 0) && (
                               <div className="flex flex-wrap items-center gap-1 mt-1">

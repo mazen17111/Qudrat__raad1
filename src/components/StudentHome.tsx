@@ -179,6 +179,13 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
     const unsubItems = onSnapshot(collection(db, 'content_items'), (snap) => {
       const list: ContentItem[] = [];
       snap.forEach((d) => list.push({ id: d.id, ...d.data() } as ContentItem));
+      // Sort strictly from oldest to newest (من الأقدم للأحدث)
+      list.sort((a, b) => {
+        const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        if (tA !== tB) return tA - tB;
+        return (a.id || '').localeCompare(b.id || '');
+      });
       setContentItems(list);
     });
 
@@ -206,11 +213,18 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
     }
   }, [selectedSectionId, resources]);
 
-  // When selectedResourceId changes, default to first video if none active
+  // When selectedResourceId changes, default to first video (oldest video) if none active or if switching resource
   useEffect(() => {
     if (!selectedResourceId) return;
-    const vids = contentItems.filter((i) => i.resourceId === selectedResourceId && i.type === 'video');
-    if (vids.length > 0 && !activeVideo) {
+    const vids = contentItems
+      .filter((i) => i.resourceId === selectedResourceId && i.type === 'video')
+      .sort((a, b) => {
+        const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        if (tA !== tB) return tA - tB;
+        return (a.id || '').localeCompare(b.id || '');
+      });
+    if (vids.length > 0 && (!activeVideo || !vids.find((v) => v.id === activeVideo.id))) {
       setActiveVideo(vids[0]);
     }
   }, [selectedResourceId, contentItems]);
@@ -631,7 +645,14 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
 
   const activeTheme = systemSettings.activeTheme;
   const currentSectionResources = resources.filter((r) => r.sectionId === selectedSectionId);
-  const currentResourceItems = contentItems.filter((i) => i.resourceId === selectedResourceId);
+  const currentResourceItems = contentItems
+    .filter((i) => i.resourceId === selectedResourceId)
+    .sort((a, b) => {
+      const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      if (tA !== tB) return tA - tB;
+      return (a.id || '').localeCompare(b.id || '');
+    });
 
   const resourceVideos = currentResourceItems.filter((i) => i.type === 'video');
   const resourceExams = currentResourceItems.filter((i) => i.type === 'exam');
@@ -1073,7 +1094,7 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                     {resourceVideos.length === 0 ? (
                       <div className="py-8 text-center text-xs text-slate-500 font-bold">لا توجد فيديوهات في هذا المصدر</div>
                     ) : (
-                      resourceVideos.map((v) => {
+                      resourceVideos.map((v, vIdx) => {
                         const isWatched = currentUser.watchedVideoIds?.includes(v.id);
                         const isCurrent = activeVideo?.id === v.id;
 
@@ -1101,6 +1122,13 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                             }
                           >
                             <div className="flex items-center gap-2.5">
+                              {/* Sequence index badge (من الأقدم للأحدث #1, #2, #3...) */}
+                              <span className={`w-5 h-5 rounded-full text-[10px] font-black font-mono flex items-center justify-center shrink-0 ${
+                                isDarkMode ? 'bg-slate-700/80 text-white' : 'bg-slate-100 text-slate-800 border border-slate-200'
+                              }`}>
+                                {vIdx + 1}
+                              </span>
+
                               <div
                                 className="p-2 rounded-xl transition shrink-0"
                                 style={
@@ -1146,7 +1174,7 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                     {resourceExams.length === 0 ? (
                       <div className="py-8 text-center text-xs text-slate-500 font-bold">لا توجد اختبارات في هذا المصدر</div>
                     ) : (
-                      resourceExams.map((ex) => (
+                      resourceExams.map((ex, exIdx) => (
                         <div
                           key={ex.id}
                           className={`p-3.5 rounded-2xl border space-y-2.5 ${
@@ -1154,16 +1182,24 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                           }`}
                         >
                           <div className="flex items-start justify-between gap-2">
-                            <div>
-                              <h4 className={`text-xs md:text-sm font-black flex items-center gap-1.5 ${
-                                isDarkMode ? 'text-white' : 'text-slate-950'
+                            <div className="flex items-start gap-2">
+                              {/* Sequence index badge (من الأقدم للأحدث #1, #2, #3...) */}
+                              <span className={`w-5 h-5 rounded-full text-[10px] font-black font-mono flex items-center justify-center shrink-0 mt-0.5 ${
+                                isDarkMode ? 'bg-slate-700/80 text-white' : 'bg-slate-100 text-slate-800 border border-slate-200'
                               }`}>
-                                <Award className="w-4 h-4 text-amber-500" />
-                                <span>{ex.title}</span>
-                              </h4>
-                              {ex.description && (
-                                <p className={`text-[11px] mt-0.5 ${isDarkMode ? 'text-slate-400' : 'text-slate-600 font-medium'}`}>{ex.description}</p>
-                              )}
+                                {exIdx + 1}
+                              </span>
+                              <div>
+                                <h4 className={`text-xs md:text-sm font-black flex items-center gap-1.5 ${
+                                  isDarkMode ? 'text-white' : 'text-slate-950'
+                                }`}>
+                                  <Award className="w-4 h-4 text-amber-500" />
+                                  <span>{ex.title}</span>
+                                </h4>
+                                {ex.description && (
+                                  <p className={`text-[11px] mt-0.5 ${isDarkMode ? 'text-slate-400' : 'text-slate-600 font-medium'}`}>{ex.description}</p>
+                                )}
+                              </div>
                             </div>
                             <span className={`text-[10px] px-2 py-0.5 rounded font-black border ${
                               isDarkMode ? 'bg-slate-900 text-amber-300 border-slate-700' : 'bg-amber-50 text-amber-900 border-amber-300'
@@ -1191,7 +1227,7 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                     {resourceFiles.length === 0 ? (
                       <div className="py-8 text-center text-xs text-slate-500 font-bold">لا توجد ملفات في هذا المصدر</div>
                     ) : (
-                      resourceFiles.map((file) => (
+                      resourceFiles.map((file, fIdx) => (
                         <div
                           key={file.id}
                           className={`p-3 rounded-2xl border flex items-center justify-between text-xs ${
@@ -1199,6 +1235,12 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                           }`}
                         >
                           <div className="flex items-center gap-2.5">
+                            {/* Sequence index badge (من الأقدم للأحدث #1, #2, #3...) */}
+                            <span className={`w-5 h-5 rounded-full text-[10px] font-black font-mono flex items-center justify-center shrink-0 ${
+                              isDarkMode ? 'bg-slate-700/80 text-white' : 'bg-slate-100 text-slate-800 border border-slate-200'
+                            }`}>
+                              {fIdx + 1}
+                            </span>
                             <div className="p-2 rounded-xl bg-emerald-500/20 text-emerald-500">
                               <FileText className="w-4 h-4" />
                             </div>
@@ -1256,12 +1298,23 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
               }
 
               const isWatched = currentUser.watchedVideoIds?.includes(activeVideoItem.id);
-              const linkedExams = contentItems.filter(
-                (it) => it.type === 'exam' && activeVideoItem.linkedExamIds?.includes(it.id)
-              );
-              const linkedFiles = contentItems.filter(
-                (it) => it.type === 'file' && activeVideoItem.linkedFileIds?.includes(it.id)
-              );
+              // Linked exams and files sorted from oldest to newest
+              const linkedExams = contentItems
+                .filter((it) => it.type === 'exam' && activeVideoItem.linkedExamIds?.includes(it.id))
+                .sort((a, b) => {
+                  const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+                  const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+                  if (tA !== tB) return tA - tB;
+                  return (a.id || '').localeCompare(b.id || '');
+                });
+              const linkedFiles = contentItems
+                .filter((it) => it.type === 'file' && activeVideoItem.linkedFileIds?.includes(it.id))
+                .sort((a, b) => {
+                  const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+                  const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+                  if (tA !== tB) return tA - tB;
+                  return (a.id || '').localeCompare(b.id || '');
+                });
 
               return (
                 <div

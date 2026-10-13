@@ -13,6 +13,7 @@ import {
   Sparkles
 } from 'lucide-react';
 import { StudentUser, SystemSettings } from '../types';
+import { BrandLogo } from './BrandLogo';
 import { db } from '../firebase';
 import {
   collection,
@@ -183,13 +184,13 @@ export const AuthView: React.FC<AuthViewProps> = ({
     >
       {/* Top Navbar */}
       <header className="p-4 md:px-8 flex items-center justify-between max-w-7xl mx-auto w-full">
+        {/* Top-Right Logo & Brand Title */}
         <div className="flex items-center gap-3">
-          <div
-            className="w-10 h-10 rounded-2xl flex items-center justify-center text-white shadow-lg"
-            style={{ backgroundColor: activeTheme?.primary || '#2563eb' }}
-          >
-            <Zap className="w-6 h-6 fill-current text-amber-300" />
-          </div>
+          <BrandLogo
+            customLogoUrl={systemSettings.logoUrl}
+            size="md"
+            primaryColor={activeTheme?.primary || '#2563eb'}
+          />
           <div>
             <h1 className="text-lg md:text-xl font-black">منصة أقسام رعد</h1>
             <p className={`text-[11px] ${isDarkMode ? 'text-slate-400' : 'text-slate-500 font-bold'}`}>
@@ -222,13 +223,14 @@ export const AuthView: React.FC<AuthViewProps> = ({
               : 'bg-white border-slate-200 shadow-xl'
           }`}
         >
-          {/* Card Header */}
-          <div className="text-center space-y-2 mb-6">
-            <div
-              className="inline-flex p-3 rounded-2xl text-white shadow-md mb-1"
-              style={{ backgroundColor: activeTheme?.primary || '#2563eb' }}
-            >
-              <Zap className="w-8 h-8 fill-current text-amber-300" />
+          {/* Card Header with Brand Logo */}
+          <div className="text-center space-y-3 mb-6">
+            <div className="flex justify-center">
+              <BrandLogo
+                customLogoUrl={systemSettings.logoUrl}
+                size="lg"
+                primaryColor={activeTheme?.primary || '#2563eb'}
+              />
             </div>
             <h2 className="text-2xl font-black">
               {isSignUp ? 'إنشاء حساب جديد' : 'تسجيل الدخول إلى المنصة'}

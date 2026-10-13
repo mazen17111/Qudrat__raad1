@@ -7,9 +7,32 @@ import { StudentHome } from './components/StudentHome';
 import { AdminPanel } from './components/AdminPanel';
 import { AdminPasswordModal } from './components/AdminPasswordModal';
 
+const STUDENT_SESSION_KEY = 'raad_student_auth_session';
+const THEME_STORAGE_KEY = 'raad_platform_theme_dark';
+
 export default function App() {
-  const [currentUser, setCurrentUser] = useState<StudentUser | null>(null);
-  const [isDarkMode, setIsDarkMode] = useState<boolean>(true);
+  const [currentUser, setCurrentUser] = useState<StudentUser | null>(() => {
+    try {
+      const saved = localStorage.getItem(STUDENT_SESSION_KEY);
+      if (saved) {
+        return JSON.parse(saved) as StudentUser;
+      }
+    } catch (e) {
+      console.error('Failed to parse saved student session:', e);
+    }
+    return null;
+  });
+
+  const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
+    try {
+      const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
+      if (savedTheme !== null) {
+        return savedTheme === 'true';
+      }
+    } catch (e) {}
+    return true;
+  });
+
   const [isAdminOpen, setIsAdminOpen] = useState<boolean>(false);
   const [isAdminPasswordModalOpen, setIsAdminPasswordModalOpen] = useState<boolean>(false);
   const [systemSettings, setSystemSettings] = useState<SystemSettings>(DEFAULT_SETTINGS);
@@ -35,9 +58,16 @@ export default function App() {
 
     const unsubUser = onSnapshot(doc(db, 'users', currentUser.id), (docSnap) => {
       if (docSnap.exists()) {
-        setCurrentUser({ id: docSnap.id, ...docSnap.data() } as StudentUser);
+        const updated = { id: docSnap.id, ...docSnap.data() } as StudentUser;
+        setCurrentUser(updated);
+        try {
+          localStorage.setItem(STUDENT_SESSION_KEY, JSON.stringify(updated));
+        } catch (e) {}
       } else {
         // User was deleted by admin
+        try {
+          localStorage.removeItem(STUDENT_SESSION_KEY);
+        } catch (e) {}
         setCurrentUser(null);
       }
     });
@@ -45,8 +75,12 @@ export default function App() {
     return () => unsubUser();
   }, [currentUser?.id]);
 
-  // Sync dark / light theme to document HTML element
+  // Sync dark / light theme to document HTML element & localStorage
   useEffect(() => {
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, String(isDarkMode));
+    } catch (e) {}
+
     if (isDarkMode) {
       document.documentElement.classList.add('dark');
       document.documentElement.classList.remove('light');
@@ -69,6 +103,22 @@ export default function App() {
     setIsAdminOpen(true);
   };
 
+  // Student explicit logout: only when the student clicks logout does the session clear!
+  const handleStudentLogout = () => {
+    try {
+      localStorage.removeItem(STUDENT_SESSION_KEY);
+    } catch (e) {}
+    setCurrentUser(null);
+  };
+
+  // Student login success: save to state & localStorage
+  const handleStudentLoginSuccess = (user: StudentUser) => {
+    try {
+      localStorage.setItem(STUDENT_SESSION_KEY, JSON.stringify(user));
+    } catch (e) {}
+    setCurrentUser(user);
+  };
+
   return (
     <div className={isDarkMode ? 'dark min-h-screen bg-slate-950 text-white' : 'light min-h-screen bg-white text-slate-900'} dir="rtl">
       {/* If Admin Panel is open */}
@@ -81,7 +131,7 @@ export default function App() {
         /* If logged in: Student Main Interface */
         <StudentHome
           currentUser={currentUser}
-          onLogout={() => setCurrentUser(null)}
+          onLogout={handleStudentLogout}
           systemSettings={systemSettings}
           isDarkMode={isDarkMode}
           toggleDarkMode={toggleDarkMode}
@@ -90,7 +140,7 @@ export default function App() {
       ) : (
         /* If not logged in: Login and Sign Up View */
         <AuthView
-          onSuccessAuth={(user) => setCurrentUser(user)}
+          onSuccessAuth={handleStudentLoginSuccess}
           isDarkMode={isDarkMode}
           toggleDarkMode={toggleDarkMode}
           systemSettings={systemSettings}
