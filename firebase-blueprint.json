@@ -1,0 +1,182 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Student profile and subscription status",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "password": { "type": "string" },
+        "daysAllowed": { "type": "number" },
+        "subscriptionStartDate": { "type": "string" },
+        "subscriptionEndDate": { "type": "string" },
+        "isIndividuallyBlocked": { "type": "boolean" },
+        "isIndividuallyWhitelisted": { "type": "boolean" },
+        "watchedVideoIds": { "type": "array" },
+        "totalExamsTaken": { "type": "number" },
+        "averageScore": { "type": "number" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["uid", "name", "email", "password"]
+    },
+    "BannedEmail": {
+      "title": "BannedEmail",
+      "description": "Permanently banned email addresses",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "bannedAt": { "type": "string" },
+        "reason": { "type": "string" }
+      },
+      "required": ["email"]
+    },
+    "Folder": {
+      "title": "Folder",
+      "description": "Student custom or default mistakes folder",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "isDefaultMistakesFolder": { "type": "boolean" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "title"]
+    },
+    "FolderQuestion": {
+      "title": "FolderQuestion",
+      "description": "Questions saved inside a student folder",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "folderId": { "type": "string" },
+        "userId": { "type": "string" },
+        "questionText": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "options": { "type": "array" },
+        "correctOptionIndex": { "type": "number" },
+        "explanation": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "folderId", "userId", "questionText", "options"]
+    },
+    "Section": {
+      "title": "Section",
+      "description": "Educational main sections",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "order": { "type": "number" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "title"]
+    },
+    "Resource": {
+      "title": "Resource",
+      "description": "Resources under a section",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "sectionId": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "order": { "type": "number" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "sectionId", "title"]
+    },
+    "ContentItem": {
+      "title": "ContentItem",
+      "description": "Videos, Files, and Exams inside resources",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "resourceId": { "type": "string" },
+        "type": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "url": { "type": "string" },
+        "isExternal": { "type": "boolean" },
+        "questions": { "type": "array" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "resourceId", "type", "title"]
+    },
+    "ExamAttempt": {
+      "title": "ExamAttempt",
+      "description": "Records of exams completed by students",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "examId": { "type": "string" },
+        "examTitle": { "type": "string" },
+        "score": { "type": "number" },
+        "totalQuestions": { "type": "number" },
+        "percentage": { "type": "number" },
+        "isTimed": { "type": "boolean" },
+        "durationSeconds": { "type": "number" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "score", "totalQuestions", "percentage"]
+    },
+    "SystemSettings": {
+      "title": "SystemSettings",
+      "description": "Global platform configurations, maintenance lock, announcements, live stream, and active theme",
+      "type": "object",
+      "properties": {
+        "isPlatformLocked": { "type": "boolean" },
+        "lockReason": { "type": "string" },
+        "lockMessage": { "type": "string" },
+        "announcement": { "type": "object" },
+        "liveStream": { "type": "object" },
+        "activeTheme": { "type": "object" },
+        "updatedAt": { "type": "string" }
+      }
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "User" },
+      "description": "Student profiles and status"
+    },
+    "/banned_emails/{emailId}": {
+      "schema": { "$ref": "BannedEmail" },
+      "description": "Permanently deleted and banned accounts"
+    },
+    "/folders/{folderId}": {
+      "schema": { "$ref": "Folder" },
+      "description": "Student folders including the immutable mistakes folder"
+    },
+    "/folder_questions/{questionId}": {
+      "schema": { "$ref": "FolderQuestion" },
+      "description": "Questions saved into student folders"
+    },
+    "/sections/{sectionId}": {
+      "schema": { "$ref": "Section" },
+      "description": "Course sections"
+    },
+    "/resources/{resourceId}": {
+      "schema": { "$ref": "Resource" },
+      "description": "Course resources"
+    },
+    "/content_items/{itemId}": {
+      "schema": { "$ref": "ContentItem" },
+      "description": "Videos, Files, and Exams"
+    },
+    "/exam_attempts/{attemptId}": {
+      "schema": { "$ref": "ExamAttempt" },
+      "description": "Student exam attempts and scores"
+    },
+    "/system_settings/{settingId}": {
+      "schema": { "$ref": "SystemSettings" },
+      "description": "Platform global settings and themes"
+    }
+  }
+}

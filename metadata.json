@@ -1,0 +1,6 @@
+{
+  "name": "منصة أقسام رعد",
+  "description": "منصة تعليمية متكاملة تشمل الفيديوهات والاختبارات التفاعلية والسبورة الذكية والإحصائيات ومجلدات الطلاب ولوحة تحكم شاملة.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

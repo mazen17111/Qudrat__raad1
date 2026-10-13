@@ -1,0 +1,93 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Cairo', 'Tajawal', system-ui, sans-serif;
+  }
+}
+
+/* Custom subtle scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.3);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.5);
+}
+
+/* ========================================================
+   الوضع النهاري (Light / Daytime Mode) - جعل الكلام كاملاً باللون الأسود
+   ======================================================== */
+
+html.light,
+html:not(.dark),
+body:not(.dark) {
+  background-color: #f1f5f9;
+  color: #000000 !important;
+}
+
+/* In daytime mode, force all typography to rich, deep black */
+html.light h1,
+html.light h2,
+html.light h3,
+html.light h4,
+html.light h5,
+html.light h6,
+html.light p,
+html.light span:not(.badge-colored):not([class*="bg-emerald"]):not([class*="bg-rose"]):not([class*="bg-red"]):not([class*="bg-blue"]):not([class*="bg-amber"]):not([class*="bg-indigo"]):not([class*="bg-gradient"]):not([class*="text-emerald"]):not([class*="text-rose"]):not([class*="text-red"]):not([class*="text-blue"]):not([class*="text-amber"]),
+html.light label,
+html.light div:not([class*="bg-blue-600"]):not([class*="bg-emerald-600"]):not([class*="bg-rose-600"]):not([class*="bg-amber-600"]):not([class*="bg-gradient"]) > span,
+html.light .text-slate-400,
+html.light .text-slate-500,
+html.light .text-slate-600,
+html.light .text-slate-700,
+html.light .text-slate-800,
+html.light .text-slate-900,
+html.light .text-gray-400,
+html.light .text-gray-500,
+html.light .text-gray-600,
+html.light .text-gray-700,
+html.light .text-gray-800,
+html.light .text-gray-900,
+html.light .text-slate-300,
+html.light .text-slate-200 {
+  color: #000000 !important;
+}
+
+/* Hardcoded white text elements inside cards become pure black in light mode */
+html.light div:not([class*="bg-blue-600"]):not([class*="bg-emerald-600"]):not([class*="bg-rose-600"]):not([class*="bg-amber-500"]):not([class*="bg-gradient"]) > .text-white,
+html.light button:not([class*="bg-blue"]):not([class*="bg-emerald"]):not([class*="bg-rose"]):not([class*="bg-amber"]):not([class*="bg-red"]):not([class*="bg-gradient"]) .text-white,
+html.light .light-text-black {
+  color: #000000 !important;
+}
+
+/* Ensure inputs and textareas in light mode have pure black text */
+html.light input,
+html.light textarea,
+html.light select {
+  color: #000000 !important;
+  background-color: #ffffff !important;
+  border-color: #cbd5e1 !important;
+}
+
+html.light input::placeholder,
+html.light textarea::placeholder {
+  color: #475569 !important;
+}
+
+/* Ensure cards in light mode have high contrast white backgrounds and subtle borders */
+html.light .light-card {
+  background-color: #ffffff !important;
+  border-color: #e2e8f0 !important;
+  color: #000000 !important;
+}
