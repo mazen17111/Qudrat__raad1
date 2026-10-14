@@ -334,6 +334,39 @@ export async function seedInitialPlatformData() {
         createdAt: new Date(baseTime + 60000 * 40).toISOString()
       });
     }
+
+    // Ensure section "حمادة" is created as requested by the user
+    try {
+      const hamadaDocRef = doc(db, 'sections', 'sec_hamada');
+      const hamadaSnap = await getDoc(hamadaDocRef);
+      if (!hamadaSnap.exists()) {
+        const allSec = await getDocs(collection(db, 'sections'));
+        const nextOrder = allSec.size + 1;
+        await setDoc(hamadaDocRef, {
+          id: 'sec_hamada',
+          title: 'حمادة',
+          description: 'قسم حمادة التعليمي الخاص',
+          order: nextOrder,
+          createdAt: new Date().toISOString()
+        }, { merge: true });
+
+        // Add a default resource under "حمادة" so the user can immediately add content
+        const resHamadaRef = doc(db, 'resources', 'res_hamada_main');
+        const resHamadaSnap = await getDoc(resHamadaRef);
+        if (!resHamadaSnap.exists()) {
+          await setDoc(resHamadaRef, {
+            id: 'res_hamada_main',
+            sectionId: 'sec_hamada',
+            title: 'المحاضرات والتدريبات الأساسية',
+            description: 'الملفات والفيديوهات والاختبارات التابعة لقسم حمادة',
+            order: 1,
+            createdAt: new Date().toISOString()
+          }, { merge: true });
+        }
+      }
+    } catch (e) {
+      console.warn("Could not seed Hamada section:", e);
+    }
   } catch (err) {
     console.warn("Seeding notice (might already exist):", err);
   }

@@ -36,6 +36,10 @@ import {
   Target,
   Send,
   RefreshCw,
+  Download,
+  ShieldCheck,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
 import {
   StudentUser,
@@ -148,6 +152,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
 
   // Link to video from within exam or file modal
   const [attachToVideoId, setAttachToVideoId] = useState('');
+
+  // Dedicated Sub-Tab for separating Videos, Exams, and Files in Admin Panel
+  const [adminContentSubTab, setAdminContentSubTab] = useState<'all' | 'video' | 'exam' | 'file'>('all');
+  const [isExpandedFullWidth, setIsExpandedFullWidth] = useState<boolean>(false);
+  const [modalSectionId, setModalSectionId] = useState<string>('');
+  const [modalResourceId, setModalResourceId] = useState<string>('');
 
   // Item Add & Edit Modals
   const [isAddingItem, setIsAddingItem] = useState(false);
@@ -557,7 +567,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
 
     const reader = new FileReader();
     reader.onload = (event) => {
-      setItemFileData(event.target?.result as string);
+      const dataUri = event.target?.result as string;
+      setItemFileData(dataUri);
+      if (!itemUrl) {
+        setItemUrl(dataUri);
+      }
     };
     reader.readAsDataURL(file);
   };
@@ -603,7 +617,29 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
 
   const handleSaveContentItem = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!itemTitle.trim() || !selectedResourceId) {
+    let targetResId = modalResourceId || selectedResourceId;
+    if (!targetResId) {
+      const secId = modalSectionId || selectedSectionId || (sections[0]?.id);
+      const existingRes = resources.find((r) => r.sectionId === secId);
+      if (existingRes) {
+        targetResId = existingRes.id;
+      } else if (secId) {
+        const secObj = sections.find((s) => s.id === secId);
+        const newResRef = doc(collection(db, 'resources'));
+        await setDoc(newResRef, {
+          id: newResRef.id,
+          sectionId: secId,
+          title: `المحتوى العام (${secObj?.title || 'قسم جديد'})`,
+          description: 'تم إنشاؤه تلقائياً لتضمين المحتوى والمحافظة على ملفات المنصة',
+          order: 1,
+          createdAt: new Date().toISOString(),
+        });
+        targetResId = newResRef.id;
+        setSelectedResourceId(targetResId);
+      }
+    }
+
+    if (!itemTitle.trim() || !targetResId) {
       notifySave('يرجى تحديد المصدر وكتابة عنوان العنصر');
       return;
     }
@@ -612,7 +648,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       const targetId = editingItem ? editingItem.id : doc(collection(db, 'content_items')).id;
       const basePayload: any = {
         id: targetId,
-        resourceId: selectedResourceId,
+        resourceId: targetResId,
         type: itemType,
         title: itemTitle.trim(),
         description: itemDesc.trim(),
@@ -621,13 +657,23 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       };
 
       if (itemType === 'video') {
-        basePayload.url = itemUrl || itemFileData || 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
+        const finalUrl = itemUrl || itemFileData || (editingItem ? editingItem.url : '') || 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
+        basePayload.url = finalUrl;
+        const finalFileData = itemFileData || (editingItem ? (editingItem.fileData || '') : '');
+        if (finalFileData && finalFileData.length < 850000) {
+          basePayload.fileData = finalFileData;
+        }
         basePayload.linkedExamIds = linkedExamIds;
         basePayload.linkedFileIds = linkedFileIds;
       } else if (itemType === 'file') {
-        basePayload.url = itemUrl || itemFileData;
-        basePayload.fileName = itemFileName || 'document.pdf';
-        basePayload.fileSize = itemFileSize || '1.5 MB';
+        const finalUrl = itemUrl || itemFileData || (editingItem ? editingItem.url : '');
+        basePayload.url = finalUrl;
+        const finalFileData = itemFileData || (editingItem ? (editingItem.fileData || '') : '');
+        if (finalFileData && finalFileData.length < 850000) {
+          basePayload.fileData = finalFileData;
+        }
+        basePayload.fileName = itemFileName || (editingItem ? editingItem.fileName : '') || 'document.pdf';
+        basePayload.fileSize = itemFileSize || (editingItem ? editingItem.fileSize : '') || '1.5 MB';
       } else if (itemType === 'exam') {
         basePayload.isExternal = isExternalExam;
         if (isExternalExam) {
@@ -686,7 +732,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         }
       }
 
-      await setDoc(doc(db, 'content_items', targetId), basePayload);
+      await setDoc(doc(db, 'content_items', targetId), basePayload, { merge: true });
       setIsAddingItem(false);
       setEditingItem(null);
       setItemTitle('');
@@ -709,7 +755,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
           explanation: '',
         },
       ]);
-      notifySave(editingItem ? 'تم تعديل المحتوى وحفظ الأسئلة بنجاح!' : 'تمت إضافة المحتوى وحفظ جميع الأسئلة بنجاح!');
+      notifySave(
+        editingItem
+          ? 'تم حفظ التعديلات بنجاح مع الحفاظ التام على الملف الأصلي ✓'
+          : 'تم الرفع وحفظ المحتوى على المنصة بنجاح دون أي مساس بالملفات السابقة ✓'
+      );
     } catch (err) {
       console.error(err);
       notifySave('حدث خطأ أثناء حفظ المحتوى');
@@ -766,12 +816,48 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     }
   };
 
+  const handleOpenAddItem = (type: 'video' | 'exam' | 'file', targetResId?: string) => {
+    setEditingItem(null);
+    setItemType(type);
+    const chosenResId = targetResId || selectedResourceId || (currentResources[0]?.id) || (resources[0]?.id) || '';
+    setModalResourceId(chosenResId);
+    const chosenRes = resources.find((r) => r.id === chosenResId);
+    setModalSectionId(chosenRes?.sectionId || selectedSectionId || (sections[0]?.id) || '');
+    setItemTitle('');
+    setItemDesc('');
+    setItemUrl('');
+    setItemFileData('');
+    setItemFileName('');
+    setItemFileSize('');
+    setIsExternalExam(false);
+    setExamDurationMinutes(15);
+    setExamTargetPercentage(90);
+    setLinkedExamIds([]);
+    setLinkedFileIds([]);
+    setAttachToVideoId('');
+    setExamQuestions([
+      {
+        id: 'q_1',
+        questionText: '',
+        imageUrl: '',
+        options: ['', '', '', ''],
+        correctOptionIndex: 0,
+        explanation: '',
+      },
+    ]);
+    setIsAddingItem(true);
+  };
+
   const handleOpenEditItem = (it: ContentItem) => {
     setEditingItem(it);
     setItemType(it.type);
+    setModalResourceId(it.resourceId);
+    const chosenRes = resources.find((r) => r.id === it.resourceId);
+    setModalSectionId(chosenRes?.sectionId || selectedSectionId);
     setItemTitle(it.title);
     setItemDesc(it.description || '');
     setItemUrl(it.url || '');
+    setItemFileData(it.fileData || '');
     setItemFileName(it.fileName || '');
     setItemFileSize(it.fileSize || '');
     setIsExternalExam(it.isExternal || false);
@@ -945,6 +1031,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       if (tA !== tB) return tA - tB;
       return (a.id || '').localeCompare(b.id || '');
     });
+
+  const currentVideos = currentItems.filter((i) => i.type === 'video');
+  const currentExams = currentItems.filter((i) => i.type === 'exam');
+  const currentFiles = currentItems.filter((i) => i.type === 'file');
+
+  const displayedAdminItems = adminContentSubTab === 'all'
+    ? currentItems
+    : adminContentSubTab === 'video'
+    ? currentVideos
+    : adminContentSubTab === 'exam'
+    ? currentExams
+    : currentFiles;
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col text-right">
@@ -1774,7 +1872,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
               </div>
 
               {/* Resources Column */}
-              <div className="lg:col-span-4 bg-slate-900 border border-slate-800 rounded-3xl p-4 space-y-3">
+              <div className="lg:col-span-3 bg-slate-900 border border-slate-800 rounded-3xl p-4 space-y-3">
                 <div className="flex items-center justify-between pb-2 border-b border-slate-800 text-xs font-bold text-slate-400">
                   <span>المصادر التابعة للقسم</span>
                   {selectedSectionId && (
@@ -1879,16 +1977,57 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                 </div>
               </div>
 
-              {/* Items Column (Videos, Files, Exams with Edit & Delete) */}
-              <div className="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-3xl p-4 space-y-3">
-                <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-800 text-xs font-bold text-slate-400">
-                  <span className="flex items-center gap-1.5 text-slate-300">
-                    <span>العناصر التعليمية</span>
-                    <span className="text-[10px] text-amber-400/90 font-medium bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full">
-                      مرتبة من الأقدم للأحدث ⏳
-                    </span>
-                  </span>
-                  <div className="flex items-center gap-2">
+              {/* Items Column: Partitioned into Videos, Exams, and Files each part completely on its own */}
+              <div className="lg:col-span-6 bg-slate-900 border border-slate-800 rounded-3xl p-4 md:p-5 space-y-4">
+                {/* Column Top Header */}
+                <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-800">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-black text-white text-base">العناصر التعليمية</span>
+                      <span className="text-[10px] text-amber-400 font-bold bg-amber-500/10 border border-amber-500/30 px-2.5 py-0.5 rounded-full">
+                        مرتبة من الأقدم للأحدث ⏳
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-400">
+                      كل جزء مقسم في قسم مخصص: فيديوهات 🎥 | اختبارات 📝 | ملفات ومستندات 📁
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {selectedResourceId && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenAddItem('video')}
+                          className="px-2.5 py-1.5 rounded-xl bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/40 text-[11px] font-black flex items-center gap-1 transition cursor-pointer"
+                          title="رفع وإضافة فيديو تعليمي جديد لهذا المصدر"
+                        >
+                          <Video className="w-3.5 h-3.5" />
+                          <span>+ فيديو</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleOpenAddItem('exam')}
+                          className="px-2.5 py-1.5 rounded-xl bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/40 text-[11px] font-black flex items-center gap-1 transition cursor-pointer"
+                          title="إنشاء وإضافة اختبار تفاعلي جديد لهذا المصدر"
+                        >
+                          <Award className="w-3.5 h-3.5" />
+                          <span>+ اختبار</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleOpenAddItem('file')}
+                          className="px-2.5 py-1.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 text-[11px] font-black flex items-center gap-1 transition cursor-pointer"
+                          title="رفع وإضافة ملف أو ملخص جديد لهذا المصدر"
+                        >
+                          <FileText className="w-3.5 h-3.5" />
+                          <span>+ ملف</span>
+                        </button>
+                      </>
+                    )}
+
                     <button
                       type="button"
                       onClick={() => {
@@ -1898,146 +2037,464 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                         }
                         setIsQuickLinkModalOpen(true);
                       }}
-                      className="px-2.5 py-1 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-[11px] shadow-sm flex items-center gap-1.5 transition cursor-pointer"
+                      className="px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-[11px] shadow-sm flex items-center gap-1 transition cursor-pointer"
                       title="ربط اختبار أو ملف باسم الفيديو ليظهر تحته للطلاب"
                     >
                       <LinkIcon className="w-3.5 h-3.5" />
-                      <span>ربط اختبار وملف بفيديو 🔗</span>
+                      <span>ربط 🔗</span>
                     </button>
-                    {selectedResourceId && (
-                      <button
-                        onClick={() => {
-                          setEditingItem(null);
-                          setItemType('video');
-                          setItemTitle('');
-                          setItemDesc('');
-                          setItemUrl('');
-                          setItemFileData('');
-                          setItemFileName('');
-                          setExamQuestions([
-                            {
-                              id: 'q_1',
-                              questionText: '',
-                              imageUrl: '',
-                              options: ['', '', '', ''],
-                              correctOptionIndex: 0,
-                              explanation: '',
-                            },
-                          ]);
-                          setIsAddingItem(true);
-                        }}
-                        className="text-amber-400 hover:text-amber-300 font-bold flex items-center gap-1 text-xs"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        <span>إضافة عنصر</span>
-                      </button>
-                    )}
                   </div>
                 </div>
 
-                <div className="space-y-2 max-h-[500px] overflow-y-auto pr-1">
-                  {currentItems.length === 0 ? (
-                    <div className="py-12 text-center text-xs text-slate-500">
-                      لا توجد عناصر تعليمية بعد في هذا المصدر. اضغط "إضافة عنصر" لإضافة فيديو أو اختبار أو ملف!
-                    </div>
-                  ) : (
-                    currentItems.map((it, itIdx) => (
-                      <div
-                        key={it.id}
-                        className="p-3 rounded-2xl bg-slate-800/60 border border-slate-700/60 flex items-center justify-between gap-3 text-xs group"
-                      >
-                        <div className="flex items-center gap-2.5 flex-1 min-w-0">
-                          {/* Chronological order sequence number (#1, #2, #3...) */}
-                          <span
-                            className="w-5 h-5 rounded-full text-[10px] font-black font-mono flex items-center justify-center shrink-0 bg-slate-700/80 text-amber-300 border border-slate-600"
-                            title={`العنصر رقم ${itIdx + 1} وفق تاريخ الإضافة (من الأقدم للأحدث)`}
-                          >
-                            {itIdx + 1}
-                          </span>
+                {/* ================= CATEGORY SUB-TABS (فيديوهات، اختبارات، ملفات، أو الأجزاء الثلاثة معاً) ================= */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 p-1 rounded-2xl bg-slate-800/80 border border-slate-700/80 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setAdminContentSubTab('all')}
+                    className={`py-2 px-1.5 rounded-xl transition flex items-center justify-center gap-1 font-black text-[11px] ${
+                      adminContentSubTab === 'all'
+                        ? 'bg-slate-700 text-white shadow-md'
+                        : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                    }`}
+                  >
+                    <Layers className="w-3.5 h-3.5" />
+                    <span>الأجزاء الثلاثة معاً ({currentItems.length})</span>
+                  </button>
 
-                          {it.type === 'video' ? (
-                            <div className="p-2 rounded-xl bg-blue-500/20 text-blue-400 shrink-0">
-                              <Video className="w-4 h-4" />
-                            </div>
-                          ) : it.type === 'exam' ? (
-                            <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400 shrink-0">
-                              <Award className="w-4 h-4" />
-                            </div>
-                          ) : (
-                            <div className="p-2 rounded-xl bg-emerald-500/20 text-emerald-400 shrink-0">
-                              <FileText className="w-4 h-4" />
-                            </div>
-                          )}
-                          <div className="flex-1 min-w-0">
-                            <div className="font-bold text-white truncate">{it.title}</div>
-                            <div className="text-[10px] text-slate-400 flex items-center gap-2">
-                              <span>
-                                {it.type === 'video'
-                                  ? 'فيديو'
-                                  : it.type === 'exam'
-                                  ? `اختبار (${it.questions?.length || 0} أسئلة)`
-                                  : `ملف (${it.fileSize || 'PDF'})`}
+                  <button
+                    type="button"
+                    onClick={() => setAdminContentSubTab('video')}
+                    className={`py-2 px-1.5 rounded-xl transition flex items-center justify-center gap-1 font-black text-[11px] ${
+                      adminContentSubTab === 'video'
+                        ? 'bg-blue-600 text-white shadow-md'
+                        : 'text-slate-400 hover:text-blue-300 hover:bg-slate-800'
+                    }`}
+                  >
+                    <Video className="w-3.5 h-3.5" />
+                    <span>قسم الفيديوهات ({currentVideos.length})</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setAdminContentSubTab('exam')}
+                    className={`py-2 px-1.5 rounded-xl transition flex items-center justify-center gap-1 font-black text-[11px] ${
+                      adminContentSubTab === 'exam'
+                        ? 'bg-amber-600 text-white shadow-md'
+                        : 'text-slate-400 hover:text-amber-300 hover:bg-slate-800'
+                    }`}
+                  >
+                    <Award className="w-3.5 h-3.5" />
+                    <span>قسم الاختبارات ({currentExams.length})</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setAdminContentSubTab('file')}
+                    className={`py-2 px-1.5 rounded-xl transition flex items-center justify-center gap-1 font-black text-[11px] ${
+                      adminContentSubTab === 'file'
+                        ? 'bg-emerald-600 text-white shadow-md'
+                        : 'text-slate-400 hover:text-emerald-300 hover:bg-slate-800'
+                    }`}
+                  >
+                    <FileText className="w-3.5 h-3.5" />
+                    <span>قسم الملفات ({currentFiles.length})</span>
+                  </button>
+                </div>
+
+                {/* Sub-tab Explanatory Banner */}
+                <div className="flex items-center justify-between text-[11px] text-slate-400 px-1 pt-0.5">
+                  <span className="font-bold text-slate-300 flex items-center gap-1.5">
+                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>
+                      {adminContentSubTab === 'all'
+                        ? 'عرض الأقسام الثلاثة مقسمة كل جزء بمستطيله الخاص'
+                        : adminContentSubTab === 'video'
+                        ? `قسم الفيديوهات لوحده (${currentVideos.length} فيديو)`
+                        : adminContentSubTab === 'exam'
+                        ? `قسم الاختبارات لوحده (${currentExams.length} اختبار)`
+                        : `قسم الملفات والمستندات لوحده (${currentFiles.length} ملف)`}
+                    </span>
+                  </span>
+                  <span className="text-[10px] text-amber-400 font-mono">
+                    ترتيب المحتوى: من الأقدم للأحدث ⏳
+                  </span>
+                </div>
+
+                {/* ================= CONTENT SECTIONS RENDERER ================= */}
+                <div className="space-y-4 max-h-[620px] overflow-y-auto pr-1">
+                  {/* ================= 1. قسم الفيديوهات التعليمية (VIDEOS SECTION) ================= */}
+                  {(adminContentSubTab === 'all' || adminContentSubTab === 'video') && (
+                    <div className="rounded-2xl border-2 border-blue-500/30 bg-blue-950/20 p-4 space-y-3 shadow-lg shadow-blue-950/20">
+                      <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-blue-500/20">
+                        <div className="flex items-center gap-2">
+                          <div className="p-1.5 rounded-xl bg-blue-500/20 text-blue-400">
+                            <Video className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <h4 className="text-xs font-black text-white flex items-center gap-1.5">
+                              <span>قسم الفيديوهات التعليمية</span>
+                              <span className="text-[10px] px-2 py-0.2 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                                {currentVideos.length} فيديو
                               </span>
-                              {it.createdAt && (
-                                <span className="text-[9px] text-slate-500 font-mono">
-                                  • {new Date(it.createdAt).toLocaleDateString('ar-SA')}
-                                </span>
-                              )}
-                            </div>
-                            {it.type === 'video' && ((it.linkedExamIds?.length || 0) > 0 || (it.linkedFileIds?.length || 0) > 0) && (
-                              <div className="flex flex-wrap items-center gap-1 mt-1">
-                                {it.linkedExamIds && it.linkedExamIds.length > 0 && (
-                                  <span className="text-[9px] bg-amber-500/20 text-amber-300 border border-amber-500/40 px-1.5 py-0.5 rounded font-bold">
-                                    📝 اختبار مربوط ({it.linkedExamIds.length})
-                                  </span>
-                                )}
-                                {it.linkedFileIds && it.linkedFileIds.length > 0 && (
-                                  <span className="text-[9px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-1.5 py-0.5 rounded font-bold">
-                                    📁 ملف مربوط ({it.linkedFileIds.length})
-                                  </span>
-                                )}
-                              </div>
-                            )}
+                            </h4>
+                            <span className="text-[10px] text-blue-300/70">
+                              مرتبة من الأقدم للأحدث وفق تاريخ الإضافة
+                            </span>
                           </div>
                         </div>
 
-                        {/* Edit & Delete & Link Item Actions */}
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          {it.type === 'video' && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                handleSelectQuickLinkVideo(it.id);
-                                setIsQuickLinkModalOpen(true);
-                              }}
-                              className="px-2 py-1 rounded-lg text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 border border-amber-500/30 transition flex items-center gap-1 text-[10px] font-bold"
-                              title="ربط اختبار أو ملف بهذا الفيديو"
-                            >
-                              <LinkIcon className="w-3 h-3" />
-                              <span>ربط</span>
-                            </button>
-                          )}
-                          <button
-                            onClick={() => handleOpenEditItem(it)}
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-amber-400 hover:bg-slate-700 transition"
-                            title="تعديل هذا العنصر"
-                          >
-                            <Edit className="w-3.5 h-3.5" />
-                          </button>
+                        {selectedResourceId && (
                           <button
                             type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDeleteItem(it.id, it.title, it.type);
-                            }}
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition"
-                            title="حذف هذا العنصر"
+                            onClick={() => handleOpenAddItem('video')}
+                            className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-black text-[11px] flex items-center gap-1 shadow transition cursor-pointer"
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
+                            <Plus className="w-3.5 h-3.5" />
+                            <span>رفع فيديو جديد</span>
                           </button>
-                        </div>
+                        )}
                       </div>
-                    ))
+
+                      {currentVideos.length === 0 ? (
+                        <div className="py-6 px-4 rounded-xl bg-slate-900/60 border border-dashed border-blue-500/30 text-center space-y-2">
+                          <p className="text-xs text-slate-400 font-bold">لا توجد فيديوهات في هذا المصدر حتى الآن</p>
+                          {selectedResourceId && (
+                            <button
+                              type="button"
+                              onClick={() => handleOpenAddItem('video')}
+                              className="px-3.5 py-1.5 rounded-xl bg-blue-600/30 hover:bg-blue-600/40 text-blue-300 border border-blue-500/40 text-[11px] font-black inline-flex items-center gap-1"
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                              <span>إضافة أول فيديو لهذا المصدر</span>
+                            </button>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {currentVideos.map((v, vIdx) => (
+                            <div
+                              key={v.id}
+                              className="p-3 rounded-xl bg-slate-900/90 border border-blue-500/20 hover:border-blue-500/50 flex items-center justify-between gap-3 text-xs transition"
+                            >
+                              <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                                <span
+                                  className="w-5 h-5 rounded-full text-[10px] font-black font-mono flex items-center justify-center shrink-0 bg-blue-500/20 text-blue-300 border border-blue-500/40"
+                                  title={`الفيديو رقم ${vIdx + 1} وفق تاريخ الإضافة (من الأقدم للأحدث)`}
+                                >
+                                  {vIdx + 1}
+                                </span>
+                                <div className="p-2 rounded-xl bg-blue-500/20 text-blue-400 shrink-0">
+                                  <Video className="w-4 h-4" />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="font-bold text-white truncate">{v.title}</div>
+                                  <div className="text-[10px] text-slate-400 flex flex-wrap items-center gap-2 mt-0.5">
+                                    <span className="font-bold text-blue-300">
+                                      🎥 مدة الفيديو: {v.durationMinutes || 15} دقيقة
+                                    </span>
+                                    {v.createdAt && (
+                                      <span className="text-[9px] text-slate-500 font-mono">
+                                        • أضيف: {new Date(v.createdAt).toLocaleDateString('ar-SA')}
+                                      </span>
+                                    )}
+                                  </div>
+                                  {((v.linkedExamIds?.length || 0) > 0 || (v.linkedFileIds?.length || 0) > 0) && (
+                                    <div className="flex flex-wrap items-center gap-1 mt-1">
+                                      {v.linkedExamIds && v.linkedExamIds.length > 0 && (
+                                        <span className="text-[9px] bg-amber-500/20 text-amber-300 border border-amber-500/40 px-1.5 py-0.5 rounded font-bold">
+                                          📝 اختبار مربوط ({v.linkedExamIds.length})
+                                        </span>
+                                      )}
+                                      {v.linkedFileIds && v.linkedFileIds.length > 0 && (
+                                        <span className="text-[9px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-1.5 py-0.5 rounded font-bold">
+                                          📁 ملف مربوط ({v.linkedFileIds.length})
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    handleSelectQuickLinkVideo(v.id);
+                                    setIsQuickLinkModalOpen(true);
+                                  }}
+                                  className="px-2 py-1 rounded-lg text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 border border-amber-500/30 transition flex items-center gap-1 text-[10px] font-bold"
+                                  title="ربط اختبار أو ملف بهذا الفيديو"
+                                >
+                                  <LinkIcon className="w-3 h-3" />
+                                  <span>ربط</span>
+                                </button>
+                                <button
+                                  onClick={() => handleOpenEditItem(v)}
+                                  className="p-1.5 rounded-lg text-slate-400 hover:text-blue-400 hover:bg-slate-800 transition"
+                                  title="تعديل هذا الفيديو"
+                                >
+                                  <Edit className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDeleteItem(v.id, v.title, 'video');
+                                  }}
+                                  className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition"
+                                  title="حذف هذا الفيديو"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* ================= 2. قسم الاختبارات التفاعلية (EXAMS SECTION) ================= */}
+                  {(adminContentSubTab === 'all' || adminContentSubTab === 'exam') && (
+                    <div className="rounded-2xl border-2 border-amber-500/30 bg-amber-950/20 p-4 space-y-3 shadow-lg shadow-amber-950/20">
+                      <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-amber-500/20">
+                        <div className="flex items-center gap-2">
+                          <div className="p-1.5 rounded-xl bg-amber-500/20 text-amber-400">
+                            <Award className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <h4 className="text-xs font-black text-white flex items-center gap-1.5">
+                              <span>قسم الاختبارات التفاعلية</span>
+                              <span className="text-[10px] px-2 py-0.2 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                {currentExams.length} اختبار
+                              </span>
+                            </h4>
+                            <span className="text-[10px] text-amber-300/70">
+                              مرتبة من الأقدم للأحدث وفق تاريخ الإضافة
+                            </span>
+                          </div>
+                        </div>
+
+                        {selectedResourceId && (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenAddItem('exam')}
+                            className="px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-slate-950 font-black text-[11px] flex items-center gap-1 shadow transition cursor-pointer"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                            <span>إنشاء اختبار جديد</span>
+                          </button>
+                        )}
+                      </div>
+
+                      {currentExams.length === 0 ? (
+                        <div className="py-6 px-4 rounded-xl bg-slate-900/60 border border-dashed border-amber-500/30 text-center space-y-2">
+                          <p className="text-xs text-slate-400 font-bold">لا توجد اختبارات في هذا المصدر حتى الآن</p>
+                          {selectedResourceId && (
+                            <button
+                              type="button"
+                              onClick={() => handleOpenAddItem('exam')}
+                              className="px-3.5 py-1.5 rounded-xl bg-amber-600/30 hover:bg-amber-600/40 text-amber-300 border border-amber-500/40 text-[11px] font-black inline-flex items-center gap-1"
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                              <span>إضافة أول اختبار لهذا المصدر</span>
+                            </button>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {currentExams.map((ex, exIdx) => (
+                            <div
+                              key={ex.id}
+                              className="p-3 rounded-xl bg-slate-900/90 border border-amber-500/20 hover:border-amber-500/50 flex items-center justify-between gap-3 text-xs transition"
+                            >
+                              <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                                <span
+                                  className="w-5 h-5 rounded-full text-[10px] font-black font-mono flex items-center justify-center shrink-0 bg-amber-500/20 text-amber-300 border border-amber-500/40"
+                                  title={`الاختبار رقم ${exIdx + 1} وفق تاريخ الإضافة (من الأقدم للأحدث)`}
+                                >
+                                  {exIdx + 1}
+                                </span>
+                                <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400 shrink-0">
+                                  <Award className="w-4 h-4" />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="font-bold text-white truncate">{ex.title}</div>
+                                  <div className="text-[10px] text-slate-400 flex flex-wrap items-center gap-2 mt-0.5">
+                                    <span className="font-bold text-amber-300">
+                                      📝 {ex.questions?.length || 0} أسئلة
+                                    </span>
+                                    <span className="text-[9px] text-amber-400/90 font-mono bg-amber-500/10 px-1.5 py-0.2 rounded border border-amber-500/20">
+                                      الهدف: %{ex.targetPercentage || 90}
+                                    </span>
+                                    <span className="text-[9px] text-slate-400 font-mono">
+                                      ⏱️ {ex.durationMinutes || 15} دقيقة
+                                    </span>
+                                    {ex.createdAt && (
+                                      <span className="text-[9px] text-slate-500 font-mono">
+                                        • أضيف: {new Date(ex.createdAt).toLocaleDateString('ar-SA')}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <button
+                                  onClick={() => handleOpenEditItem(ex)}
+                                  className="px-2.5 py-1 rounded-lg text-amber-400 hover:text-amber-300 hover:bg-amber-500/10 border border-amber-500/30 transition text-[10px] font-bold flex items-center gap-1"
+                                  title="تعديل الاختبار والأسئلة"
+                                >
+                                  <Edit className="w-3.5 h-3.5" />
+                                  <span>تعديل الأسئلة</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDeleteItem(ex.id, ex.title, 'exam');
+                                  }}
+                                  className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition"
+                                  title="حذف هذا الاختبار"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* ================= 3. قسم الملفات والمستندات (FILES SECTION) ================= */}
+                  {(adminContentSubTab === 'all' || adminContentSubTab === 'file') && (
+                    <div className="rounded-2xl border-2 border-emerald-500/30 bg-emerald-950/20 p-4 space-y-3 shadow-lg shadow-emerald-950/20">
+                      <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-emerald-500/20">
+                        <div className="flex items-center gap-2">
+                          <div className="p-1.5 rounded-xl bg-emerald-500/20 text-emerald-400">
+                            <FileText className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <h4 className="text-xs font-black text-white flex items-center gap-1.5">
+                              <span>قسم الملفات والمستندات</span>
+                              <span className="text-[10px] px-2 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                                {currentFiles.length} ملف
+                              </span>
+                            </h4>
+                            <span className="text-[10px] text-emerald-300/70">
+                              مرتبة من الأقدم للأحدث مع الحفاظ التام على الملفات
+                            </span>
+                          </div>
+                        </div>
+
+                        {selectedResourceId && (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenAddItem('file')}
+                            className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-[11px] flex items-center gap-1 shadow transition cursor-pointer"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                            <span>رفع ملف جديد</span>
+                          </button>
+                        )}
+                      </div>
+
+                      {currentFiles.length === 0 ? (
+                        <div className="py-6 px-4 rounded-xl bg-slate-900/60 border border-dashed border-emerald-500/30 text-center space-y-2">
+                          <p className="text-xs text-slate-400 font-bold">لا توجد ملفات في هذا المصدر حتى الآن</p>
+                          {selectedResourceId && (
+                            <button
+                              type="button"
+                              onClick={() => handleOpenAddItem('file')}
+                              className="px-3.5 py-1.5 rounded-xl bg-emerald-600/30 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-500/40 text-[11px] font-black inline-flex items-center gap-1"
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                              <span>رفع أول ملف لهذا المصدر</span>
+                            </button>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {currentFiles.map((fl, fIdx) => {
+                            const fileLink = fl.url || fl.fileData;
+                            return (
+                              <div
+                                key={fl.id}
+                                className="p-3 rounded-xl bg-slate-900/90 border border-emerald-500/20 hover:border-emerald-500/50 flex items-center justify-between gap-3 text-xs transition"
+                              >
+                                <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                                  <span
+                                    className="w-5 h-5 rounded-full text-[10px] font-black font-mono flex items-center justify-center shrink-0 bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
+                                    title={`الملف رقم ${fIdx + 1} وفق تاريخ الإضافة (من الأقدم للأحدث)`}
+                                  >
+                                    {fIdx + 1}
+                                  </span>
+                                  <div className="p-2 rounded-xl bg-emerald-500/20 text-emerald-400 shrink-0">
+                                    <FileText className="w-4 h-4" />
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="font-bold text-white truncate">{fl.title}</div>
+                                    <div className="text-[10px] text-slate-400 flex flex-wrap items-center gap-2 mt-0.5">
+                                      <span className="font-bold text-emerald-300">
+                                        📁 {fl.fileSize || 'PDF'}
+                                      </span>
+                                      {fl.fileName && (
+                                        <span className="text-[9px] text-slate-400 truncate max-w-[150px]">
+                                          ({fl.fileName})
+                                        </span>
+                                      )}
+                                      <span className="text-[9px] text-emerald-400 bg-emerald-500/10 px-1.5 py-0.2 rounded font-bold border border-emerald-500/20">
+                                        محفوظ عالمنصة ✓
+                                      </span>
+                                      {fl.createdAt && (
+                                        <span className="text-[9px] text-slate-500 font-mono">
+                                          • أضيف: {new Date(fl.createdAt).toLocaleDateString('ar-SA')}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  {fileLink && (
+                                    <a
+                                      href={fileLink}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      download={fl.fileName || 'file'}
+                                      className="px-2.5 py-1 rounded-lg text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10 border border-emerald-500/30 transition flex items-center gap-1 text-[10px] font-bold"
+                                      title="معاينة وتحميل الملف للتأكد من رفعه بنجاح"
+                                    >
+                                      <Download className="w-3.5 h-3.5" />
+                                      <span>معاينة / تحميل</span>
+                                    </a>
+                                  )}
+                                  <button
+                                    onClick={() => handleOpenEditItem(fl)}
+                                    className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-400 hover:bg-slate-800 transition"
+                                    title="تعديل هذا الملف مع الحفاظ التام على الملف الأصلي"
+                                  >
+                                    <Edit className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleDeleteItem(fl.id, fl.title, 'file');
+                                    }}
+                                    className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition"
+                                    title="حذف هذا الملف"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
               </div>
@@ -2614,8 +3071,23 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 md:p-6 bg-black/85 backdrop-blur-md overflow-y-auto">
           <form onSubmit={handleSaveContentItem} className="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-2xl w-full my-auto space-y-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-              <h3 className="text-lg font-black text-white">
-                {editingItem ? 'تعديل المحتوى التعليمي' : 'إضافة محتوى تعليمي جديد'}
+              <h3 className="text-lg font-black text-white flex items-center gap-2">
+                {itemType === 'video' ? (
+                  <>
+                    <Video className="w-5 h-5 text-blue-400" />
+                    <span>{editingItem ? 'تعديل الفيديو التعليمي' : 'قسم رفع وإضافة فيديو تعليمي جديد'}</span>
+                  </>
+                ) : itemType === 'exam' ? (
+                  <>
+                    <Award className="w-5 h-5 text-amber-400" />
+                    <span>{editingItem ? 'تعديل الاختبار التفاعلي والأسئلة' : 'قسم إنشاء وإضافة اختبار تفاعلي جديد'}</span>
+                  </>
+                ) : (
+                  <>
+                    <FileText className="w-5 h-5 text-emerald-400" />
+                    <span>{editingItem ? 'تعديل بيانات الملف والمستند' : 'قسم رفع وإضافة ملف أو ملخص جديد'}</span>
+                  </>
+                )}
               </h3>
               <button
                 type="button"
@@ -2627,6 +3099,62 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
               >
                 إلغاء
               </button>
+            </div>
+
+            {/* Reassurance Banner: Upload safety & preservation */}
+            <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs flex items-center gap-2.5">
+              <ShieldCheck className="w-5 h-5 shrink-0 text-emerald-400" />
+              <div>
+                <span className="font-bold block">رفع آمن ومستقل بالكامل:</span>
+                <span className="text-[11px] text-slate-300">
+                  يتم رفع وحفظ هذا العنصر كملف جديد ومستقل بالكامل عالمنصة، مع بقاء كافة الملفات والمحتويات الموجودة سابقاً دون أي تغيير أو مساس بها ✓
+                </span>
+              </div>
+            </div>
+
+            {/* Section & Resource Target Selector */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 bg-slate-800/60 rounded-2xl border border-slate-700/80">
+              <div>
+                <label className="text-[11px] font-bold text-slate-300 block mb-1">القسم المستهدف:</label>
+                <select
+                  value={modalSectionId}
+                  onChange={(e) => {
+                    const secId = e.target.value;
+                    setModalSectionId(secId);
+                    const firstRes = resources.find((r) => r.sectionId === secId);
+                    if (firstRes) setModalResourceId(firstRes.id);
+                    else setModalResourceId('');
+                  }}
+                  className="w-full px-3 py-2 text-xs rounded-xl bg-slate-900 border border-slate-700 text-white font-bold focus:border-blue-500 focus:outline-none cursor-pointer"
+                >
+                  {sections.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.title}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-slate-300 block mb-1">المصدر التابع له:</label>
+                <select
+                  value={modalResourceId}
+                  onChange={(e) => setModalResourceId(e.target.value)}
+                  className="w-full px-3 py-2 text-xs rounded-xl bg-slate-900 border border-slate-700 text-emerald-300 font-bold focus:border-emerald-500 focus:outline-none cursor-pointer"
+                >
+                  {resources.filter((r) => r.sectionId === modalSectionId).length === 0 ? (
+                    <option value="">-- المحتوى العام التلقائي للقسم --</option>
+                  ) : (
+                    resources
+                      .filter((r) => r.sectionId === modalSectionId)
+                      .map((r) => (
+                        <option key={r.id} value={r.id}>
+                          {r.title}
+                        </option>
+                      ))
+                  )}
+                </select>
+              </div>
             </div>
 
             {/* Type selector */}
@@ -2699,26 +3227,50 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
             {(itemType === 'video' || itemType === 'file') && (
               <div className="space-y-3 p-4 bg-slate-800/60 rounded-2xl border border-slate-700">
                 <span className="text-xs font-bold text-slate-300 block">طريقة إضافة الملف / الفيديو:</span>
+                {editingItem && (itemFileName || itemUrl) && (
+                  <div className="p-2.5 rounded-xl bg-slate-900/90 border border-emerald-500/30 text-[11px] text-emerald-300 flex items-center justify-between">
+                    <span className="truncate">
+                      <strong>الملف/الرابط الحالي المحفوظ:</strong> {itemFileName || itemUrl}
+                    </span>
+                    <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-bold shrink-0">
+                      محفوظ بأمان ✓
+                    </span>
+                  </div>
+                )}
                 <div>
-                  <label className="text-[11px] text-slate-400 block mb-1">رابط مباشر (URL):</label>
+                  <label className="text-[11px] text-slate-400 block mb-1">
+                    رابط مباشر أو رابط Google Drive / Dropbox (URL):
+                  </label>
                   <input
                     type="url"
-                    placeholder="https://..."
+                    placeholder="https://drive.google.com/... أو https://..."
                     value={itemUrl}
                     onChange={(e) => setItemUrl(e.target.value)}
                     className="w-full px-3 py-2 text-xs rounded-xl bg-slate-900 border border-slate-700 text-white font-mono"
                   />
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    يمكنك لصق رابط Google Drive أو رابط خارجي مباشر لفتح وتحميل الملف بسرعة فائقة.
+                  </p>
                 </div>
-                <div className="text-center text-xs text-slate-500">— أو رفع من الجهاز —</div>
+                <div className="text-center text-xs text-slate-500">— أو رفع ملف مباشر من جهازك —</div>
                 <div>
                   <input
                     type="file"
+                    accept={itemType === 'video' ? 'video/*' : '.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.zip,.png,.jpg,.jpeg,.txt,*'}
                     onChange={handleFileUpload}
-                    className="w-full text-xs text-slate-400 file:mr-2 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-blue-600 file:text-white hover:file:bg-blue-500"
+                    className="w-full text-xs text-slate-400 file:mr-2 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-blue-600 file:text-white hover:file:bg-blue-500 cursor-pointer"
                   />
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    {itemType === 'video'
+                      ? 'يدعم ملفات الفيديو (MP4, WebM) أو وضع رابط مباشر'
+                      : 'يدعم ملفات PDF، Word، مستندات، عروض وصور مع الحفظ الآمن في المنصة.'}
+                  </p>
                   {itemFileName && (
                     <div className="flex items-center justify-between mt-2 p-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-[11px] text-emerald-400">
-                      <span>تم اختيار: {itemFileName} ({itemFileSize})</span>
+                      <span className="flex items-center gap-1.5">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>تم اختيار: {itemFileName} ({itemFileSize})</span>
+                      </span>
                       <button
                         type="button"
                         onClick={() => {
@@ -2726,7 +3278,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                           setItemFileName('');
                           setItemFileSize('');
                         }}
-                        className="text-rose-400 hover:text-rose-300 font-bold underline text-[10px]"
+                        className="text-rose-400 hover:text-rose-300 font-bold underline text-[10px] cursor-pointer"
                       >
                         إلغاء الملف
                       </button>

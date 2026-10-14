@@ -1252,19 +1252,23 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                             </div>
                           </div>
 
-                          {file.url ? (
-                            <a
-                              href={file.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold flex items-center gap-1 transition"
-                            >
-                              <Download className="w-3.5 h-3.5" />
-                              <span>تحميل</span>
-                            </a>
-                          ) : (
-                            <span className="text-[10px] text-slate-500 font-bold">مرفق</span>
-                          )}
+                          {(() => {
+                            const fileLink = file.url || file.fileData;
+                            return fileLink ? (
+                              <a
+                                href={fileLink}
+                                download={file.fileName || `${file.title}.pdf`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold flex items-center gap-1 transition"
+                              >
+                                <Download className="w-3.5 h-3.5" />
+                                <span>تحميل</span>
+                              </a>
+                            ) : (
+                              <span className="text-[10px] text-slate-500 font-bold">مرفق</span>
+                            );
+                          })()}
                         </div>
                       ))
                     )}
