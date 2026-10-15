@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Play,
   PlayCircle,
@@ -34,6 +34,7 @@ import {
   Target,
   X,
   Video,
+  Film,
 } from 'lucide-react';
 import {
   StudentUser,
@@ -136,6 +137,9 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
     isTimed: boolean;
     durationMinutes?: number;
     targetPercentage?: number;
+    isFolderExam?: boolean;
+    folderId?: string;
+    folderTitle?: string;
   } | null>(null);
 
   // Timed prompt modal for standard exam click
@@ -152,6 +156,37 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
   const [selectedResourceId, setSelectedResourceId] = useState<string>('');
   const [activeTab, setActiveTab] = useState<'videos' | 'exams' | 'files'>('videos');
   const [activeVideo, setActiveVideo] = useState<ContentItem | null>(null);
+
+  // Main video ref & Intro Lesson state ("اجعل الفيديو لا يشتغل عندما يقم الطالب بالتنقل بين الاقسام او المصادر او الملفات او الاختبارات")
+  const mainVideoRef = useRef<HTMLVideoElement>(null);
+  const introVideoRef = useRef<HTMLVideoElement>(null);
+  const [showIntroModal, setShowIntroModal] = useState<boolean>(false);
+
+  // Stop video playback whenever student navigates between sections, resources, files, or exams
+  const pauseAllVideos = () => {
+    try {
+      if (mainVideoRef.current) {
+        mainVideoRef.current.pause();
+      }
+      if (introVideoRef.current) {
+        introVideoRef.current.pause();
+      }
+    } catch (e) {
+      console.warn('Error pausing videos:', e);
+    }
+  };
+
+  // Explicitly pause video whenever student navigates between sections, resources, tabs (files/exams), or starts an exam
+  useEffect(() => {
+    pauseAllVideos();
+  }, [selectedSectionId, selectedResourceId, activeTab, activeExam, examToStart]);
+
+  // Whenever active video changes, ensure the new video is strictly PAUSED and never auto-plays
+  useEffect(() => {
+    if (mainVideoRef.current) {
+      mainVideoRef.current.pause();
+    }
+  }, [activeVideo?.id]);
 
   // Secret 7 clicks tracker on footer center sentence
   const [secretClickCount, setSecretClickCount] = useState(0);
@@ -204,30 +239,43 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
     };
   }, [currentUser.id]);
 
-  // When selectedSectionId changes, default to first resource if none selected
+  // Ensure selectedSectionId always points to a valid section from latest updates
+  useEffect(() => {
+    if (sections.length > 0) {
+      if (!selectedSectionId || !sections.some((s) => s.id === selectedSectionId)) {
+        setSelectedSectionId(sections[0].id);
+      }
+    }
+  }, [sections, selectedSectionId]);
+
+  // When selectedSectionId or resources change, ensure valid resource from latest updates
   useEffect(() => {
     if (!selectedSectionId) return;
     const resList = resources.filter((r) => r.sectionId === selectedSectionId);
-    if (resList.length > 0 && (!selectedResourceId || !resList.find((r) => r.id === selectedResourceId))) {
-      setSelectedResourceId(resList[0].id);
+    if (resList.length > 0) {
+      if (!selectedResourceId || !resList.some((r) => r.id === selectedResourceId)) {
+        setSelectedResourceId(resList[0].id);
+      }
+    } else {
+      setSelectedResourceId('');
     }
-  }, [selectedSectionId, resources]);
+  }, [selectedSectionId, resources, selectedResourceId]);
 
-  // When selectedResourceId changes, default to first video (oldest video) if none active or if switching resource
+  // When selectedResourceId or contentItems change, ensure valid active video
   useEffect(() => {
-    if (!selectedResourceId) return;
-    const vids = contentItems
-      .filter((i) => i.resourceId === selectedResourceId && i.type === 'video')
-      .sort((a, b) => {
-        const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-        const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-        if (tA !== tB) return tA - tB;
-        return (a.id || '').localeCompare(b.id || '');
-      });
-    if (vids.length > 0 && (!activeVideo || !vids.find((v) => v.id === activeVideo.id))) {
-      setActiveVideo(vids[0]);
+    if (!selectedResourceId) {
+      setActiveVideo(null);
+      return;
     }
-  }, [selectedResourceId, contentItems]);
+    const vids = contentItems.filter((i) => i.resourceId === selectedResourceId && i.type === 'video');
+    if (vids.length > 0) {
+      if (!activeVideo || !vids.some((v) => v.id === activeVideo.id)) {
+        setActiveVideo(vids[0]);
+      }
+    } else {
+      setActiveVideo(null);
+    }
+  }, [selectedResourceId, contentItems, activeVideo]);
 
   // Calculate subscription remaining days and elapsed days (progress starts from 0 and increases each day)
   let daysLeft = 0;
@@ -279,6 +327,7 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
 
   // Play Video
   const handleSelectVideo = (vid: ContentItem) => {
+    pauseAllVideos();
     setActiveVideo(vid);
   };
 
@@ -382,7 +431,7 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
   };
 
   // Start folder exam from FoldersModal
-  const handleStartFolderExam = (folderTitle: string, questions: ExamQuestion[], isTimed: boolean) => {
+  const handleStartFolderExam = (folderTitle: string, questions: ExamQuestion[], isTimed: boolean, folderId?: string) => {
     setActiveExam({
       id: `folder_${Date.now()}`,
       title: `اختبار ${folderTitle}`,
@@ -390,6 +439,9 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
       isTimed,
       durationMinutes: Math.max(5, questions.length * 2),
       targetPercentage: 90,
+      isFolderExam: true,
+      folderId: folderId,
+      folderTitle: folderTitle,
     });
   };
 
@@ -634,6 +686,9 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
           durationMinutes={activeExam.durationMinutes}
           targetPercentage={activeExam.targetPercentage}
           isDarkMode={isDarkMode}
+          isFolderExam={activeExam.isFolderExam}
+          folderId={activeExam.folderId}
+          folderTitle={activeExam.folderTitle}
           onFinishExam={() => {
             // Exam finished and recorded
           }}
@@ -917,7 +972,10 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
           {sections.map((sec, sIdx) => (
             <button
               key={sec.id}
-              onClick={() => setSelectedSectionId(sec.id)}
+              onClick={() => {
+                pauseAllVideos();
+                setSelectedSectionId(sec.id);
+              }}
               className={`px-4 py-2.5 rounded-2xl text-xs md:text-sm font-black transition-all flex items-center gap-2 ${
                 selectedSectionId === sec.id
                   ? 'text-white shadow-lg'
@@ -983,7 +1041,10 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                   return (
                     <button
                       key={res.id}
-                      onClick={() => setSelectedResourceId(res.id)}
+                      onClick={() => {
+                        pauseAllVideos();
+                        setSelectedResourceId(res.id);
+                      }}
                       className={`w-full text-right p-3 rounded-2xl border text-xs font-bold transition flex items-center justify-between gap-2.5 cursor-pointer ${
                         isSelected
                           ? isDarkMode
@@ -1027,6 +1088,55 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
               </div>
             </div>
 
+            {/* ================= الحصة التعريفية ================= */}
+            {/* "تحت كلمة المصادر المتاحة وفوق الفيديوهات والملفات والاختبارات يكون فالمنتصف بينهم حصة اسمه الحصة التعريفية" */}
+            {systemSettings.introLesson?.isActive !== false && (
+              <div
+                className={`p-4 rounded-3xl border shadow-xl relative overflow-hidden transition-all duration-300 group hover:border-amber-400 ${
+                  isDarkMode
+                    ? 'bg-gradient-to-r from-amber-950/40 via-slate-900 to-slate-900/90 border-amber-500/30'
+                    : 'bg-gradient-to-r from-amber-50 via-white to-amber-50/50 border-amber-300 shadow-sm'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-amber-500 to-orange-500 flex items-center justify-center text-slate-950 shrink-0 shadow-lg shadow-amber-500/25 group-hover:scale-105 transition-transform">
+                      <Film className="w-5 h-5" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-500 border border-amber-500/30">
+                          حصة مهمة 🎬
+                        </span>
+                        <h3 className={`text-sm md:text-base font-black truncate ${
+                          isDarkMode ? 'text-white' : 'text-slate-950'
+                        }`}>
+                          {systemSettings.introLesson?.title || 'الحصة التعريفية'}
+                        </h3>
+                      </div>
+                      <p className={`text-[11px] truncate mt-0.5 ${
+                        isDarkMode ? 'text-slate-400' : 'text-slate-600 font-medium'
+                      }`}>
+                        {systemSettings.introLesson?.description || 'فيديو توضيحي وشرح تفصيلي للمنصة وكيفية تحقيق المئوية بإذن الله'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      pauseAllVideos();
+                      setShowIntroModal(true);
+                    }}
+                    className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black text-xs shrink-0 shadow-md shadow-amber-500/20 transition transform active:scale-95 cursor-pointer"
+                  >
+                    <Play className="w-3.5 h-3.5 fill-current" />
+                    <span>مشاهدة الحصة</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* When resource is selected: 3 TABS (فيديوهات، اختبارات، ملفات) */}
             {selectedResourceId && (
               <div
@@ -1039,7 +1149,10 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                   isDarkMode ? 'bg-slate-800/60 border-slate-700/60' : 'bg-slate-100 border-slate-200'
                 }`}>
                   <button
-                    onClick={() => setActiveTab('videos')}
+                    onClick={() => {
+                      pauseAllVideos();
+                      setActiveTab('videos');
+                    }}
                     className={`py-2 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition ${
                       activeTab === 'videos'
                         ? 'text-white shadow-md'
@@ -1060,7 +1173,10 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                   </button>
 
                   <button
-                    onClick={() => setActiveTab('exams')}
+                    onClick={() => {
+                      pauseAllVideos();
+                      setActiveTab('exams');
+                    }}
                     className={`py-2 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition ${
                       activeTab === 'exams'
                         ? 'bg-amber-600 text-white shadow-md'
@@ -1074,7 +1190,10 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                   </button>
 
                   <button
-                    onClick={() => setActiveTab('files')}
+                    onClick={() => {
+                      pauseAllVideos();
+                      setActiveTab('files');
+                    }}
                     className={`py-2 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition ${
                       activeTab === 'files'
                         ? 'bg-emerald-600 text-white shadow-md'
@@ -1383,10 +1502,11 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                   {/* Video Container */}
                   <div className="aspect-video w-full rounded-2xl overflow-hidden bg-black relative shadow-inner">
                     <video
+                      ref={mainVideoRef}
                       key={activeVideoItem.id}
                       src={activeVideoItem.url}
                       controls
-                      autoPlay
+                      preload="metadata"
                       onEnded={() => handleVideoEnded(activeVideoItem.id)}
                       className="w-full h-full object-contain"
                     />
@@ -1877,6 +1997,95 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
         onStartFolderExam={handleStartFolderExam}
         isDarkMode={isDarkMode}
       />
+
+      {/* ================= MODAL: الحصة التعريفية ================= */}
+      {showIntroModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/90 backdrop-blur-md animate-in fade-in duration-200">
+          <div className={`relative w-full max-w-4xl rounded-3xl border shadow-2xl overflow-hidden flex flex-col max-h-[92vh] ${
+            isDarkMode ? 'bg-slate-900 border-slate-800 text-white' : 'bg-white border-slate-200 text-slate-900'
+          }`}>
+            {/* Modal Header */}
+            <div className={`p-4 sm:p-6 border-b flex items-center justify-between gap-3 ${
+              isDarkMode ? 'border-slate-800 bg-slate-900/90' : 'border-slate-200 bg-slate-50/80'
+            }`}>
+              <div className="flex items-center gap-3">
+                <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-500 rounded-2xl">
+                  <Film className="w-6 h-6" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-500 font-bold border border-amber-500/30">
+                      الحصة التعريفية 🎬
+                    </span>
+                  </div>
+                  <h3 className={`text-base sm:text-lg font-black mt-1 ${isDarkMode ? 'text-white' : 'text-slate-950'}`}>
+                    {systemSettings.introLesson?.title || 'الحصة التعريفية لشرح المنصة'}
+                  </h3>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  introVideoRef.current?.pause();
+                  setShowIntroModal(false);
+                }}
+                className={`p-2.5 rounded-xl transition cursor-pointer ${
+                  isDarkMode ? 'bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700' : 'bg-slate-100 text-slate-800 hover:bg-slate-200'
+                }`}
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Video Player (NO AUTOPLAY) */}
+            <div className="p-4 sm:p-6 space-y-4 overflow-y-auto">
+              <div className="aspect-video w-full rounded-2xl overflow-hidden bg-black shadow-inner">
+                {systemSettings.introLesson?.videoUrl ? (
+                  <video
+                    ref={introVideoRef}
+                    key={systemSettings.introLesson.videoUrl}
+                    src={systemSettings.introLesson.videoUrl}
+                    controls
+                    preload="metadata"
+                    className="w-full h-full object-contain"
+                  />
+                ) : (
+                  <div className="w-full h-full flex flex-col items-center justify-center p-8 text-center text-slate-500 space-y-2">
+                    <Video className="w-12 h-12 stroke-[1.5] opacity-40" />
+                    <p className="text-sm font-bold">لم يتم رفع فيديو الحصة التعريفية بعد من لوحة التحكم</p>
+                  </div>
+                )}
+              </div>
+
+              {systemSettings.introLesson?.description && (
+                <div className={`p-4 rounded-2xl border text-xs md:text-sm leading-relaxed ${
+                  isDarkMode ? 'bg-slate-800/50 border-slate-700 text-slate-300' : 'bg-slate-50 border-slate-200 text-slate-700'
+                }`}>
+                  <p className="font-bold text-amber-500 mb-1">📌 تفاصيل وتوجيهات الحصة:</p>
+                  <p>{systemSettings.introLesson.description}</p>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className={`p-4 border-t flex justify-end ${
+              isDarkMode ? 'border-slate-800 bg-slate-900/60' : 'border-slate-200 bg-slate-50'
+            }`}>
+              <button
+                type="button"
+                onClick={() => {
+                  introVideoRef.current?.pause();
+                  setShowIntroModal(false);
+                }}
+                className="px-6 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs transition cursor-pointer shadow-md"
+              >
+                إغلاق والعودة للمنصة
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

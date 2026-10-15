@@ -136,6 +136,14 @@ export interface SystemLiveStream {
   updatedAt?: string;
 }
 
+export interface IntroLessonConfig {
+  isActive: boolean;
+  title: string;
+  videoUrl: string;
+  description?: string;
+  updatedAt?: string;
+}
+
 export interface SystemSettings {
   isPlatformLocked: boolean;
   lockReason: 'maintenance' | 'subscription' | 'none';
@@ -147,6 +155,7 @@ export interface SystemSettings {
   announcement: SystemAnnouncement;
   liveStream: SystemLiveStream;
   activeTheme: ThemeConfig;
+  introLesson?: IntroLessonConfig;
   logoUrl?: string;
   updatedAt?: string;
 }

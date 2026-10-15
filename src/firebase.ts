@@ -140,7 +140,13 @@ export const DEFAULT_SETTINGS: SystemSettings = {
     streamUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
     hostName: 'أ. رعد & فريق منصة أقسام رعد'
   },
-  activeTheme: THEME_PRESETS[0]
+  activeTheme: THEME_PRESETS[0],
+  introLesson: {
+    isActive: true,
+    title: 'الحصة التعريفية لشرح المنصة وطريقة الاستفادة منها',
+    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+    description: 'شاهد هذا الفيديو للتعرف على طريقة التدرب واستخدام السبورة الذكية ومجلدات الأخطاء لتحقيق نسبة 100% بإذن الله'
+  }
 };
 
 // Test Firestore connection on boot as requested by skill
@@ -154,18 +160,43 @@ export async function testConnection() {
   }
 }
 
-// Initial seeder so the platform isn't empty upon first boot
+// Initial seeder so the platform isn't empty upon first boot, with permanent lock
 export async function seedInitialPlatformData() {
   try {
+    // Fast path: if already initialized on this browser/session, exit immediately in 0ms!
+    if (typeof window !== 'undefined' && localStorage.getItem('raad_platform_seeder_initialized') === 'true') {
+      return;
+    }
+
     const settingsRef = doc(db, 'system_settings', 'global');
     const settingsSnap = await getDoc(settingsRef);
     if (!settingsSnap.exists()) {
       await setDoc(settingsRef, DEFAULT_SETTINGS);
     }
 
+    // 1. Strict Permanent Seeder Lock: Once the platform is initialized, NEVER re-seed or resurrect anything
+    const lockRef = doc(db, 'system_settings', 'seeder_lock');
+    const lockSnap = await getDoc(lockRef);
+    if (lockSnap.exists() && lockSnap.data()?.isInitialized) {
+      // Platform already initialized! Whatever is deleted stays deleted permanently.
+      try {
+        if (typeof window !== 'undefined') localStorage.setItem('raad_platform_seeder_initialized', 'true');
+      } catch (e) {}
+      return;
+    }
+
     const sectionsSnap = await getDocs(collection(db, 'sections'));
+    // If sections already exist in the database, lock immediately so deleted sections/items never return
+    if (!sectionsSnap.empty) {
+      await setDoc(lockRef, { isInitialized: true, initializedAt: new Date().toISOString() }, { merge: true });
+      try {
+        if (typeof window !== 'undefined') localStorage.setItem('raad_platform_seeder_initialized', 'true');
+      } catch (e) {}
+      return;
+    }
+
     if (sectionsSnap.empty) {
-      // Seed initial Sections & Resources
+      // Seed initial Sections & Resources only on brand new, fresh database
       const sec1Ref = doc(db, 'sections', 'sec_verbal');
       await setDoc(sec1Ref, {
         id: 'sec_verbal',
@@ -367,6 +398,14 @@ export async function seedInitialPlatformData() {
     } catch (e) {
       console.warn("Could not seed Hamada section:", e);
     }
+
+    // Mark permanent seeder lock so deleted items/sections NEVER return
+    await setDoc(lockRef, { isInitialized: true, initializedAt: new Date().toISOString() }, { merge: true });
+    try {
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('raad_platform_seeder_initialized', 'true');
+      }
+    } catch (e) {}
   } catch (err) {
     console.warn("Seeding notice (might already exist):", err);
   }

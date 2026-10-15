@@ -30,7 +30,7 @@ interface FoldersModalProps {
   isOpen: boolean;
   onClose: () => void;
   currentUser: StudentUser;
-  onStartFolderExam: (folderTitle: string, questions: ExamQuestion[], isTimed: boolean) => void;
+  onStartFolderExam: (folderTitle: string, questions: ExamQuestion[], isTimed: boolean, folderId?: string) => void;
   isDarkMode?: boolean;
 }
 
@@ -49,6 +49,8 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
   const [loadingQuestions, setLoadingQuestions] = useState(false);
   const [showTimedPrompt, setShowTimedPrompt] = useState(false);
   const [folderToDelete, setFolderToDelete] = useState<FolderItem | null>(null);
+  const [showDeleteAllQuestionsModal, setShowDeleteAllQuestionsModal] = useState(false);
+  const [isClearingQuestions, setIsClearingQuestions] = useState(false);
   const [folderNotice, setFolderNotice] = useState<string | null>(null);
   const [isDeletingFolder, setIsDeletingFolder] = useState(false);
 
@@ -184,6 +186,26 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
     }
   };
 
+  const confirmDeleteAllQuestionsInFolder = async () => {
+    if (!selectedFolder) return;
+    setIsClearingQuestions(true);
+    try {
+      const qRef = query(collection(db, 'folder_questions'), where('folderId', '==', selectedFolder.id));
+      const snap = await getDocs(qRef);
+      await Promise.all(snap.docs.map((d) => deleteDoc(d.ref)));
+      setFolderQuestions([]);
+      setShowDeleteAllQuestionsModal(false);
+      setFolderNotice(`تم حذف جميع الأسئلة من مجلد "${selectedFolder.title}" نهائياً ولن تعود أبداً ✓`);
+      setTimeout(() => setFolderNotice(null), 4000);
+    } catch (err) {
+      console.error('Error deleting all questions in folder:', err);
+      setFolderNotice('حدث خطأ أثناء حذف الأسئلة، يرجى المحاولة ثانية');
+      setTimeout(() => setFolderNotice(null), 4000);
+    } finally {
+      setIsClearingQuestions(false);
+    }
+  };
+
   const startExamWithMode = (isTimed: boolean) => {
     if (!selectedFolder || folderQuestions.length === 0) return;
     const examQuestions: ExamQuestion[] = folderQuestions.map((fq, idx) => ({
@@ -196,7 +218,7 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
     }));
     setShowTimedPrompt(false);
     onClose();
-    onStartFolderExam(selectedFolder.title, examQuestions, isTimed);
+    onStartFolderExam(selectedFolder.title, examQuestions, isTimed, selectedFolder.id);
   };
 
   return (
@@ -370,13 +392,25 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
                     </p>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center flex-wrap gap-2">
+                    {/* Delete ALL questions in this folder button */}
+                    <button
+                      type="button"
+                      onClick={() => setShowDeleteAllQuestionsModal(true)}
+                      disabled={folderQuestions.length === 0 || isClearingQuestions}
+                      className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/30 text-xs font-black transition disabled:opacity-40 disabled:pointer-events-none cursor-pointer"
+                      title="حذف جميع الأسئلة كاملة في هذا المجلد نهائياً ولن تعود أبداً"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+                      <span>حذف الأسئلة كاملة</span>
+                    </button>
+
                     {/* Delete folder button if user created it */}
                     {!selectedFolder.isDefaultMistakesFolder && selectedFolder.title !== 'مجلد الاخطاء' && (
                       <button
                         type="button"
                         onClick={() => handleDeleteFolder(selectedFolder)}
-                        className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 text-xs font-bold transition cursor-pointer"
+                        className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs font-bold transition cursor-pointer"
                         title="حذف هذا المجلد ومحتوياته بالكامل"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
@@ -530,6 +564,49 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
                 className="w-full py-3 rounded-2xl text-xs font-bold text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 transition cursor-pointer"
               >
                 إلغاء التراجع
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirm Delete ALL Questions in Folder Modal */}
+      {showDeleteAllQuestionsModal && selectedFolder && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in">
+          <div className="max-w-md w-full bg-slate-900 border-2 border-rose-500/30 rounded-3xl p-6 text-right space-y-4 shadow-2xl">
+            <div className="flex items-center gap-3">
+              <div className="p-3 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-500">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <div>
+                <h4 className="text-lg font-black text-white">حذف كافة الأسئلة في المجلد</h4>
+                <p className="text-xs text-slate-400 font-bold">مجلد: {selectedFolder.title}</p>
+              </div>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-200 text-xs leading-relaxed font-bold">
+              هل أنت متأكد من رغبتك في حذف جميع الأسئلة ({folderQuestions.length} سؤال) من مجلد "{selectedFolder.title}" نهائياً؟
+              <br />
+              <span className="text-rose-400 font-black">تنبيه حاسم:</span> سيتم حذف الأسئلة بالكامل ولن تعود أبداً.
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowDeleteAllQuestionsModal(false)}
+                disabled={isClearingQuestions}
+                className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition cursor-pointer"
+              >
+                إلغاء التراجع
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteAllQuestionsInFolder}
+                disabled={isClearingQuestions}
+                className="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-black transition shadow-lg shadow-rose-600/30 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>{isClearingQuestions ? 'جاري الحذف...' : 'نعم، احذف كافة الأسئلة نهائياً 🗑️'}</span>
               </button>
             </div>
           </div>

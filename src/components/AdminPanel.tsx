@@ -40,6 +40,7 @@ import {
   ShieldCheck,
   Maximize2,
   Minimize2,
+  Film,
 } from 'lucide-react';
 import {
   StudentUser,
@@ -48,7 +49,8 @@ import {
   SectionItem,
   ResourceItem,
   ContentItem,
-  ExamQuestion
+  ExamQuestion,
+  IntroLessonConfig,
 } from '../types';
 import { db, THEME_PRESETS, DEFAULT_SETTINGS } from '../firebase';
 import {
@@ -70,7 +72,7 @@ interface AdminPanelProps {
 }
 
 export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }) => {
-  const [activeTab, setActiveTab] = useState<'students' | 'platform_lock' | 'announcement' | 'live_stream' | 'content' | 'designs'>('students');
+  const [activeTab, setActiveTab] = useState<'students' | 'platform_lock' | 'announcement' | 'live_stream' | 'content' | 'designs' | 'intro_lesson'>('students');
 
   // Students list from Firestore
   const [students, setStudents] = useState<StudentUser[]>([]);
@@ -117,6 +119,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
 
   // Active theme selection
   const [selectedThemeId, setSelectedThemeId] = useState(systemSettings.activeTheme?.id || THEME_PRESETS[0].id);
+
+  // Intro Lesson State ("الحصة التعريفية")
+  const [introLessonState, setIntroLessonState] = useState<IntroLessonConfig>(
+    systemSettings.introLesson || {
+      isActive: true,
+      title: 'الحصة التعريفية لشرح المنصة وطريقة الاستفادة منها',
+      videoUrl: '',
+      description: 'شاهد هذا الفيديو للتعرف على طريقة التدرب واستخدام السبورة الذكية ومجلدات الأخطاء لتحقيق نسبة 100% بإذن الله'
+    }
+  );
+  const [isUploadingIntroVideo, setIsUploadingIntroVideo] = useState(false);
 
   // Content Management: Sections, Resources, Items
   const [sections, setSections] = useState<SectionItem[]>([]);
@@ -253,6 +266,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     setAnnouncementState(systemSettings.announcement);
     setLiveStreamState(systemSettings.liveStream);
     setSelectedThemeId(systemSettings.activeTheme?.id || THEME_PRESETS[0].id);
+    if (systemSettings.introLesson) {
+      setIntroLessonState(systemSettings.introLesson);
+    }
   }, [systemSettings]);
 
   const notifySave = (msg = 'تم الحفظ بنجاح!') => {
@@ -424,6 +440,40 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       console.error('Error saving theme:', err);
       notifySave('حدث خطأ أثناء حفظ التصميم');
     }
+  };
+
+  // 8.5. Save Intro Lesson ("الحصة التعريفية")
+  const handleSaveIntroLesson = async () => {
+    try {
+      await setDoc(doc(db, 'system_settings', 'global'), {
+        introLesson: {
+          ...introLessonState,
+          updatedAt: new Date().toISOString(),
+        },
+      }, { merge: true });
+      notifySave('تم حفظ وتحديث الحصة التعريفية بنجاح 🎬');
+    } catch (err) {
+      console.error('Error saving intro lesson:', err);
+      notifySave('حدث خطأ أثناء حفظ الحصة التعريفية');
+    }
+  };
+
+  const handleIntroVideoFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsUploadingIntroVideo(true);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      setIntroLessonState((prev) => ({ ...prev, videoUrl: result }));
+      setIsUploadingIntroVideo(false);
+      notifySave(`تم تحميل فيديو "${file.name}" بنجاح، لا تنس الضغط على حفظ!`);
+    };
+    reader.onerror = () => {
+      setIsUploadingIntroVideo(false);
+      notifySave('حدث خطأ أثناء قراءة ملف الفيديو');
+    };
+    reader.readAsDataURL(file);
   };
 
   // ================= CONTENT CRUD =================
@@ -1009,6 +1059,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
           ...liveStreamState,
           updatedAt: new Date().toISOString(),
         },
+        introLesson: {
+          ...introLessonState,
+          updatedAt: new Date().toISOString(),
+        },
         activeTheme: chosenTheme,
         updatedAt: new Date().toISOString(),
       }, { merge: true });
@@ -1168,6 +1222,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
           >
             <Palette className="w-4 h-4" />
             <span>تصاميمي 🎨</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('intro_lesson')}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs md:text-sm font-black transition ${
+              activeTab === 'intro_lesson'
+                ? 'bg-amber-600 text-white shadow-lg shadow-amber-600/20'
+                : 'text-amber-400 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            <Film className="w-4 h-4 text-amber-400" />
+            <span>الحصة التعريفية 🎬</span>
           </button>
         </div>
       </div>
@@ -2649,6 +2715,177 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                   </div>
                 );
               })}
+            </div>
+          </div>
+        )}
+
+        {/* ================= TAB 7: INTRO LESSON (الحصة التعريفية) ================= */}
+        {activeTab === 'intro_lesson' && (
+          <div className="max-w-3xl mx-auto space-y-6">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="px-3 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-bold">
+                  الحصة التعريفية 🎬
+                </span>
+                <span className="text-xs text-slate-400">تظهر للطلاب في منتصف المصادر والأقسام</span>
+              </div>
+              <h2 className="text-xl md:text-2xl font-black text-white mt-1">
+                إدارة ورفع فيديو الحصة التعريفية
+              </h2>
+              <p className="text-xs text-slate-400 mt-1">
+                ارفع فيديو الحصة التعريفية مباشرة من جهازك أو ضع رابط فيديو مباشر ليظهر لجميع طلاب المنصة
+              </p>
+            </div>
+
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 space-y-6 shadow-xl">
+              {/* Active Toggle */}
+              <div className="flex items-center justify-between p-4 rounded-2xl bg-slate-800/60 border border-slate-700">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-xl bg-amber-500/20 text-amber-400">
+                    <Film className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-white">إظهار الحصة التعريفية للطلاب</h3>
+                    <p className="text-xs text-slate-400">تظهر في منتصف الصفحة تحت المصادر المتاحة وفوق الفيديوهات والملفات والاختبارات</p>
+                  </div>
+                </div>
+
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={introLessonState.isActive !== false}
+                    onChange={(e) => setIntroLessonState({ ...introLessonState, isActive: e.target.checked })}
+                    className="sr-only peer"
+                  />
+                  <div className="w-14 h-7 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:right-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-amber-500"></div>
+                </label>
+              </div>
+
+              {/* Title Input */}
+              <div className="space-y-2">
+                <label className="block text-xs font-bold text-slate-300">عنوان الحصة التعريفية:</label>
+                <input
+                  type="text"
+                  value={introLessonState.title || ''}
+                  onChange={(e) => setIntroLessonState({ ...introLessonState, title: e.target.value })}
+                  placeholder="مثال: الحصة التعريفية لشرح المنصة"
+                  className="w-full px-4 py-3 rounded-2xl bg-slate-800 border border-slate-700 text-white text-xs md:text-sm focus:outline-none focus:border-amber-500"
+                />
+              </div>
+
+              {/* Description Input */}
+              <div className="space-y-2">
+                <label className="block text-xs font-bold text-slate-300">وصف وتوجيهات الحصة التعريفية (اختياري):</label>
+                <textarea
+                  rows={2}
+                  value={introLessonState.description || ''}
+                  onChange={(e) => setIntroLessonState({ ...introLessonState, description: e.target.value })}
+                  placeholder="مثال: فيديو توضيحي وشرح تفصيلي للمنصة وكيفية تحقيق المئوية بإذن الله"
+                  className="w-full px-4 py-3 rounded-2xl bg-slate-800 border border-slate-700 text-white text-xs md:text-sm focus:outline-none focus:border-amber-500 resize-none"
+                />
+              </div>
+
+              {/* Video Upload Section (Direct File Upload & URL) */}
+              <div className="space-y-3">
+                <label className="block text-xs font-bold text-slate-300">
+                  رفع فيديو الحصة التعريفية من جهازك:
+                </label>
+                
+                <div className="border-2 border-dashed border-amber-500/40 rounded-2xl p-6 text-center bg-slate-800/40 hover:bg-slate-800/70 transition flex flex-col items-center justify-center space-y-3">
+                  <div className="p-3 bg-amber-500/10 rounded-2xl text-amber-400">
+                    <Upload className="w-8 h-8" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-white">اختر ملف الفيديو لرفعه مباشرة</p>
+                    <p className="text-xs text-slate-400 mt-1">يدعم صيغ MP4, WebM, MOV وغيرها</p>
+                  </div>
+
+                  <label className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black text-xs cursor-pointer shadow-lg shadow-amber-500/25 transition">
+                    <span>{isUploadingIntroVideo ? 'جاري قراءة ورفع الفيديو...' : 'تصفح واختيار ملف الفيديو من جهازك'}</span>
+                    <input
+                      type="file"
+                      accept="video/*"
+                      onChange={handleIntroVideoFileUpload}
+                      className="hidden"
+                      disabled={isUploadingIntroVideo}
+                    />
+                  </label>
+                </div>
+              </div>
+
+              {/* Or Direct URL Input */}
+              <div className="space-y-2">
+                <label className="block text-xs font-bold text-slate-300">أو رابط فيديو مباشر (URL / رابط استضافة):</label>
+                <input
+                  type="url"
+                  value={introLessonState.videoUrl?.startsWith('data:') ? 'تم تحميل ملف فيديو محلي مشفر' : (introLessonState.videoUrl || '')}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val !== 'تم تحميل ملف فيديو محلي مشفر') {
+                      setIntroLessonState({ ...introLessonState, videoUrl: val });
+                    }
+                  }}
+                  placeholder="https://example.com/video.mp4 أو رابط فيديو مباشر"
+                  className="w-full px-4 py-3 rounded-2xl bg-slate-800 border border-slate-700 text-white text-xs md:text-sm font-mono focus:outline-none focus:border-amber-500"
+                />
+              </div>
+
+              {/* Video Preview if present */}
+              {introLessonState.videoUrl && (
+                <div className="space-y-2 pt-2 border-t border-slate-800">
+                  <div className="flex items-center justify-between text-xs font-bold text-slate-300">
+                    <span className="flex items-center gap-1 text-emerald-400">
+                      <CheckCircle2 className="w-4 h-4" />
+                      <span>معاينة فيديو الحصة التعريفية المرفوع:</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setIntroLessonState({ ...introLessonState, videoUrl: '' })}
+                      className="text-rose-400 hover:text-rose-300 flex items-center gap-1 transition cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>حذف الفيديو المرفوع</span>
+                    </button>
+                  </div>
+
+                  <div className="aspect-video w-full rounded-2xl overflow-hidden bg-black shadow-inner border border-slate-800">
+                    <video
+                      key={introLessonState.videoUrl}
+                      src={introLessonState.videoUrl}
+                      controls
+                      preload="metadata"
+                      className="w-full h-full object-contain"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div className="pt-4 border-t border-slate-800 flex items-center justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIntroLessonState({
+                      isActive: true,
+                      title: 'الحصة التعريفية لشرح المنصة وطريقة الاستفادة منها',
+                      videoUrl: '',
+                      description: 'شاهد هذا الفيديو للتعرف على طريقة التدرب واستخدام السبورة الذكية ومجلدات الأخطاء لتحقيق نسبة 100% بإذن الله'
+                    });
+                  }}
+                  className="px-4 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition"
+                >
+                  إعادة ضبط الحقول
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleSaveIntroLesson}
+                  className="flex items-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black text-xs md:text-sm shadow-xl shadow-amber-500/25 transition cursor-pointer"
+                >
+                  <Save className="w-4 h-4" />
+                  <span>حفظ فيديو الحصة التعريفية الآن 🎬</span>
+                </button>
+              </div>
             </div>
           </div>
         )}
