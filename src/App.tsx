@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { StudentUser, SystemSettings } from './types';
+import { StudentUser, SystemSettings, FeaturesConfig, IntroLessonConfig } from './types';
 import { db, testConnection, seedInitialPlatformData, DEFAULT_SETTINGS } from './firebase';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { AuthView } from './components/AuthView';
@@ -45,7 +45,25 @@ export default function App() {
     // Listen to real-time global settings & theme
     const unsub = onSnapshot(doc(db, 'system_settings', 'global'), (docSnap) => {
       if (docSnap.exists()) {
-        setSystemSettings(docSnap.data() as SystemSettings);
+        const fetched = docSnap.data() as Partial<SystemSettings>;
+        const mergedFeatures: FeaturesConfig = {
+          telegramMainGroupUrl: fetched.features?.telegramMainGroupUrl || DEFAULT_SETTINGS.features?.telegramMainGroupUrl || 'https://t.me/raad_qiyas_main',
+          telegramDiscussionGroupUrl: fetched.features?.telegramDiscussionGroupUrl || DEFAULT_SETTINGS.features?.telegramDiscussionGroupUrl || 'https://t.me/raad_qiyas_discussion',
+          isDiagnosticEnabled: fetched.features?.isDiagnosticEnabled ?? true,
+          isFriendsChallengeEnabled: fetched.features?.isFriendsChallengeEnabled ?? true,
+        };
+        const mergedIntroLesson: IntroLessonConfig = {
+          isActive: fetched.introLesson?.isActive ?? true,
+          title: fetched.introLesson?.title || DEFAULT_SETTINGS.introLesson?.title || 'الحصة التعريفية لشرح المنصة وطريقة الاستفادة منها',
+          videoUrl: fetched.introLesson?.videoUrl || DEFAULT_SETTINGS.introLesson?.videoUrl || '',
+          description: fetched.introLesson?.description || DEFAULT_SETTINGS.introLesson?.description,
+        };
+        setSystemSettings({
+          ...DEFAULT_SETTINGS,
+          ...fetched,
+          features: mergedFeatures,
+          introLesson: mergedIntroLesson,
+        });
       }
     });
 

@@ -41,6 +41,7 @@ import {
   Maximize2,
   Minimize2,
   Film,
+  Trophy,
 } from 'lucide-react';
 import {
   StudentUser,
@@ -51,6 +52,7 @@ import {
   ContentItem,
   ExamQuestion,
   IntroLessonConfig,
+  FeaturesConfig,
 } from '../types';
 import { db, THEME_PRESETS, DEFAULT_SETTINGS } from '../firebase';
 import {
@@ -72,7 +74,7 @@ interface AdminPanelProps {
 }
 
 export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }) => {
-  const [activeTab, setActiveTab] = useState<'students' | 'platform_lock' | 'announcement' | 'live_stream' | 'content' | 'designs' | 'intro_lesson'>('students');
+  const [activeTab, setActiveTab] = useState<'students' | 'platform_lock' | 'announcement' | 'live_stream' | 'content' | 'designs' | 'intro_lesson' | 'features'>('students');
 
   // Students list from Firestore
   const [students, setStudents] = useState<StudentUser[]>([]);
@@ -130,6 +132,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     }
   );
   const [isUploadingIntroVideo, setIsUploadingIntroVideo] = useState(false);
+
+  // Features State ("المميزات")
+  const [featuresState, setFeaturesState] = useState<FeaturesConfig>(
+    systemSettings.features || {
+      telegramMainGroupUrl: 'https://t.me/raad_qiyas_main',
+      telegramDiscussionGroupUrl: 'https://t.me/raad_qiyas_discussion',
+      isDiagnosticEnabled: true,
+      isFriendsChallengeEnabled: true
+    }
+  );
+  const [isSavingFeatures, setIsSavingFeatures] = useState(false);
 
   // Content Management: Sections, Resources, Items
   const [sections, setSections] = useState<SectionItem[]>([]);
@@ -268,6 +281,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     setSelectedThemeId(systemSettings.activeTheme?.id || THEME_PRESETS[0].id);
     if (systemSettings.introLesson) {
       setIntroLessonState(systemSettings.introLesson);
+    }
+    if (systemSettings.features) {
+      setFeaturesState(systemSettings.features);
     }
   }, [systemSettings]);
 
@@ -1063,6 +1079,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
           ...introLessonState,
           updatedAt: new Date().toISOString(),
         },
+        features: {
+          ...featuresState,
+          updatedAt: new Date().toISOString(),
+        },
         activeTheme: chosenTheme,
         updatedAt: new Date().toISOString(),
       }, { merge: true });
@@ -1073,6 +1093,27 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       notifySave('حدث خطأ أثناء حفظ التغييرات');
     } finally {
       setIsGlobalSaving(false);
+    }
+  };
+
+  // Dedicated save for Features tab
+  const handleSaveFeatures = async () => {
+    setIsSavingFeatures(true);
+    try {
+      const settingsRef = doc(db, 'system_settings', 'global');
+      await setDoc(settingsRef, {
+        features: {
+          ...featuresState,
+          updatedAt: new Date().toISOString(),
+        },
+        updatedAt: new Date().toISOString(),
+      }, { merge: true });
+      notifySave('تم حفظ روابط مجموعات التليجرام وإعدادات المميزات بنجاح! ⚡');
+    } catch (err) {
+      console.error('Error saving features in admin:', err);
+      notifySave('حدث خطأ أثناء حفظ المميزات');
+    } finally {
+      setIsSavingFeatures(false);
     }
   };
 
@@ -1234,6 +1275,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
           >
             <Film className="w-4 h-4 text-amber-400" />
             <span>الحصة التعريفية 🎬</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('features')}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs md:text-sm font-black transition ${
+              activeTab === 'features'
+                ? 'bg-amber-500 text-slate-950 font-black shadow-lg shadow-amber-500/20'
+                : 'text-amber-400 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            <Sparkles className="w-4 h-4 text-amber-400" />
+            <span>المميزات ⭐</span>
           </button>
         </div>
       </div>
@@ -2853,6 +2906,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                       key={introLessonState.videoUrl}
                       src={introLessonState.videoUrl}
                       controls
+                      controlsList="nodownload"
+                      onContextMenu={(e) => e.preventDefault()}
                       preload="metadata"
                       className="w-full h-full object-contain"
                     />
@@ -2884,6 +2939,210 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                 >
                   <Save className="w-4 h-4" />
                   <span>حفظ فيديو الحصة التعريفية الآن 🎬</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ================= TAB 8: المميزات وروابط مجموعات التليجرام ================= */}
+        {activeTab === 'features' && (
+          <div className="space-y-6">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <h2 className="text-xl md:text-2xl font-black text-white flex items-center gap-2">
+                  <Sparkles className="w-6 h-6 text-amber-400" />
+                  <span>إدارة المميزات وروابط مجموعات التليجرام</span>
+                </h2>
+                <p className="text-xs text-slate-400">
+                  إضافة وتعديل روابط جروبات التليجرام (الأساسي والمناقشة)، وتفعيل/تعطيل ميزات تحديد المستوى وتحدي الأصدقاء
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleSaveFeatures}
+                disabled={isSavingFeatures}
+                className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black text-xs md:text-sm shadow-xl shadow-amber-500/25 transition cursor-pointer disabled:opacity-50"
+              >
+                <Save className="w-4 h-4" />
+                <span>{isSavingFeatures ? 'جاري الحفظ...' : 'حفظ روابط التليجرام والمميزات الآن ⚡'}</span>
+              </button>
+            </div>
+
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 space-y-6 shadow-xl">
+              {/* Notice Banner */}
+              <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-center gap-3">
+                <Sparkles className="w-5 h-5 shrink-0 text-amber-400" />
+                <div>
+                  <span className="font-bold block">قسم المميزات الذهبية في واجهة الطلاب:</span>
+                  <span className="text-[11px] text-slate-300">
+                    تظهر كلمة المميزات بجانب كلمة &quot;احصائياتي&quot; باللون الذهبي للطلاب، وتحتوي بداخلها على 4 مستطيلات (جروب أقسام رعد الأساسي، جروب أقسام رعد المناقشة، اختبار تحديد مستوى الطالب، تحدي الأصدقاء).
+                  </span>
+                </div>
+              </div>
+
+              {/* المستطيل 1: رابط جروب أقسام رعد الأساسي */}
+              <div className="p-5 rounded-2xl bg-slate-800/60 border border-sky-500/30 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-10 h-10 rounded-xl bg-sky-500 flex items-center justify-center text-white shadow-md shadow-sky-500/25">
+                      <svg className="w-5 h-5 fill-current" viewBox="0 0 24 24">
+                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.74-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .37z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-black text-white">رابط جروب أقسام رعد الأساسي (تليجرام)</h4>
+                      <p className="text-[11px] text-slate-400">القناة والجروب الرسمي للتنبيهات والجداول والشروحات</p>
+                    </div>
+                  </div>
+                  <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-sky-500/20 text-sky-400 border border-sky-500/30 font-bold">
+                    المستطيل الأول
+                  </span>
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-center gap-2">
+                  <input
+                    type="url"
+                    value={featuresState.telegramMainGroupUrl || ''}
+                    onChange={(e) => setFeaturesState({ ...featuresState, telegramMainGroupUrl: e.target.value })}
+                    placeholder="https://t.me/your_main_group"
+                    className="flex-1 w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white text-xs font-mono focus:outline-none focus:border-sky-500"
+                  />
+                  {featuresState.telegramMainGroupUrl && (
+                    <a
+                      href={featuresState.telegramMainGroupUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-4 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold transition flex items-center gap-1.5 shrink-0"
+                    >
+                      <Send className="w-3.5 h-3.5" />
+                      <span>تجربة الرابط 🔗</span>
+                    </a>
+                  )}
+                </div>
+              </div>
+
+              {/* المستطيل 2: رابط جروب أقسام رعد المناقشة */}
+              <div className="p-5 rounded-2xl bg-slate-800/60 border border-indigo-500/30 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-10 h-10 rounded-xl bg-indigo-500 flex items-center justify-center text-white shadow-md shadow-indigo-500/25">
+                      <svg className="w-5 h-5 fill-current" viewBox="0 0 24 24">
+                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.74-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .37z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-black text-white">رابط جروب أقسام رعد المناقشة (تليجرام)</h4>
+                      <p className="text-[11px] text-slate-400">مجموعة نقاش وتفاعل واستفسارات الطلاب وتبادل الشروحات</p>
+                    </div>
+                  </div>
+                  <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 font-bold">
+                    المستطيل الثاني
+                  </span>
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-center gap-2">
+                  <input
+                    type="url"
+                    value={featuresState.telegramDiscussionGroupUrl || ''}
+                    onChange={(e) => setFeaturesState({ ...featuresState, telegramDiscussionGroupUrl: e.target.value })}
+                    placeholder="https://t.me/your_discussion_group"
+                    className="flex-1 w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white text-xs font-mono focus:outline-none focus:border-indigo-500"
+                  />
+                  {featuresState.telegramDiscussionGroupUrl && (
+                    <a
+                      href={featuresState.telegramDiscussionGroupUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition flex items-center gap-1.5 shrink-0"
+                    >
+                      <MessageCircle className="w-3.5 h-3.5" />
+                      <span>تجربة الرابط 💬</span>
+                    </a>
+                  )}
+                </div>
+              </div>
+
+              {/* المستطيل 3: اختبار تحديد مستوى الطالب */}
+              <div className="p-5 rounded-2xl bg-slate-800/60 border border-emerald-500/30 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2.5 rounded-xl bg-emerald-500/20 text-emerald-400">
+                      <Target className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-black text-white">المستطيل الثالث: اختبار تحديد مستوى الطالب</h4>
+                      <p className="text-[11px] text-slate-400">
+                        يتيح للطالب اختيار أي مصدر والاختبار على أي عدد من الاختبارات (عشوائياً أو يدوياً)
+                      </p>
+                    </div>
+                  </div>
+
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={featuresState.isDiagnosticEnabled !== false}
+                      onChange={(e) => setFeaturesState({ ...featuresState, isDiagnosticEnabled: e.target.checked })}
+                      className="sr-only peer"
+                    />
+                    <div className="w-12 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:right-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div>
+                  </label>
+                </div>
+              </div>
+
+              {/* المستطيل 4: تحدي الأصدقاء */}
+              <div className="p-5 rounded-2xl bg-slate-800/60 border border-amber-500/30 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2.5 rounded-xl bg-amber-500/20 text-amber-400">
+                      <Trophy className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-black text-white">المستطيل الرابع: تحدي الأصدقاء</h4>
+                      <p className="text-[11px] text-slate-400">
+                        إنشاء أو انضمام لتحدي، واختيار عدد الاختبارات (1، 3، 5، 7، 10)، واستخراج كود لمشاركته ومنافسة صديق
+                      </p>
+                    </div>
+                  </div>
+
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={featuresState.isFriendsChallengeEnabled !== false}
+                      onChange={(e) => setFeaturesState({ ...featuresState, isFriendsChallengeEnabled: e.target.checked })}
+                      className="sr-only peer"
+                    />
+                    <div className="w-12 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:right-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-500"></div>
+                  </label>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="pt-4 border-t border-slate-800 flex items-center justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFeaturesState({
+                      telegramMainGroupUrl: 'https://t.me/raad_qiyas_main',
+                      telegramDiscussionGroupUrl: 'https://t.me/raad_qiyas_discussion',
+                      isDiagnosticEnabled: true,
+                      isFriendsChallengeEnabled: true,
+                    });
+                  }}
+                  className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition"
+                >
+                  إعادة ضبط الروابط الافتراضية
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleSaveFeatures}
+                  disabled={isSavingFeatures}
+                  className="flex items-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black text-xs md:text-sm shadow-xl shadow-amber-500/25 transition cursor-pointer disabled:opacity-50"
+                >
+                  <Save className="w-4 h-4" />
+                  <span>{isSavingFeatures ? 'جاري الحفظ...' : 'حفظ روابط التليجرام والمميزات الآن ⚡'}</span>
                 </button>
               </div>
             </div>

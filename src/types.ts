@@ -144,6 +144,52 @@ export interface IntroLessonConfig {
   updatedAt?: string;
 }
 
+export interface FeaturesConfig {
+  telegramMainGroupUrl: string;
+  telegramDiscussionGroupUrl: string;
+  isDiagnosticEnabled?: boolean;
+  isFriendsChallengeEnabled?: boolean;
+  updatedAt?: string;
+}
+
+export interface FriendChallengeParticipant {
+  userId: string;
+  name: string;
+  score: number;
+  correctAnswers: number;
+  wrongAnswers: number;
+  answers: Record<number, number>;
+  isFinished: boolean;
+  finishedAt?: string;
+}
+
+export interface FriendChallengeQuestionRef {
+  examId: string;
+  questionIndex: number;
+  questionId?: string;
+}
+
+export interface FriendChallengeDoc {
+  id: string;
+  code: string;
+  hostId: string;
+  hostName: string;
+  guestId?: string;
+  guestName?: string;
+  status: 'waiting' | 'active' | 'finished';
+  examCount: number;
+  selectedExamIds: string[];
+  questionRefs?: FriendChallengeQuestionRef[];
+  questions?: ExamQuestion[];
+  participants: {
+    [userId: string]: FriendChallengeParticipant;
+  };
+  winnerId?: string | 'tie';
+  winnerName?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
 export interface SystemSettings {
   isPlatformLocked: boolean;
   lockReason: 'maintenance' | 'subscription' | 'none';
@@ -156,6 +202,7 @@ export interface SystemSettings {
   liveStream: SystemLiveStream;
   activeTheme: ThemeConfig;
   introLesson?: IntroLessonConfig;
+  features?: FeaturesConfig;
   logoUrl?: string;
   updatedAt?: string;
 }

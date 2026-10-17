@@ -155,7 +155,7 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({ isDark = true }) => {
         </div>
 
         {/* Tools and colors */}
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {/* Colors */}
           <div className="flex items-center gap-1 bg-slate-900/60 p-1 rounded-lg border border-slate-700/40">
             {colors.map((c) => (

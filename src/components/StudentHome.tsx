@@ -45,7 +45,7 @@ import {
   ExamQuestion,
   FolderItem
 } from '../types';
-import { db } from '../firebase';
+import { db, INITIAL_SECTIONS, INITIAL_RESOURCES, INITIAL_CONTENT_ITEMS } from '../firebase';
 import {
   collection,
   onSnapshot,
@@ -59,6 +59,7 @@ import {
 } from 'firebase/firestore';
 import { StatsModal } from './StatsModal';
 import { FoldersModal } from './FoldersModal';
+import { FeaturesModal } from './FeaturesModal';
 import { ExamRunner } from './ExamRunner';
 
 interface StudentHomeProps {
@@ -128,6 +129,7 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
   // Navigation & Modals
   const [showStatsModal, setShowStatsModal] = useState(false);
   const [showFoldersModal, setShowFoldersModal] = useState(false);
+  const [showFeaturesModal, setShowFeaturesModal] = useState(false);
 
   // Active exam state
   const [activeExam, setActiveExam] = useState<{
@@ -145,22 +147,90 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
   // Timed prompt modal for standard exam click
   const [examToStart, setExamToStart] = useState<ContentItem | null>(null);
 
-  // Educational Data
-  const [sections, setSections] = useState<SectionItem[]>([]);
-  const [resources, setResources] = useState<ResourceItem[]>([]);
-  const [contentItems, setContentItems] = useState<ContentItem[]>([]);
+  // Educational Data with zero-latency instant loading from local cache or initial datasets
+  const [sections, setSections] = useState<SectionItem[]>(() => {
+    try {
+      const cached = localStorage.getItem('raad_cached_sections');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {}
+    return INITIAL_SECTIONS;
+  });
+
+  const [resources, setResources] = useState<ResourceItem[]>(() => {
+    try {
+      const cached = localStorage.getItem('raad_cached_resources');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {}
+    return INITIAL_RESOURCES;
+  });
+
+  const [contentItems, setContentItems] = useState<ContentItem[]>(() => {
+    try {
+      const cached = localStorage.getItem('raad_cached_content_items');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {}
+    return INITIAL_CONTENT_ITEMS;
+  });
+
   const [folders, setFolders] = useState<FolderItem[]>([]);
 
   // Selection State
-  const [selectedSectionId, setSelectedSectionId] = useState<string>('');
-  const [selectedResourceId, setSelectedResourceId] = useState<string>('');
+  const [selectedSectionId, setSelectedSectionId] = useState<string>(() => {
+    try {
+      const cachedId = localStorage.getItem('raad_cached_selected_section_id');
+      if (cachedId) return cachedId;
+      const cachedSecs = localStorage.getItem('raad_cached_sections');
+      if (cachedSecs) {
+        const parsed = JSON.parse(cachedSecs);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed[0].id;
+      }
+    } catch (e) {}
+    return INITIAL_SECTIONS[0]?.id || 'sec_verbal';
+  });
+
+  const [selectedResourceId, setSelectedResourceId] = useState<string>(() => {
+    try {
+      const cachedId = localStorage.getItem('raad_cached_selected_resource_id');
+      if (cachedId) return cachedId;
+      const cachedRes = localStorage.getItem('raad_cached_resources');
+      if (cachedRes) {
+        const parsed = JSON.parse(cachedRes);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed[0].id;
+      }
+    } catch (e) {}
+    return INITIAL_RESOURCES[0]?.id || 'res_analogy';
+  });
+
   const [activeTab, setActiveTab] = useState<'videos' | 'exams' | 'files'>('videos');
-  const [activeVideo, setActiveVideo] = useState<ContentItem | null>(null);
+
+  const [activeVideo, setActiveVideo] = useState<ContentItem | null>(() => {
+    try {
+      const cached = localStorage.getItem('raad_cached_content_items');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed)) {
+          const firstVid = parsed.find((i: ContentItem) => i.type === 'video');
+          if (firstVid) return firstVid;
+        }
+      }
+    } catch (e) {}
+    return INITIAL_CONTENT_ITEMS.find((i) => i.type === 'video') || null;
+  });
 
   // Main video ref & Intro Lesson state ("اجعل الفيديو لا يشتغل عندما يقم الطالب بالتنقل بين الاقسام او المصادر او الملفات او الاختبارات")
   const mainVideoRef = useRef<HTMLVideoElement>(null);
   const introVideoRef = useRef<HTMLVideoElement>(null);
   const [showIntroModal, setShowIntroModal] = useState<boolean>(false);
+  const [isShowingIntroOnLeft, setIsShowingIntroOnLeft] = useState<boolean>(false);
 
   // Stop video playback whenever student navigates between sections, resources, files, or exams
   const pauseAllVideos = () => {
@@ -188,19 +258,41 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
     }
   }, [activeVideo?.id]);
 
+  // Cache selected IDs whenever they change
+  useEffect(() => {
+    if (selectedSectionId) {
+      try {
+        localStorage.setItem('raad_cached_selected_section_id', selectedSectionId);
+      } catch (e) {}
+    }
+  }, [selectedSectionId]);
+
+  useEffect(() => {
+    if (selectedResourceId) {
+      try {
+        localStorage.setItem('raad_cached_selected_resource_id', selectedResourceId);
+      } catch (e) {}
+    }
+  }, [selectedResourceId]);
+
   // Secret 7 clicks tracker on footer center sentence
   const [secretClickCount, setSecretClickCount] = useState(0);
   const [lastClickTime, setLastClickTime] = useState(0);
 
-  // Real-time listener for sections, resources, items
+  // Real-time listener for sections, resources, items with background cache sync
   useEffect(() => {
     const unsubSections = onSnapshot(collection(db, 'sections'), (snap) => {
       const list: SectionItem[] = [];
       snap.forEach((d) => list.push({ id: d.id, ...d.data() } as SectionItem));
       list.sort((a, b) => (a.order || 0) - (b.order || 0));
-      setSections(list);
-      if (list.length > 0 && !selectedSectionId) {
-        setSelectedSectionId(list[0].id);
+      if (list.length > 0) {
+        setSections(list);
+        try {
+          localStorage.setItem('raad_cached_sections', JSON.stringify(list));
+        } catch (e) {}
+        if (!selectedSectionId) {
+          setSelectedSectionId(list[0].id);
+        }
       }
     });
 
@@ -208,7 +300,12 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
       const list: ResourceItem[] = [];
       snap.forEach((d) => list.push({ id: d.id, ...d.data() } as ResourceItem));
       list.sort((a, b) => (a.order || 0) - (b.order || 0));
-      setResources(list);
+      if (list.length > 0) {
+        setResources(list);
+        try {
+          localStorage.setItem('raad_cached_resources', JSON.stringify(list));
+        } catch (e) {}
+      }
     });
 
     const unsubItems = onSnapshot(collection(db, 'content_items'), (snap) => {
@@ -221,7 +318,12 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
         if (tA !== tB) return tA - tB;
         return (a.id || '').localeCompare(b.id || '');
       });
-      setContentItems(list);
+      if (list.length > 0) {
+        setContentItems(list);
+        try {
+          localStorage.setItem('raad_cached_content_items', JSON.stringify(list));
+        } catch (e) {}
+      }
     });
 
     const qFolders = query(collection(db, 'folders'), where('userId', '==', currentUser.id));
@@ -328,6 +430,7 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
   // Play Video
   const handleSelectVideo = (vid: ContentItem) => {
     pauseAllVideos();
+    setIsShowingIntroOnLeft(false);
     setActiveVideo(vid);
   };
 
@@ -757,6 +860,16 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
 
         {/* Navigation Actions: "احصائياتي", "مجلداتي", Theme, Logout */}
         <div className="flex items-center gap-2">
+          {/* كلمة المميزات باللون الذهبي بجانب احصائياتي */}
+          <button
+            onClick={() => setShowFeaturesModal(true)}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-black border transition shadow-md hover:scale-105 bg-gradient-to-r from-amber-500/20 via-amber-400/25 to-yellow-500/20 border-amber-400 text-amber-500 dark:text-amber-300 hover:border-amber-300 shadow-amber-500/20 cursor-pointer"
+            title="المميزات الإضافية"
+          >
+            <Sparkles className="w-4 h-4 text-amber-400 fill-amber-400/40" />
+            <span className="font-black text-amber-600 dark:text-amber-300">المميزات</span>
+          </button>
+
           <button
             onClick={() => setShowStatsModal(true)}
             className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold border transition shadow-sm hover:scale-105"
@@ -1090,35 +1203,41 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
 
             {/* ================= الحصة التعريفية ================= */}
             {/* "تحت كلمة المصادر المتاحة وفوق الفيديوهات والملفات والاختبارات يكون فالمنتصف بينهم حصة اسمه الحصة التعريفية" */}
+            {/* ================= الحصة التعريفية ================= */}
+            {/* "اولا صغر مستطيل الحصة التعريفية شوية رفعه" */}
             {systemSettings.introLesson?.isActive !== false && (
               <div
-                className={`p-4 rounded-3xl border shadow-xl relative overflow-hidden transition-all duration-300 group hover:border-amber-400 ${
-                  isDarkMode
-                    ? 'bg-gradient-to-r from-amber-950/40 via-slate-900 to-slate-900/90 border-amber-500/30'
-                    : 'bg-gradient-to-r from-amber-50 via-white to-amber-50/50 border-amber-300 shadow-sm'
+                className={`py-2 px-3 sm:py-2.5 sm:px-4 rounded-2xl border transition-all duration-200 group relative overflow-hidden ${
+                  isShowingIntroOnLeft
+                    ? 'border-amber-400 ring-2 ring-amber-400/30 bg-amber-500/10 shadow-md shadow-amber-500/10'
+                    : isDarkMode
+                    ? 'bg-gradient-to-r from-amber-950/40 via-slate-900 to-slate-900 border-amber-500/30 hover:border-amber-400/70 shadow-sm'
+                    : 'bg-gradient-to-r from-amber-50/80 via-white to-amber-50/60 border-amber-300 shadow-sm'
                 }`}
               >
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-amber-500 to-orange-500 flex items-center justify-center text-slate-950 shrink-0 shadow-lg shadow-amber-500/25 group-hover:scale-105 transition-transform">
-                      <Film className="w-5 h-5" />
+                <div className="flex items-center justify-between gap-2.5">
+                  <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                    <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-gradient-to-tr from-amber-500 to-orange-500 flex items-center justify-center text-slate-950 shrink-0 shadow-sm group-hover:scale-105 transition-transform">
+                      <Film className="w-4 h-4 stroke-[2.2]" />
                     </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-500 border border-amber-500/30">
-                          حصة مهمة 🎬
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[10px] font-black px-2 py-0.5 rounded-md bg-amber-500 text-slate-950 tracking-tight shadow-xs">
+                          الحصة التعريفية 🎬
                         </span>
-                        <h3 className={`text-sm md:text-base font-black truncate ${
+                        <h3 className={`text-xs sm:text-sm font-black truncate ${
                           isDarkMode ? 'text-white' : 'text-slate-950'
                         }`}>
-                          {systemSettings.introLesson?.title || 'الحصة التعريفية'}
+                          {systemSettings.introLesson?.title || 'شرح وتوجيهات المنصة'}
                         </h3>
                       </div>
-                      <p className={`text-[11px] truncate mt-0.5 ${
-                        isDarkMode ? 'text-slate-400' : 'text-slate-600 font-medium'
-                      }`}>
-                        {systemSettings.introLesson?.description || 'فيديو توضيحي وشرح تفصيلي للمنصة وكيفية تحقيق المئوية بإذن الله'}
-                      </p>
+                      {systemSettings.introLesson?.description && (
+                        <p className={`text-[10px] sm:text-[11px] truncate mt-0.5 ${
+                          isDarkMode ? 'text-slate-400' : 'text-slate-600 font-medium'
+                        }`}>
+                          {systemSettings.introLesson.description}
+                        </p>
+                      )}
                     </div>
                   </div>
 
@@ -1126,12 +1245,20 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                     type="button"
                     onClick={() => {
                       pauseAllVideos();
-                      setShowIntroModal(true);
+                      setIsShowingIntroOnLeft(true);
+                      const leftEl = document.getElementById('left-video-player-container');
+                      if (leftEl) {
+                        leftEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                      }
                     }}
-                    className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black text-xs shrink-0 shadow-md shadow-amber-500/20 transition transform active:scale-95 cursor-pointer"
+                    className={`flex items-center gap-1.5 px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-xl font-black text-[11px] sm:text-xs shrink-0 transition-all transform active:scale-95 cursor-pointer shadow-sm ${
+                      isShowingIntroOnLeft
+                        ? 'bg-amber-400 text-slate-950 ring-1 ring-amber-300 shadow-amber-400/20'
+                        : 'bg-gradient-to-r from-amber-500 via-orange-500 to-amber-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 shadow-amber-500/20'
+                    }`}
                   >
                     <Play className="w-3.5 h-3.5 fill-current" />
-                    <span>مشاهدة الحصة</span>
+                    <span>{isShowingIntroOnLeft ? 'معروضة عاليسار ◀' : 'مشاهدة الحصة 🎬'}</span>
                   </button>
                 </div>
               </div>
@@ -1398,8 +1525,85 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
           </div>
 
           {/* ================= LEFT SIDE (اليسار): VIDEO PLAYER ================= */}
-          <div className="lg:col-span-7 xl:col-span-8 space-y-4">
-            {(() => {
+          <div id="left-video-player-container" className="lg:col-span-7 xl:col-span-8 space-y-4">
+            {isShowingIntroOnLeft ? (
+              <div
+                className={`rounded-3xl border-2 overflow-hidden shadow-2xl p-4 md:p-6 transition-all ${
+                  isDarkMode ? 'bg-slate-900/95 border-amber-500/40 backdrop-blur-xl' : 'bg-white border-amber-300 shadow-md'
+                }`}
+              >
+                {/* Intro Video Top Bar */}
+                <div className={`flex flex-wrap items-center justify-between gap-3 p-3.5 mb-4 rounded-2xl border ${
+                  isDarkMode ? 'bg-gradient-to-r from-amber-950/60 via-slate-800 to-slate-800 border-amber-500/30' : 'bg-amber-50 border-amber-200'
+                }`}>
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-9 h-9 rounded-xl bg-amber-500 flex items-center justify-center text-slate-950 font-black shrink-0 shadow-md">
+                      <Film className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs md:text-sm font-black text-amber-500">
+                          الحصة التعريفية لشرح المنصة 🎬
+                        </span>
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30 font-bold">
+                          معروضة الآن عاليسار
+                        </span>
+                      </div>
+                      <p className={`text-[11px] ${isDarkMode ? 'text-slate-400' : 'text-slate-600 font-medium'}`}>
+                        شاهد فيديو التوجيهات لشرح طريقة المذاكرة والتدرب لتحقيق المئوية بإذن الله
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      pauseAllVideos();
+                      setIsShowingIntroOnLeft(false);
+                    }}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white text-xs font-bold transition border border-slate-700 cursor-pointer shadow-sm"
+                  >
+                    <span>العودة لشروحات المصادر</span>
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {/* Video Container (No download option on 3 dots) */}
+                <div className="aspect-video w-full rounded-2xl overflow-hidden bg-black relative shadow-inner border border-slate-800">
+                  {systemSettings.introLesson?.videoUrl ? (
+                    <video
+                      ref={introVideoRef}
+                      key="intro-left-player"
+                      src={systemSettings.introLesson.videoUrl}
+                      controls
+                      controlsList="nodownload"
+                      onContextMenu={(e) => e.preventDefault()}
+                      preload="metadata"
+                      autoPlay={false}
+                      playsInline
+                      className="w-full h-full object-contain"
+                    />
+                  ) : (
+                    <div className="w-full h-full flex flex-col items-center justify-center p-8 text-center text-slate-500 space-y-2">
+                      <Video className="w-12 h-12 stroke-[1.5] opacity-40" />
+                      <p className="text-sm font-bold">لم يتم رفع فيديو الحصة التعريفية بعد من لوحة التحكم</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Intro Info */}
+                <div className="mt-5 space-y-2">
+                  <h2 className={`text-xl md:text-2xl font-black ${isDarkMode ? 'text-white' : 'text-slate-950'}`}>
+                    {systemSettings.introLesson?.title || 'الحصة التعريفية لشرح المنصة'}
+                  </h2>
+                  {systemSettings.introLesson?.description && (
+                    <p className={`text-sm leading-relaxed pt-1 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
+                      {systemSettings.introLesson.description}
+                    </p>
+                  )}
+                </div>
+              </div>
+            ) : (() => {
               const activeVideoItem = activeVideo
                 ? (contentItems.find((i) => i.id === activeVideo.id) || activeVideo)
                 : null;
@@ -1506,7 +1710,11 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                       key={activeVideoItem.id}
                       src={activeVideoItem.url}
                       controls
+                      controlsList="nodownload"
+                      onContextMenu={(e) => e.preventDefault()}
                       preload="metadata"
+                      autoPlay={false}
+                      playsInline
                       onEnded={() => handleVideoEnded(activeVideoItem.id)}
                       className="w-full h-full object-contain"
                     />
@@ -1998,6 +2206,29 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
         isDarkMode={isDarkMode}
       />
 
+      {/* المميزات Modal */}
+      <FeaturesModal
+        isOpen={showFeaturesModal}
+        onClose={() => setShowFeaturesModal(false)}
+        currentUser={currentUser}
+        systemSettings={systemSettings}
+        isDarkMode={isDarkMode}
+        sections={sections}
+        resources={resources}
+        contentItems={contentItems}
+        onStartDiagnosticExam={(examData) => {
+          pauseAllVideos();
+          setActiveExam({
+            id: `diag_${Date.now()}`,
+            title: examData.title,
+            questions: examData.questions,
+            isTimed: examData.isTimed,
+            durationMinutes: examData.durationMinutes,
+            targetPercentage: examData.targetPercentage || 85,
+          });
+        }}
+      />
+
       {/* ================= MODAL: الحصة التعريفية ================= */}
       {showIntroModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/90 backdrop-blur-md animate-in fade-in duration-200">
@@ -2042,14 +2273,18 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
             <div className="p-4 sm:p-6 space-y-4 overflow-y-auto">
               <div className="aspect-video w-full rounded-2xl overflow-hidden bg-black shadow-inner">
                 {systemSettings.introLesson?.videoUrl ? (
-                  <video
-                    ref={introVideoRef}
-                    key={systemSettings.introLesson.videoUrl}
-                    src={systemSettings.introLesson.videoUrl}
-                    controls
-                    preload="metadata"
-                    className="w-full h-full object-contain"
-                  />
+                    <video
+                      ref={introVideoRef}
+                      key={systemSettings.introLesson.videoUrl}
+                      src={systemSettings.introLesson.videoUrl}
+                      controls
+                      controlsList="nodownload"
+                      onContextMenu={(e) => e.preventDefault()}
+                      preload="metadata"
+                      autoPlay={false}
+                      playsInline
+                      className="w-full h-full object-contain"
+                    />
                 ) : (
                   <div className="w-full h-full flex flex-col items-center justify-center p-8 text-center text-slate-500 space-y-2">
                     <Video className="w-12 h-12 stroke-[1.5] opacity-40" />
