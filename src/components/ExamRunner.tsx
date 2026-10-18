@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Clock,
   CheckCircle2,
@@ -24,6 +24,10 @@ import {
   Trash2,
   ZoomIn,
   ZoomOut,
+  User,
+  FileText,
+  Calculator,
+  BookOpen,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { StudentUser, ExamQuestion, FolderItem } from '../types';
@@ -57,6 +61,7 @@ interface ExamRunnerProps {
   onFinishExam: () => void;
   onExit: () => void;
   isTimedInitial?: boolean;
+  examSystem?: 'nimr' | 'standard';
   durationMinutes?: number;
   targetPercentage?: number;
   isDarkMode?: boolean;
@@ -74,6 +79,7 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
   onFinishExam,
   onExit,
   isTimedInitial = false,
+  examSystem = 'nimr',
   durationMinutes,
   targetPercentage = 90,
   isDarkMode = true,
@@ -99,6 +105,15 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
   const [selectedAnswers, setSelectedAnswers] = useState<Record<number, number>>({});
   const [isFinished, setIsFinished] = useState(false);
   const [isTimed] = useState(isTimedInitial);
+
+  // Exam system mode: 'nimr' (Tiger Qiyas layout) or 'standard' (Platform layout)
+  const [systemMode, setSystemMode] = useState<'nimr' | 'standard'>(examSystem || 'nimr');
+
+  useEffect(() => {
+    if (examSystem) {
+      setSystemMode(examSystem);
+    }
+  }, [examSystem]);
 
   // 1. Whiteboard visibility toggle: on desktop (>=1024px) start open, on mobile (<1024px) default closed so question is neatly framed in phone
   const [isWhiteboardOpen, setIsWhiteboardOpen] = useState(() => {
@@ -128,6 +143,23 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
   // 5. Zoom Question Image Lightbox
   const [zoomedImageUrl, setZoomedImageUrl] = useState<string | null>(null);
   const [imageZoomScale, setImageZoomScale] = useState<number>(1);
+
+  // 6. Section Instructions, Exam Instructions, and Equations Modals (المستطيلات الأربعة تحت الأسئلة)
+  const [showSectionModal, setShowSectionModal] = useState(false);
+  const [showExamInstructionsModal, setShowExamInstructionsModal] = useState(false);
+  const [showEquationsModal, setShowEquationsModal] = useState(false);
+
+  // Student National ID & Random Reference Code (رقم الهوية وجنبيه أرقام عشوائية)
+  const nationalId = useMemo(() => {
+    if (currentUser?.nationalId) return currentUser.nationalId;
+    if (currentUser?.phone && currentUser.phone.length >= 9) return `10${currentUser.phone.slice(-8)}`;
+    const hash = Math.abs((currentUser?.id || 'std').split('').reduce((acc, c) => acc * 31 + c.charCodeAt(0), 10842918));
+    return `10${String(hash % 90000000 + 10000000)}`;
+  }, [currentUser]);
+
+  const randomSessionDigits = useMemo(() => {
+    return Math.floor(100000 + Math.random() * 900000).toString();
+  }, []);
 
   // Calculate timer in seconds
   const totalSeconds = (durationMinutes && durationMinutes > 0)
@@ -1279,16 +1311,420 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
   // Calculate progress percent
   const progressPercent = Math.round(((currentIdx + 1) / safeQuestions.length) * 100);
 
+  // ================= 5. NIKR (TIGER) EXAM SYSTEM VIEW (نظام نمر) =================
+  // المواصفات المطلوبة لنظام نمر:
+  // - اللون الأخضر فوق (شريط علوي متدرج بالأخضر الزمردي الفخم)
+  // - المعلومات فوق على اليسار (بيانات الطالب + المؤقت + الهدف + عداد الأسئلة + السبورة + إنهاء)
+  // - صورة السؤال والاختيارات على اليمين (أول عنصر في تخطيط RTL)
+  // - عدد وقائمة الأسئلة على اليسار (ثاني عنصر في تخطيط RTL)
+  function renderNimrView() {
+    return (
+      <div className="flex flex-col gap-3 flex-1 min-h-0">
+        {/* ================= 1. الشريط العلوي الأخضر الفخم (مع اللون الاخضر فوق والمعلومات فوق عاليسار) ================= */}
+        <div className="rounded-2xl overflow-hidden shadow-2xl border border-emerald-500/50 shrink-0">
+          {/* خط إضاءة علوي باللون الأخضر المميز */}
+          <div className="h-1.5 w-full bg-gradient-to-r from-emerald-400 via-teal-300 to-emerald-500" />
+
+          <div className="bg-gradient-to-r from-emerald-950 via-emerald-900 to-teal-950 p-2.5 sm:px-6 flex flex-col md:flex-row items-center justify-between gap-3 text-white">
+            {/* الجانب الأيمن (في RTL): زر الخروج + شعار نظام نمر + عنوان الاختبار */}
+            <div className="flex items-center gap-2.5">
+              <button
+                onClick={handleRequestExit}
+                className="p-2 rounded-xl bg-emerald-900/80 hover:bg-emerald-800 text-emerald-100 hover:text-white border border-emerald-600/50 transition cursor-pointer shrink-0 shadow-sm"
+                title="الخروج من الاختبار والعودة للمنصة"
+              >
+                <ArrowRight className="w-4 h-4" />
+              </button>
+
+              <div className="flex items-center gap-2">
+                <span className="px-2.5 py-1 rounded-xl bg-emerald-500/25 border border-emerald-400/50 font-black text-xs text-emerald-200 flex items-center gap-1.5 shadow-sm">
+                  <span className="text-sm">🐅</span>
+                  <span>نظام نمر</span>
+                </span>
+                <h2 className="text-xs sm:text-base font-black truncate max-w-[180px] sm:max-w-xs md:max-w-md">
+                  {examTitle}
+                </h2>
+              </div>
+            </div>
+
+            {/* الجانب الأيسر (والمعلومات فوق عاليسار): اسم الطالب + الوقت + الهدف + عداد الأسئلة + إنهاء الاختبار */}
+            <div className="flex items-center justify-between md:justify-end w-full md:w-auto gap-2 sm:gap-2.5 flex-wrap">
+              {/* اسم الطالب */}
+              <div className="hidden lg:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-900/70 border border-emerald-500/40 text-xs font-black text-emerald-100 shadow-sm">
+                <User className="w-3.5 h-3.5 text-emerald-300" />
+                <span>الطالب: {currentUser.name || 'طالب'}</span>
+              </div>
+
+              {/* مؤقت الاختبار أو تدريب حر */}
+              <div>
+                {isTimed ? (
+                  <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border font-mono font-black text-xs sm:text-sm shadow-sm ${
+                    timeLeft < 60
+                      ? 'bg-rose-500/30 border-rose-400 text-rose-200 animate-pulse'
+                      : 'bg-emerald-800/80 border-emerald-400/60 text-emerald-100'
+                  }`}>
+                    <Clock className="w-3.5 h-3.5 text-emerald-300" />
+                    <span>{formatTime(timeLeft)}</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-emerald-800/60 border border-emerald-500/40 text-[11px] font-black text-emerald-200">
+                    <span>تدريب حر</span>
+                  </div>
+                )}
+              </div>
+
+              {/* نسبة الهدف المستهدف */}
+              {targetPercentage && (
+                <div className="hidden sm:flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-emerald-900/70 border border-emerald-500/40 text-xs font-black text-emerald-200">
+                  <Target className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>الهدف: %{targetPercentage}</span>
+                </div>
+              )}
+
+              {/* عداد الأسئلة ومؤشر الإنجاز */}
+              <div className="text-xs font-black px-2.5 py-1.5 rounded-xl bg-emerald-900/70 border border-emerald-500/40 text-emerald-100">
+                <span>سؤال {currentIdx + 1}/{safeQuestions.length}</span>
+              </div>
+
+              {/* زر إنهاء الاختبار وتسليم الإجابات */}
+              <button
+                type="button"
+                onClick={finishTest}
+                className="px-3.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-black text-xs sm:text-sm transition shadow-lg shadow-rose-600/30 cursor-pointer"
+              >
+                إنهاء وتسليم
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* ================= 2. جسم الاختبار في نظام نمر =================
+            في تخطيط RTL:
+            - العنصر الأول يظهر على اليمين: صورة السؤال والاختيارات
+            - العنصر الثاني يظهر على اليسار: عدد وقائمة الأسئلة
+        */}
+        <div className="flex-1 flex flex-col lg:flex-row gap-3 min-h-0 overflow-y-auto lg:overflow-hidden">
+          {/* ================= أ. صورة السؤال والاختيارات عاليمين (Right Column in RTL) ================= */}
+          <div className={`flex-1 min-w-0 flex flex-col justify-between border-2 border-emerald-500/40 rounded-3xl p-4 sm:p-6 md:p-7 shadow-2xl backdrop-blur-xl overflow-y-auto ${
+            isDarkMode ? 'bg-slate-900/90 text-white' : 'bg-white text-slate-900'
+          }`}>
+            {/* Question Header */}
+            <div>
+              <div className="flex items-center justify-between pb-3.5 border-b border-emerald-500/20 mb-4 gap-2 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <span className="px-3 py-1 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-black text-xs md:text-sm">
+                    سؤال رقم {currentIdx + 1}
+                  </span>
+                  {currentQCustomFolders.map((cf) => (
+                    <span
+                      key={cf.id}
+                      className="text-[11px] px-2.5 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 font-bold"
+                    >
+                      📁 {cf.title}
+                    </span>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowFolderModalForQ(currentQ)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-black transition shadow-sm cursor-pointer ${
+                      isDarkMode
+                        ? 'bg-slate-800 hover:bg-slate-700 text-amber-300 border-amber-500/30'
+                        : 'bg-amber-50 hover:bg-amber-100 text-amber-950 border-amber-400'
+                    }`}
+                    title="إضافة السؤال إلى مجلد أو حذفه منه"
+                  >
+                    <FolderPlus className="w-4 h-4 text-amber-500" />
+                    <span>إدارة مجلدات السؤال</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Question Text */}
+              <h3 className={`text-base sm:text-lg md:text-xl font-black leading-relaxed ${
+                isDarkMode ? 'text-white' : 'text-slate-950'
+              }`}>
+                {currentQ.questionText}
+              </h3>
+
+              {/* Question Image (صورة السؤال عاليمين) */}
+              {currentQ.imageUrl && (
+                <div className="relative group max-w-xl mx-auto w-full my-4">
+                  <div
+                    onClick={() => {
+                      setZoomedImageUrl(currentQ.imageUrl || null);
+                      setImageZoomScale(1);
+                    }}
+                    className="rounded-2xl overflow-hidden border-2 border-emerald-500/40 hover:border-emerald-400 bg-black/40 max-h-72 flex items-center justify-center p-2 cursor-pointer transition shadow-xl"
+                    title="انقر لتكبير صورة السؤال"
+                  >
+                    <img
+                      src={currentQ.imageUrl}
+                      alt="صورة السؤال"
+                      className="max-h-64 max-w-full object-contain rounded-xl transition-transform duration-200 group-hover:scale-[1.01]"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setZoomedImageUrl(currentQ.imageUrl || null);
+                      setImageZoomScale(1);
+                    }}
+                    className="absolute top-2 left-2 px-3 py-1.5 rounded-xl bg-black/80 hover:bg-black text-amber-300 text-xs font-bold border border-amber-500/40 flex items-center gap-1.5 shadow-lg backdrop-blur-md transition cursor-pointer"
+                  >
+                    <ZoomIn className="w-3.5 h-3.5 text-amber-400" />
+                    <span>تكبير الصورة 🔍</span>
+                  </button>
+                </div>
+              )}
+
+              {/* 4 Choices / Options (الاختيارات عاليمين) */}
+              <div className="space-y-3 pt-4">
+                {currentQ.options.map((option, optIdx) => {
+                  const isSelected = selectedAnswers[currentIdx] === optIdx;
+                  const letter = optIdx === 0 ? 'أ' : optIdx === 1 ? 'ب' : optIdx === 2 ? 'ج' : 'د';
+
+                  return (
+                    <button
+                      key={optIdx}
+                      type="button"
+                      onClick={() => handleSelectOption(currentIdx, optIdx)}
+                      className={`w-full text-right p-4 rounded-2xl border-2 transition-all duration-150 flex items-center justify-between text-xs sm:text-sm md:text-base font-black cursor-pointer ${
+                        isSelected
+                          ? 'bg-emerald-600/25 border-emerald-400 text-white ring-2 ring-emerald-400 shadow-lg shadow-emerald-500/10'
+                          : isDarkMode
+                          ? 'bg-slate-800/60 hover:bg-slate-800 border-slate-700/80 hover:border-emerald-500/50 text-slate-200'
+                          : 'bg-white hover:bg-emerald-50/50 border-slate-300 hover:border-emerald-400 text-slate-900 shadow-sm'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3.5">
+                        <span className={`w-8 h-8 rounded-xl flex items-center justify-center text-xs md:text-sm font-black transition-all ${
+                          isSelected
+                            ? 'bg-emerald-500 text-slate-950 shadow-md font-black'
+                            : isDarkMode
+                            ? 'bg-slate-700 text-slate-200'
+                            : 'bg-slate-100 text-slate-800 border border-slate-300'
+                        }`}>
+                          {letter}
+                        </span>
+                        <span className={isSelected ? 'font-black text-white' : ''}>{option}</span>
+                      </div>
+
+                      {isSelected && (
+                        <div className="w-6 h-6 rounded-full bg-emerald-500 text-slate-950 flex items-center justify-center shrink-0">
+                          <Check className="w-4 h-4 stroke-[3]" />
+                        </div>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Bottom Question Navigation Toolbar */}
+            <div className="pt-5 mt-4 border-t border-emerald-500/20 flex items-center justify-between gap-3 flex-wrap">
+              <button
+                type="button"
+                disabled={currentIdx === 0}
+                onClick={() => setCurrentIdx((i) => Math.max(0, i - 1))}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs md:text-sm border border-slate-700 transition cursor-pointer"
+              >
+                <ArrowRight className="w-4 h-4" />
+                <span>السؤال السابق</span>
+              </button>
+
+              {currentIdx < safeQuestions.length - 1 ? (
+                <button
+                  type="button"
+                  onClick={() => setCurrentIdx((i) => Math.min(safeQuestions.length - 1, i + 1))}
+                  className="flex items-center gap-2 px-6 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs md:text-sm shadow-lg shadow-emerald-600/30 transition cursor-pointer"
+                >
+                  <span>السؤال التالي</span>
+                  <ArrowLeft className="w-4 h-4" />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={finishTest}
+                  className="flex items-center gap-2 px-6 py-2.5 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black text-xs md:text-sm shadow-xl shadow-emerald-500/30 transition cursor-pointer"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>إنهاء وتسليم الإجابات</span>
+                </button>
+              )}
+            </div>
+
+          </div>
+
+          {/* ================= ب. عدد الاسئلة عاليسار (Left Column in RTL) ================= */}
+          <div className={`w-full lg:w-72 xl:w-80 shrink-0 flex flex-col justify-between border-2 border-emerald-500/40 rounded-3xl p-3.5 sm:p-4 shadow-2xl backdrop-blur-xl ${
+            isDarkMode ? 'bg-slate-900/90 text-white' : 'bg-white text-slate-900'
+          }`}>
+            {/* 1. فوق الأسئلة: صورة شخص مجهول + اسم الطالب + رقم الهوية + أرقام عشوائية */}
+            <div className="p-3 rounded-2xl bg-slate-800/80 border border-emerald-500/30 flex flex-col items-center text-center shadow-md mb-2.5">
+              {/* صورة شخص مجهول */}
+              <div className="w-16 h-20 sm:w-20 sm:h-24 rounded-2xl bg-gradient-to-b from-slate-700 via-slate-800 to-slate-900 border-2 border-emerald-500/50 flex flex-col items-center justify-center shadow-inner relative overflow-hidden mb-2">
+                <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-slate-500/80 flex items-center justify-center mt-1 mb-1">
+                  <User className="w-5 h-5 sm:w-6 sm:h-6 text-slate-300" />
+                </div>
+                <div className="w-12 sm:w-14 h-6 sm:h-7 rounded-t-full bg-slate-500/80" />
+                <span className="absolute bottom-0.5 inset-x-0 text-[8px] font-black bg-black/60 text-emerald-300 py-0.5">
+                  صورة المرشح
+                </span>
+              </div>
+
+              {/* وتحتيه اسم الطالب في المنصة */}
+              <h4 className="text-xs sm:text-sm font-black text-white truncate max-w-full">
+                {currentUser.name || 'طالب المنصة'}
+              </h4>
+
+              {/* وتحتيه رقم الهوية وجنبيه ارقام عشوائية */}
+              <div className="mt-1.5 flex items-center justify-center gap-1.5 flex-wrap text-[10px] sm:text-[11px] font-mono">
+                <span className="px-2 py-0.5 rounded-lg bg-emerald-950/90 border border-emerald-500/40 text-emerald-300 font-bold">
+                  الهوية: {nationalId}
+                </span>
+                <span className="px-2 py-0.5 rounded-lg bg-slate-900/90 border border-slate-700 text-amber-300 font-bold" title="رقم الجلسة المرجعي العشوائي">
+                  #{randomSessionDigits}
+                </span>
+              </div>
+            </div>
+
+            {/* Header: عداد وقائمة الأسئلة */}
+            <div className="pb-2 border-b border-emerald-500/20">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <div className="p-1.5 rounded-xl bg-emerald-500/20 text-emerald-400">
+                    <HelpCircle className="w-3.5 h-3.5" />
+                  </div>
+                  <div>
+                    <h3 className="font-black text-xs sm:text-sm text-emerald-400">
+                      قائمة الأسئلة
+                    </h3>
+                    <span className="text-[10px] text-slate-400 font-bold block">
+                      إجمالي {safeQuestions.length} سؤال
+                    </span>
+                  </div>
+                </div>
+                <span className="text-xs font-mono font-black px-2 py-0.5 rounded-lg bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                  %{progressPercent}
+                </span>
+              </div>
+
+              {/* Status Legend */}
+              <div className="flex items-center justify-between text-[11px] pt-1.5 text-slate-400 font-bold">
+                <span className="flex items-center gap-1 text-emerald-400">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />
+                  <span>تم: {answeredCount}</span>
+                </span>
+                <span className="flex items-center gap-1 text-slate-400">
+                  <span className="w-2 h-2 rounded-full bg-slate-600 inline-block" />
+                  <span>متبقي: {safeQuestions.length - answeredCount}</span>
+                </span>
+              </div>
+            </div>
+
+            {/* Scrollable Questions Grid */}
+            <div className="py-2 flex-1 overflow-y-auto max-h-[28vh] lg:max-h-[32vh] pr-1">
+              <div className="grid grid-cols-5 gap-1.5">
+                {safeQuestions.map((_, i) => {
+                  const isCurrent = i === currentIdx;
+                  const isAnswered = selectedAnswers[i] !== undefined;
+
+                  let btnClass = 'bg-slate-800/80 text-slate-300 border-slate-700 hover:bg-slate-700';
+                  if (isCurrent) {
+                    btnClass = 'bg-emerald-500 text-slate-950 font-black ring-2 ring-emerald-300 shadow-md scale-105';
+                  } else if (isAnswered) {
+                    btnClass = 'bg-emerald-600/30 text-emerald-300 border-emerald-500/60 font-black';
+                  }
+
+                  return (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => setCurrentIdx(i)}
+                      className={`h-8 rounded-xl text-xs font-bold border transition-all flex items-center justify-center relative cursor-pointer ${btnClass}`}
+                      title={`الانتقال للسؤال رقم ${i + 1}`}
+                    >
+                      <span>{i + 1}</span>
+                      {isAnswered && !isCurrent && (
+                        <span className="absolute bottom-1 right-1 w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* وتحت الاسئلة عاليسار ضيف 4 مستطيلات: تعليمات القسم وتعليمات الاختبار والمعادلات وانهاء الاختبار باللون الاحمر */}
+            <div className="pt-2.5 border-t border-emerald-500/20 space-y-2">
+              <div className="grid grid-cols-2 gap-2">
+                {/* مستطيل 1: تعليمات القسم */}
+                <button
+                  type="button"
+                  onClick={() => setShowSectionModal(true)}
+                  className="h-10 px-2 rounded-xl bg-slate-800/90 hover:bg-slate-750 text-slate-200 hover:text-white border border-slate-700 hover:border-emerald-500/50 text-[11px] font-black transition flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
+                  title="عرض تعليمات القسم الحالي"
+                >
+                  <FileText className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  <span className="truncate">تعليمات القسم</span>
+                </button>
+
+                {/* مستطيل 2: تعليمات الاختبار */}
+                <button
+                  type="button"
+                  onClick={() => setShowExamInstructionsModal(true)}
+                  className="h-10 px-2 rounded-xl bg-slate-800/90 hover:bg-slate-750 text-slate-200 hover:text-white border border-slate-700 hover:border-emerald-500/50 text-[11px] font-black transition flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
+                  title="عرض تعليمات وضوابط الاختبار العامة"
+                >
+                  <HelpCircle className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                  <span className="truncate">تعليمات الاختبار</span>
+                </button>
+
+                {/* مستطيل 3: المعادلات */}
+                <button
+                  type="button"
+                  onClick={() => setShowEquationsModal(true)}
+                  className="h-10 px-2 rounded-xl bg-slate-800/90 hover:bg-slate-750 text-slate-200 hover:text-white border border-slate-700 hover:border-emerald-500/50 text-[11px] font-black transition flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
+                  title="عرض ورقة القوانين والمعادلات الرياضية"
+                >
+                  <Calculator className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                  <span className="truncate">المعادلات</span>
+                </button>
+
+                {/* مستطيل 4: انهاء الاختبار باللون الاحمر */}
+                <button
+                  type="button"
+                  onClick={finishTest}
+                  className="h-10 px-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-black border border-rose-500 text-[11px] transition flex items-center justify-center gap-1.5 shadow-lg shadow-rose-600/30 cursor-pointer"
+                  title="إنهاء وتسليم إجابات الاختبار"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                  <span className="truncate">إنهاء الاختبار</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={`flex flex-col min-h-screen lg:h-screen p-2 sm:p-3 md:p-4 gap-2 sm:gap-3 max-w-[1900px] mx-auto w-full pb-4 sm:pb-6 overflow-x-hidden ${
       isDarkMode ? 'text-white' : 'text-black'
     }`}>
-      {/* Top Exam Header: Perfectly responsive on Mobile and Desktop */}
-      <div className={`border rounded-2xl p-2.5 sm:p-3 md:px-6 shadow-xl shrink-0 ${
-        isDarkMode ? 'bg-slate-900/95 border-slate-800' : 'bg-white border-slate-200'
-      }`}>
-        {/* Mobile View: 2 neat rows */}
-        <div className="flex flex-col gap-2 md:hidden">
+      {systemMode === 'nimr' ? (
+        renderNimrView()
+      ) : (
+        <>
+          {/* Top Exam Header: Perfectly responsive on Mobile and Desktop */}
+          <div className={`border rounded-2xl p-2.5 sm:p-3 md:px-6 shadow-xl shrink-0 ${
+            isDarkMode ? 'bg-slate-900/95 border-slate-800' : 'bg-white border-slate-200'
+          }`}>
+            {/* Mobile View: 2 neat rows */}
+            <div className="flex flex-col gap-2 md:hidden">
           {/* Row 1: Back + Title + Timer */}
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 min-w-0">
@@ -1708,6 +2144,8 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
           </div>
         )}
       </div>
+        </>
+      )}
 
       {/* ================= MODAL: ZOOMED QUESTION IMAGE LIGHTBOX ("تكبير صورة السؤال") ================= */}
       {zoomedImageUrl && (
@@ -1783,6 +2221,264 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
 
       {/* ================= MODAL: هل تود حذف الأسئلة الصحيحة أم لا؟ ================= */}
       {renderDeleteCorrectPromptModal()}
+
+      {/* ================= MODAL 1: تعليمات القسم ================= */}
+      {showSectionModal && (
+        <div
+          onClick={() => setShowSectionModal(false)}
+          className="fixed inset-0 z-[99999] flex items-center justify-center p-3 sm:p-6 bg-black/80 backdrop-blur-md animate-in fade-in duration-200"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className={`w-full max-w-xl max-h-[85vh] overflow-y-auto rounded-3xl border-2 border-emerald-500/40 p-5 sm:p-6 shadow-2xl flex flex-col justify-between space-y-4 text-right ${
+              isDarkMode ? 'bg-slate-900 text-white' : 'bg-white text-slate-900'
+            }`}
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-emerald-500/20">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 rounded-2xl bg-emerald-500/20 text-emerald-400">
+                  <FileText className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-black text-emerald-400">
+                    تعليمات القسم الحالي
+                  </h3>
+                  <span className="text-xs text-slate-400">
+                    {examTitle}
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSectionModal(false)}
+                className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs sm:text-sm leading-relaxed">
+              <div className="p-3.5 rounded-2xl bg-emerald-950/40 border border-emerald-500/30 flex items-center justify-between">
+                <span className="font-bold text-emerald-200">عدد أسئلة هذا القسم:</span>
+                <span className="font-black text-emerald-400 font-mono text-sm">{safeQuestions.length} سؤال</span>
+              </div>
+
+              <div className="p-3.5 rounded-2xl bg-slate-800/60 border border-slate-700 space-y-2">
+                <h4 className="font-black text-emerald-300 flex items-center gap-1.5">
+                  <span>📌</span>
+                  <span>إرشادات الإجابة في القسم:</span>
+                </h4>
+                <ul className="list-disc list-inside space-y-1.5 text-slate-300 text-xs sm:text-sm">
+                  <li>أجب عن جميع الأسئلة؛ لا يوجد خصم أو درجات سالبة للإجابات الخاطئة.</li>
+                  <li>يمكنك التنقل بحرية بين جميع أسئلة القسم باستخدام شريط أرقام الأسئلة على اليسار.</li>
+                  <li>السؤال الذي تم اختياره يظهر باللون الأخضر المميز مع تحديد خيارك فوراً.</li>
+                  <li>يمكنك مراجعة وتعديل أي إجابة في أي وقت طالما لم يتم الضغط على "إنهاء الاختبار".</li>
+                  <li>ينصح بتخصيص حوالي دقيقة واحدة لكل سؤال لضمان استغلال الوقت على أكمل وجه.</li>
+                </ul>
+              </div>
+            </div>
+
+            <div className="pt-3 border-t border-emerald-500/20 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowSectionModal(false)}
+                className="px-6 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs sm:text-sm shadow-lg shadow-emerald-600/30 transition cursor-pointer"
+              >
+                فهمت، متابعة الاختبار ✓
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= MODAL 2: تعليمات الاختبار ================= */}
+      {showExamInstructionsModal && (
+        <div
+          onClick={() => setShowExamInstructionsModal(false)}
+          className="fixed inset-0 z-[99999] flex items-center justify-center p-3 sm:p-6 bg-black/80 backdrop-blur-md animate-in fade-in duration-200"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className={`w-full max-w-xl max-h-[85vh] overflow-y-auto rounded-3xl border-2 border-blue-500/40 p-5 sm:p-6 shadow-2xl flex flex-col justify-between space-y-4 text-right ${
+              isDarkMode ? 'bg-slate-900 text-white' : 'bg-white text-slate-900'
+            }`}
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-blue-500/20">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 rounded-2xl bg-blue-500/20 text-blue-400">
+                  <HelpCircle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-black text-blue-400">
+                    تعليمات وضوابط الاختبار المحوسب
+                  </h3>
+                  <span className="text-xs text-slate-400">
+                    نظام نمر (محاكي قياس الفعلي)
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowExamInstructionsModal(false)}
+                className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs sm:text-sm leading-relaxed">
+              <div className="p-3.5 rounded-2xl bg-blue-950/40 border border-blue-500/30 space-y-2">
+                <h4 className="font-black text-blue-300 flex items-center gap-1.5">
+                  <span>🎯</span>
+                  <span>الضوابط العامة للاختبار:</span>
+                </h4>
+                <ul className="list-disc list-inside space-y-1.5 text-slate-300 text-xs sm:text-sm">
+                  <li>صمم هذا المحاكي لمحاكاة شاشات ونظام قياس المحوسب بدقة تامة.</li>
+                  <li>تتضمن الشاشة صورة وبيانات الطالب ورقم الهوية والرقم المرجعي للجلسة.</li>
+                  <li>الخيارات الأربعة (أ، ب، ج، د) تختار بنقرة واحدة وتُحفظ تلقائياً دون تأخير.</li>
+                  <li>زر "تكبير الصورة 🔍" يتيح لك فحص الرسوم البيانية والأشكال الهندسية بوضوح كامل.</li>
+                  <li>زر "المعادلات" يعرض لك القوانين الرياضية الشائعة للاستعانة بها أثناء الحل.</li>
+                  <li>يمكنك إضافة السؤال للمجلدات وحفظه بالضغط على زر "إدارة مجلدات السؤال".</li>
+                  <li>عند الضغط على "إنهاء الاختبار" يتم تسليم إجاباتك وعرض التقرير وتحليل المستوى.</li>
+                </ul>
+              </div>
+            </div>
+
+            <div className="pt-3 border-t border-blue-500/20 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowExamInstructionsModal(false)}
+                className="px-6 py-2.5 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white font-black text-xs sm:text-sm shadow-lg shadow-blue-600/30 transition cursor-pointer"
+              >
+                إغلاق والعودة للحل ✓
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= MODAL 3: ورقة المعادلات والقوانين ================= */}
+      {showEquationsModal && (
+        <div
+          onClick={() => setShowEquationsModal(false)}
+          className="fixed inset-0 z-[99999] flex items-center justify-center p-3 sm:p-6 bg-black/85 backdrop-blur-md animate-in fade-in duration-200"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className={`w-full max-w-3xl max-h-[88vh] overflow-y-auto rounded-3xl border-2 border-amber-500/40 p-5 sm:p-7 shadow-2xl flex flex-col justify-between space-y-4 text-right ${
+              isDarkMode ? 'bg-slate-900 text-white' : 'bg-white text-slate-900'
+            }`}
+          >
+            <div className="flex items-center justify-between pb-3.5 border-b border-amber-500/20">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 rounded-2xl bg-amber-500/20 text-amber-400">
+                  <Calculator className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-black text-amber-400">
+                    ورقة القوانين والمعادلات الرياضية (قياس)
+                  </h3>
+                  <span className="text-xs text-slate-400">
+                    القوانين المعتمدة للاختبارات الكمية للقدرات والتحصيلي
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowEquationsModal(false)}
+                className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4 text-xs sm:text-sm leading-relaxed overflow-y-auto max-h-[60vh] pr-1">
+              {/* قسم 1: الهندسة والمساحات */}
+              <div className="p-4 rounded-2xl bg-slate-800/70 border border-emerald-500/30 space-y-2.5">
+                <h4 className="font-black text-emerald-400 text-sm flex items-center gap-2">
+                  <span>📐</span>
+                  <span>الهندسة والمساحات والأشكال:</span>
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 text-slate-200">
+                  <div className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-700/60">
+                    <span className="font-bold text-amber-300">مساحة المثلث:</span> ½ × القاعدة × الارتفاع
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-700/60">
+                    <span className="font-bold text-amber-300">مساحة المربع:</span> (الضلع)² = ½ × (القطر)²
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-700/60">
+                    <span className="font-bold text-amber-300">مساحة المستطيل:</span> الطول × العرض
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-700/60">
+                    <span className="font-bold text-amber-300">مساحة الدائرة:</span> ط × نق² | <span className="font-bold text-amber-300">محيطها:</span> 2 × ط × نق
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-700/60 md:col-span-2">
+                    <span className="font-bold text-emerald-300">نظرية فيثاغورس:</span> (الوتر)² = (الضلع الأول)² + (الضلع الثاني)²
+                    <div className="text-[11px] text-slate-400 mt-1">مثلثات شهيرة: (3، 4، 5) ومضاعفاتها، (5، 12، 13)، (8، 15، 17)</div>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-700/60 md:col-span-2">
+                    <span className="font-bold text-amber-300">مجموع زوايا المثلث:</span> 180° | <span className="font-bold text-amber-300">الرباعي:</span> 360° | <span className="font-bold text-amber-300">المضلع:</span> (ن - 2) × 180°
+                  </div>
+                </div>
+              </div>
+
+              {/* قسم 2: السرعة والحركة */}
+              <div className="p-4 rounded-2xl bg-slate-800/70 border border-blue-500/30 space-y-2.5">
+                <h4 className="font-black text-blue-400 text-sm flex items-center gap-2">
+                  <span>⚡</span>
+                  <span>السرعة والمسافة والزمن:</span>
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 text-slate-200">
+                  <div className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-700/60">
+                    <span className="font-bold text-blue-300">قانون الحركة:</span> المسافة = السرعة × الزمن
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-700/60">
+                    <span className="font-bold text-blue-300">السرعة:</span> المسافة ÷ الزمن | <span className="font-bold text-blue-300">الزمن:</span> المسافة ÷ السرعة
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-700/60 md:col-span-2">
+                    <span className="font-bold text-blue-300">السرعة المتوسطة لذهاب وإياب بنفس المسافة:</span> (2 × ع1 × ع2) ÷ (ع1 + ع2)
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-700/60 md:col-span-2">
+                    <span className="font-bold text-blue-300">زمن اللحاق:</span> فارق المسافة بين الجسمين ÷ فارق السرعتين
+                  </div>
+                </div>
+              </div>
+
+              {/* قسم 3: النسب المئوية والإحصاء والجبر */}
+              <div className="p-4 rounded-2xl bg-slate-800/70 border border-amber-500/30 space-y-2.5">
+                <h4 className="font-black text-amber-400 text-sm flex items-center gap-2">
+                  <span>📊</span>
+                  <span>النسب المئوية والمتوسطات والجبر:</span>
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 text-slate-200">
+                  <div className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-700/60">
+                    <span className="font-bold text-amber-300">النسبة المئوية:</span> (الجزء ÷ الكل) × 100
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-700/60">
+                    <span className="font-bold text-amber-300">المتوسط الحسابي:</span> مجموع القيم ÷ عددها
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-700/60">
+                    <span className="font-bold text-amber-300">فرق بين مربعين:</span> س² - ص² = (س - ص)(س + ص)
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-700/60">
+                    <span className="font-bold text-amber-300">المربع الكامل:</span> (س ± ص)² = س² ± 2س ص + ص²
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="pt-3 border-t border-amber-500/20 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowEquationsModal(false)}
+                className="px-6 py-2.5 rounded-2xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs sm:text-sm shadow-lg shadow-amber-500/30 transition cursor-pointer"
+              >
+                إغلاق ومتابعة الاختبار ✓
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Render Folder Picker Modal */}
       {renderFolderModal()}

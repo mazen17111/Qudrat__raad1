@@ -14,6 +14,8 @@ export interface StudentUser {
   watchedVideoIds?: string[];
   totalExamsTaken?: number;
   averageScore?: number;
+  nationalId?: string;
+  phone?: string;
   createdAt: string;
   lastLoginAt?: string;
 }
