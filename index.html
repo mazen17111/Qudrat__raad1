@@ -11,23 +11,27 @@
     <title>منصة أقسام رعد</title>
     <meta name="description" content="منصة تعليمية متكاملة تشمل الفيديوهات والاختبارات التفاعلية والسبورة الذكية والإحصائيات ومجلدات الطلاب ولوحة تحكم شاملة." />
     <!-- Official Google Search & Browser Favicons (Strict Multiples of 48px & standard ICO with cache buster) -->
-    <link rel="icon" type="image/x-icon" href="/favicon.ico?v=3" />
-    <link rel="shortcut icon" type="image/x-icon" href="/favicon.ico?v=3" />
-    <link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png?v=3" />
-    <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png?v=3" />
-    <link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png?v=3" />
-    <link rel="icon" type="image/png" sizes="48x48" href="/favicon-48x48.png?v=3" />
-    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png?v=3" />
-    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png?v=3" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=3" />
-    <link rel="icon" href="/favicon.png?v=3" />
+    <!-- Official Platform Favicons and Browser Icons -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="alternate icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="shortcut icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/favicon.svg" />
+    <link rel="apple-touch-icon-precomposed" href="/favicon.svg" />
 
-    <!-- Apple Touch Icons & Mobile/Desktop Browser Shortcuts (Cache busted) -->
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=3" />
-    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=3" />
-    <link rel="apple-touch-icon" sizes="192x192" href="/icon-192.png?v=3" />
-    <link rel="apple-touch-icon" sizes="512x512" href="/icon-512.png?v=3" />
-    <link rel="apple-touch-icon-precomposed" sizes="180x180" href="/apple-touch-icon-precomposed.png?v=3" />
+    <!-- Instant Platform Logo Sync on Any Browser Boot -->
+    <script>
+      (function() {
+        try {
+          var savedLogo = localStorage.getItem('raad_platform_logo_url');
+          if (savedLogo) {
+            var iconLinks = document.querySelectorAll("link[rel*='icon'], link[rel*='apple-touch-icon']");
+            iconLinks.forEach(function(link) {
+              link.href = savedLogo;
+            });
+          }
+        } catch (e) {}
+      })();
+    </script>
 
     <!-- Windows & Edge Shortcuts Tile Image -->
     <meta name="msapplication-TileImage" content="/icon-512.png?v=3" />
@@ -81,7 +85,16 @@
     <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800;900&family=Tajawal:wght@400;500;700;800&display=swap" rel="stylesheet">
   </head>
   <body class="font-['Cairo','Tajawal',sans-serif] antialiased">
-    <div id="root"></div>
+    <div id="root">
+      <!-- Instant Boot Splash with Platform Logo on Any Browser -->
+      <div id="initial-boot-splash" style="position: fixed; inset: 0; background: #030712; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 9999; font-family: 'Cairo', system-ui, sans-serif; color: white;">
+        <div style="width: 80px; height: 80px; border-radius: 24px; background: linear-gradient(135deg, #059669, #f59e0b); display: flex; align-items: center; justify-content: center; box-shadow: 0 10px 30px rgba(5,150,105,0.4); margin-bottom: 16px;">
+          <svg style="width: 44px; height: 44px; fill: white;" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+        </div>
+        <h2 style="font-size: 20px; font-weight: 900; margin: 0; letter-spacing: -0.5px;">منصة أقسام رعد</h2>
+        <p style="font-size: 12px; color: #94a3b8; margin: 6px 0 0 0; font-weight: 600;">جاري فتح المنصة...</p>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

@@ -42,6 +42,7 @@ import {
   Minimize2,
   Film,
   Trophy,
+  Zap,
 } from 'lucide-react';
 import {
   StudentUser,
@@ -54,6 +55,7 @@ import {
   IntroLessonConfig,
   FeaturesConfig,
 } from '../types';
+import { BrandLogo } from './BrandLogo';
 import { db, THEME_PRESETS, DEFAULT_SETTINGS } from '../firebase';
 import {
   collection,
@@ -121,6 +123,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
 
   // Active theme selection
   const [selectedThemeId, setSelectedThemeId] = useState(systemSettings.activeTheme?.id || THEME_PRESETS[0].id);
+
+  // Platform Custom Logo State
+  const [platformLogoUrl, setPlatformLogoUrl] = useState<string>(systemSettings.logoUrl || '');
+  const [isUploadingLogo, setIsUploadingLogo] = useState<boolean>(false);
 
   // Intro Lesson State ("الحصة التعريفية")
   const [introLessonState, setIntroLessonState] = useState<IntroLessonConfig>(
@@ -456,6 +462,47 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       console.error('Error saving theme:', err);
       notifySave('حدث خطأ أثناء حفظ التصميم');
     }
+  };
+
+  // 8.1. Save Platform Custom Logo & Favicon
+  const handleSaveLogo = async () => {
+    try {
+      await setDoc(doc(db, 'system_settings', 'global'), {
+        logoUrl: platformLogoUrl.trim(),
+        updatedAt: new Date().toISOString(),
+      }, { merge: true });
+      if (typeof window !== 'undefined' && platformLogoUrl.trim()) {
+        try {
+          localStorage.setItem('raad_platform_logo_url', platformLogoUrl.trim());
+          const iconLinks = document.querySelectorAll<HTMLLinkElement>("link[rel*='icon'], link[rel*='apple-touch-icon']");
+          iconLinks.forEach((link) => {
+            link.href = platformLogoUrl.trim();
+          });
+        } catch (e) {}
+      }
+      notifySave('تم حفظ وتحديث شعار المنصة بنجاح وسيظهر لجميع المتصفحات فورياً! ⚡');
+    } catch (err) {
+      console.error('Error saving logo:', err);
+      notifySave('حدث خطأ أثناء حفظ الشعار');
+    }
+  };
+
+  const handleLogoFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsUploadingLogo(true);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      setPlatformLogoUrl(result);
+      setIsUploadingLogo(false);
+      notifySave(`تم تحميل صورة الشعار "${file.name}"، لا تنس الضغط على حفظ!`);
+    };
+    reader.onerror = () => {
+      setIsUploadingLogo(false);
+      notifySave('حدث خطأ أثناء قراءة ملف الصورة');
+    };
+    reader.readAsDataURL(file);
   };
 
   // 8.5. Save Intro Lesson ("الحصة التعريفية")
@@ -2644,6 +2691,92 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                 <Save className="w-5 h-5" />
                 <span>حفظ وتطبيق التصميم للجميع</span>
               </button>
+            </div>
+
+            {/* ================= PLATFORM LOGO & FAVICON MANAGER ================= */}
+            <div className="p-5 md:p-6 rounded-3xl bg-slate-900/90 border-2 border-emerald-500/40 shadow-xl space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-emerald-500/20">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-2xl bg-emerald-500/20 text-emerald-400">
+                    <Zap className="w-5 h-5 fill-current" />
+                  </div>
+                  <div>
+                    <h3 className="text-base sm:text-lg font-black text-white flex items-center gap-2">
+                      <span>شعار وهوية المنصة (اللوجو والأيقونة لجميع المتصفحات) ⚡</span>
+                    </h3>
+                    <p className="text-xs text-slate-400">
+                      يظهر هذا الشعار لجميع الطلاب عند فتح المنصة من أي متصفح وفي علامة التبويب وعند تشغيل الفيديو كصورة مصغرة
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleSaveLogo}
+                  className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs sm:text-sm shadow-lg shadow-emerald-600/30 transition cursor-pointer"
+                >
+                  <Save className="w-4 h-4" />
+                  <span>حفظ الشعار وتطبيقه للجميع</span>
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-center">
+                {/* Logo Live Preview */}
+                <div className="md:col-span-4 flex flex-col items-center justify-center p-4 rounded-2xl bg-slate-950/80 border border-slate-800 text-center space-y-2">
+                  <span className="text-[11px] font-bold text-slate-400">معاينة الشعار الحالية:</span>
+                  <div className="p-3 rounded-2xl bg-slate-900 border border-emerald-500/30 flex items-center justify-center shadow-lg">
+                    <BrandLogo customLogoUrl={platformLogoUrl || systemSettings.logoUrl} size="xl" primaryColor="#059669" />
+                  </div>
+                  <span className="text-[10px] text-emerald-400 font-bold">
+                    {platformLogoUrl ? 'شعار مخصص مفعل ✓' : 'الشعار الافتراضي لمنصة رعد'}
+                  </span>
+                </div>
+
+                {/* Upload or URL input */}
+                <div className="md:col-span-8 space-y-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-300 mb-1.5">
+                      رابط صورة الشعار (URL) أو تحميل من جهازك:
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        type="url"
+                        value={platformLogoUrl}
+                        onChange={(e) => setPlatformLogoUrl(e.target.value)}
+                        placeholder="https://example.com/logo.png أو اختر ملف أدناه"
+                        className="flex-1 px-4 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs font-mono focus:outline-none focus:border-emerald-400"
+                        dir="ltr"
+                      />
+                      {platformLogoUrl && (
+                        <button
+                          type="button"
+                          onClick={() => setPlatformLogoUrl('')}
+                          className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-rose-900/40 text-slate-400 hover:text-rose-400 border border-slate-700 text-xs font-bold"
+                          title="استعادة الشعار الافتراضي"
+                        >
+                          استعادة الافتراضي
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-3 pt-1">
+                    <label className="flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold transition cursor-pointer shadow-sm">
+                      <Upload className="w-4 h-4 text-emerald-400" />
+                      <span>{isUploadingLogo ? 'جاري قراءة الصورة...' : 'رفع صورة شعار من الجهاز (PNG / SVG / JPG)'}</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleLogoFileUpload}
+                        className="hidden"
+                      />
+                    </label>
+                    <span className="text-[11px] text-slate-500 font-medium">
+                      ملاحظة: يدعم جميع المقاسات ويفضل صورة مربعة أو شفافة
+                    </span>
+                  </div>
+                </div>
+              </div>
             </div>
 
             {/* Mini preview cards */}

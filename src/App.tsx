@@ -70,6 +70,20 @@ export default function App() {
     return () => unsub();
   }, []);
 
+  // Sync platform logo to browser favicon and shortcuts across all browsers
+  useEffect(() => {
+    const logoToUse = systemSettings.logoUrl || '/favicon.svg';
+    try {
+      if (systemSettings.logoUrl) {
+        localStorage.setItem('raad_platform_logo_url', systemSettings.logoUrl);
+      }
+      const iconLinks = document.querySelectorAll<HTMLLinkElement>("link[rel*='icon'], link[rel*='apple-touch-icon']");
+      iconLinks.forEach((link) => {
+        link.href = logoToUse;
+      });
+    } catch (e) {}
+  }, [systemSettings.logoUrl]);
+
   // Sync current user document in real-time when logged in
   useEffect(() => {
     if (!currentUser?.id) return;

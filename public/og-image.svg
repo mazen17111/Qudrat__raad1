@@ -1,0 +1,149 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <defs>
+    <!-- Background Gradient -->
+    <linearGradient id="ogBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#090d16" />
+      <stop offset="50%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#020617" />
+    </linearGradient>
+
+    <!-- Logo Gradient -->
+    <linearGradient id="logoBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0284c7" />
+      <stop offset="50%" stop-color="#2563eb" />
+      <stop offset="100%" stop-color="#1d4ed8" />
+    </linearGradient>
+
+    <linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fef08a" />
+      <stop offset="40%" stop-color="#facc15" />
+      <stop offset="100%" stop-color="#f59e0b" />
+    </linearGradient>
+
+    <linearGradient id="emeraldBadge" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#059669" />
+      <stop offset="100%" stop-color="#10b981" />
+    </linearGradient>
+
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="16" stdDeviation="24" flood-color="#0284c7" flood-opacity="0.35" />
+    </filter>
+
+    <filter id="boltGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="8" result="glow" />
+      <feComposite in="SourceGraphic" in2="glow" operator="over" />
+    </filter>
+  </defs>
+
+  <!-- Canvas Background -->
+  <rect width="1200" height="630" fill="url(#ogBg)" />
+
+  <!-- Subtle Ambient Glow Rings -->
+  <circle cx="280" cy="315" r="260" fill="#2563eb" opacity="0.12" />
+  <circle cx="950" cy="180" r="320" fill="#0284c7" opacity="0.08" />
+  <circle cx="950" cy="480" r="240" fill="#10b981" opacity="0.06" />
+
+  <!-- Decorative Border -->
+  <rect x="20" y="20" width="1160" height="590" rx="36" fill="none" stroke="#334155" stroke-width="2" opacity="0.7" />
+
+  <!-- ================= LEFT (VISUAL EMBLEM): Large Logo Badge ================= -->
+  <g transform="translate(140, 155)" filter="url(#shadow)">
+    <!-- Squircle Container -->
+    <rect width="320" height="320" rx="80" fill="url(#logoBg)" stroke="#60a5fa" stroke-width="6" stroke-opacity="0.6" />
+    
+    <!-- Thunder bolt inside emblem -->
+    <path
+      d="M 180 35 L 75 185 L 155 185 L 135 295 L 245 150 L 165 150 Z"
+      fill="url(#gold)"
+      stroke="#ffffff"
+      stroke-width="6"
+      stroke-linejoin="round"
+      filter="url(#boltGlow)"
+    />
+
+    <text
+      x="160"
+      y="300"
+      text-anchor="middle"
+      font-family="system-ui, Cairo, Tajawal, Arial, sans-serif"
+      font-size="28"
+      font-weight="900"
+      fill="#ffffff"
+    >أقسام رعد</text>
+  </g>
+
+  <!-- ================= RIGHT (RTL CONTENT): Platform Title & Info ================= -->
+  <!-- Top Category Pill -->
+  <g transform="translate(540, 110)">
+    <rect width="210" height="44" rx="22" fill="url(#emeraldBadge)" opacity="0.9" />
+    <text
+      x="105"
+      y="28"
+      text-anchor="middle"
+      font-family="system-ui, Cairo, Tajawal, Arial, sans-serif"
+      font-size="18"
+      font-weight="800"
+      fill="#ffffff"
+    >⚡ المنصة التعليمية الأولى</text>
+  </g>
+
+  <!-- Main Title -->
+  <text
+    x="1080"
+    y="235"
+    text-anchor="end"
+    font-family="system-ui, Cairo, Tajawal, Arial, sans-serif"
+    font-size="64"
+    font-weight="900"
+    fill="#ffffff"
+  >منصة أقسام رعد</text>
+
+  <!-- Subtitle -->
+  <text
+    x="1080"
+    y="300"
+    text-anchor="end"
+    font-family="system-ui, Cairo, Tajawal, Arial, sans-serif"
+    font-size="26"
+    font-weight="700"
+    fill="#94a3b8"
+  >الشروحات المرئية • بنوك الأسئلة • نظام نمر لمحاكاة قياس • السبورة الذكية</text>
+
+  <!-- Feature Pills Grid -->
+  <g transform="translate(520, 360)">
+    <!-- Pill 1: نظام نمر -->
+    <rect x="380" y="0" width="180" height="52" rx="16" fill="#1e293b" stroke="#10b981" stroke-width="2" />
+    <text x="470" y="32" text-anchor="middle" font-family="system-ui, Cairo, sans-serif" font-size="18" font-weight="800" fill="#34d399">🐅 نظام نمر لقياس</text>
+
+    <!-- Pill 2: فيديوهات بدقة عالية -->
+    <rect x="180" y="0" width="185" height="52" rx="16" fill="#1e293b" stroke="#3b82f6" stroke-width="2" />
+    <text x="272" y="32" text-anchor="middle" font-family="system-ui, Cairo, sans-serif" font-size="18" font-weight="800" fill="#60a5fa">🎬 فيديوهات تفاعلية</text>
+
+    <!-- Pill 3: اختبارات موقوتة -->
+    <rect x="0" y="0" width="165" height="52" rx="16" fill="#1e293b" stroke="#f59e0b" stroke-width="2" />
+    <text x="82" y="32" text-anchor="middle" font-family="system-ui, Cairo, sans-serif" font-size="18" font-weight="800" fill="#fbbf24">⏱️ اختبارات حقيقية</text>
+  </g>
+
+  <!-- Bottom Bar: Verified Student Platform -->
+  <line x1="520" y1="465" x2="1080" y2="465" stroke="#334155" stroke-width="1.5" />
+  
+  <text
+    x="1080"
+    y="515"
+    text-anchor="end"
+    font-family="system-ui, Cairo, Tajawal, Arial, sans-serif"
+    font-size="20"
+    font-weight="700"
+    fill="#38bdf8"
+  >✦ تحقيق الدرجة المئوية في القدرات والتحصيلي خطوة بخطوة</text>
+
+  <text
+    x="520"
+    y="515"
+    text-anchor="start"
+    font-family="monospace, system-ui, sans-serif"
+    font-size="18"
+    font-weight="700"
+    fill="#64748b"
+  >raad-platform.web.app</text>
+</svg>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   Play,
   PlayCircle,
@@ -36,7 +36,10 @@ import {
   Video,
   Film,
   ArrowRight,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
+import { BrandLogo } from './BrandLogo';
 import {
   StudentUser,
   SystemSettings,
@@ -239,11 +242,13 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
   // Main video ref & Intro Lesson state ("اجعل الفيديو لا يشتغل عندما يقم الطالب بالتنقل بين الاقسام او المصادر او الملفات او الاختبارات")
   const mainVideoRef = useRef<HTMLVideoElement>(null);
   const introVideoRef = useRef<HTMLVideoElement>(null);
+  const miniVideoRef = useRef<HTMLVideoElement>(null);
+  const [isMiniPlayerOpen, setIsMiniPlayerOpen] = useState<boolean>(false);
   const [showIntroModal, setShowIntroModal] = useState<boolean>(false);
   const [isShowingIntroOnLeft, setIsShowingIntroOnLeft] = useState<boolean>(false);
 
   // Stop video playback whenever student navigates between sections, resources, files, or exams
-  const pauseAllVideos = () => {
+  const pauseAllVideos = useCallback(() => {
     try {
       if (mainVideoRef.current) {
         mainVideoRef.current.pause();
@@ -251,10 +256,34 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
       if (introVideoRef.current) {
         introVideoRef.current.pause();
       }
+      if (miniVideoRef.current) {
+        miniVideoRef.current.pause();
+      }
     } catch (e) {
       console.warn('Error pausing videos:', e);
     }
-  };
+  }, []);
+
+  const handleToggleMiniPlayer = useCallback(() => {
+    setIsMiniPlayerOpen((prev) => {
+      const next = !prev;
+      setTimeout(() => {
+        if (next && mainVideoRef.current && miniVideoRef.current) {
+          try {
+            miniVideoRef.current.currentTime = mainVideoRef.current.currentTime;
+            if (!mainVideoRef.current.paused) {
+              miniVideoRef.current.play().catch(() => {});
+            }
+          } catch (e) {}
+        } else if (!next && miniVideoRef.current && mainVideoRef.current) {
+          try {
+            mainVideoRef.current.currentTime = miniVideoRef.current.currentTime;
+          } catch (e) {}
+        }
+      }, 50);
+      return next;
+    });
+  }, []);
 
   // Explicitly pause video whenever student navigates between sections, resources, tabs (files/exams), or starts an exam
   useEffect(() => {
@@ -816,22 +845,50 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
   }
 
   const activeTheme = systemSettings.activeTheme;
-  const currentSectionResources = resources.filter((r) => r.sectionId === selectedSectionId);
-  const currentResourceItems = contentItems
-    .filter((i) => i.resourceId === selectedResourceId)
-    .sort((a, b) => {
-      const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-      const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-      if (tA !== tB) return tA - tB;
-      return (a.id || '').localeCompare(b.id || '');
-    });
 
-  const resourceVideos = currentResourceItems.filter((i) => i.type === 'video');
-  const resourceExams = currentResourceItems.filter((i) => i.type === 'exam');
-  const resourceFiles = currentResourceItems.filter((i) => i.type === 'file');
+  // Performance Optimization: Memoize filtered and sorted lists to eliminate unnecessary re-computations
+  const currentSectionResources = useMemo(
+    () => resources.filter((r) => r.sectionId === selectedSectionId),
+    [resources, selectedSectionId]
+  );
 
-  const selectedSectionObj = sections.find((s) => s.id === selectedSectionId);
-  const selectedResourceObj = resources.find((r) => r.id === selectedResourceId);
+  const currentResourceItems = useMemo(
+    () =>
+      contentItems
+        .filter((i) => i.resourceId === selectedResourceId)
+        .sort((a, b) => {
+          const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+          const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          if (tA !== tB) return tA - tB;
+          return (a.id || '').localeCompare(b.id || '');
+        }),
+    [contentItems, selectedResourceId]
+  );
+
+  const resourceVideos = useMemo(
+    () => currentResourceItems.filter((i) => i.type === 'video'),
+    [currentResourceItems]
+  );
+
+  const resourceExams = useMemo(
+    () => currentResourceItems.filter((i) => i.type === 'exam'),
+    [currentResourceItems]
+  );
+
+  const resourceFiles = useMemo(
+    () => currentResourceItems.filter((i) => i.type === 'file'),
+    [currentResourceItems]
+  );
+
+  const selectedSectionObj = useMemo(
+    () => sections.find((s) => s.id === selectedSectionId),
+    [sections, selectedSectionId]
+  );
+
+  const selectedResourceObj = useMemo(
+    () => resources.find((r) => r.id === selectedResourceId),
+    [resources, selectedResourceId]
+  );
 
   return (
     <div
@@ -845,14 +902,13 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
           isDarkMode ? 'bg-slate-900/90 border-slate-800' : 'bg-white/95 border-slate-200'
         }`}
       >
-        {/* Brand & Student Welcome */}
+        {/* Brand & Student Welcome - Platform Logo on any browser */}
         <div className="flex items-center gap-3">
-          <div
-            className="w-10 h-10 rounded-2xl flex items-center justify-center text-white shadow-lg transition-transform hover:scale-105"
-            style={{ backgroundColor: activeTheme?.primary || '#2563eb' }}
-          >
-            <Zap className="w-6 h-6 fill-current text-amber-300" />
-          </div>
+          <BrandLogo
+            customLogoUrl={systemSettings.logoUrl}
+            size="md"
+            primaryColor={activeTheme?.primary || '#059669'}
+          />
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-lg md:text-xl font-black tracking-tight">منصة أقسام رعد</h1>
@@ -1582,8 +1638,14 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                   </button>
                 </div>
 
-                {/* Video Container (No download option on 3 dots) */}
-                <div className="aspect-video w-full rounded-2xl overflow-hidden bg-black relative shadow-inner border border-slate-800">
+                {/* Video Container (No download option on 3 dots) with Platform Logo */}
+                <div className="aspect-video w-full rounded-2xl overflow-hidden bg-black relative shadow-inner border border-slate-800 group">
+                  {/* Platform Logo Watermark on Video */}
+                  <div className="absolute top-3 left-3 z-10 pointer-events-none flex items-center gap-2 px-2.5 py-1 rounded-xl bg-black/60 backdrop-blur-md border border-white/20 shadow-lg select-none opacity-85 group-hover:opacity-100 transition-opacity">
+                    <BrandLogo customLogoUrl={systemSettings.logoUrl} size="sm" primaryColor={activeTheme?.primary} />
+                    <span className="text-[11px] font-black text-white tracking-wide">أقسام رعد ⚡</span>
+                  </div>
+
                   {systemSettings.introLesson?.videoUrl ? (
                     <video
                       ref={introVideoRef}
@@ -1683,42 +1745,67 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                       )}
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => handleToggleWatchVideo(activeVideoItem.id)}
-                      className={`px-4 py-2 rounded-xl text-xs font-black transition flex items-center gap-2 shadow-md ${
-                        isWatched
-                          ? 'bg-emerald-600 hover:bg-rose-600 text-white group cursor-pointer'
-                          : 'text-white hover:opacity-90 shadow-lg cursor-pointer'
-                      }`}
-                      style={
-                        !isWatched
-                          ? {
-                              backgroundColor: activeTheme?.primary || '#2563eb',
-                              boxShadow: `0 4px 14px ${activeTheme?.primary || '#2563eb'}40`,
-                            }
-                          : {}
-                      }
-                      title={isWatched ? 'انقر لإلغاء تأكيد المشاهدة والتقدم' : 'انقر لتأكيد مشاهدة الفيديو'}
-                    >
-                      {isWatched ? (
-                        <>
-                          <CheckCircle className="w-4 h-4 group-hover:hidden" />
-                          <span className="group-hover:hidden">تم تأكيد المشاهدة ✓</span>
-                          <X className="w-4 h-4 hidden group-hover:inline" />
-                          <span className="hidden group-hover:inline">إلغاء التقدم والمشاهدة ✕</span>
-                        </>
-                      ) : (
-                        <>
-                          <CheckCircle className="w-4 h-4" />
-                          <span>تأكيد المشاهدة الآن</span>
-                        </>
-                      )}
-                    </button>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {/* زر صورة مصغرة (Picture-in-Picture / Mini-Player) */}
+                      <button
+                        type="button"
+                        onClick={handleToggleMiniPlayer}
+                        className={`px-3 py-2 rounded-xl text-xs font-black transition flex items-center gap-1.5 border shadow-sm cursor-pointer ${
+                          isMiniPlayerOpen
+                            ? 'bg-amber-500/20 text-amber-400 border-amber-500/50 ring-2 ring-amber-400/30'
+                            : isDarkMode
+                            ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
+                            : 'bg-slate-100 hover:bg-slate-200 text-slate-800 border-slate-300'
+                        }`}
+                        title="تشغيل الفيديو كصورة مصغرة عائمة لمتابعة التصفح والاستماع للشرح مع شعار المنصة"
+                      >
+                        <Minimize2 className="w-3.5 h-3.5 text-amber-500" />
+                        <span>{isMiniPlayerOpen ? 'إغلاق الصورة المصغرة' : 'صورة مصغرة 🗗'}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleToggleWatchVideo(activeVideoItem.id)}
+                        className={`px-4 py-2 rounded-xl text-xs font-black transition flex items-center gap-2 shadow-md ${
+                          isWatched
+                            ? 'bg-emerald-600 hover:bg-rose-600 text-white group cursor-pointer'
+                            : 'text-white hover:opacity-90 shadow-lg cursor-pointer'
+                        }`}
+                        style={
+                          !isWatched
+                            ? {
+                                backgroundColor: activeTheme?.primary || '#2563eb',
+                                boxShadow: `0 4px 14px ${activeTheme?.primary || '#2563eb'}40`,
+                              }
+                            : {}
+                        }
+                        title={isWatched ? 'انقر لإلغاء تأكيد المشاهدة والتقدم' : 'انقر لتأكيد مشاهدة الفيديو'}
+                      >
+                        {isWatched ? (
+                          <>
+                            <CheckCircle className="w-4 h-4 group-hover:hidden" />
+                            <span className="group-hover:hidden">تم تأكيد المشاهدة ✓</span>
+                            <X className="w-4 h-4 hidden group-hover:inline" />
+                            <span className="hidden group-hover:inline">إلغاء التقدم والمشاهدة ✕</span>
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle className="w-4 h-4" />
+                            <span>تأكيد المشاهدة الآن</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
                   </div>
 
-                  {/* Video Container */}
-                  <div className="aspect-video w-full rounded-2xl overflow-hidden bg-black relative shadow-inner">
+                  {/* Video Container with Platform Logo Watermark */}
+                  <div className="aspect-video w-full rounded-2xl overflow-hidden bg-black relative shadow-inner group">
+                    {/* Platform Logo Watermark on Video */}
+                    <div className="absolute top-3 left-3 z-10 pointer-events-none flex items-center gap-2 px-2.5 py-1 rounded-xl bg-black/60 backdrop-blur-md border border-white/20 shadow-lg select-none opacity-85 group-hover:opacity-100 transition-opacity">
+                      <BrandLogo customLogoUrl={systemSettings.logoUrl} size="sm" primaryColor={activeTheme?.primary} />
+                      <span className="text-[11px] font-black text-white tracking-wide">أقسام رعد ⚡</span>
+                    </div>
+
                     <video
                       ref={mainVideoRef}
                       key={activeVideoItem.id}
@@ -2537,6 +2624,85 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                 إغلاق والعودة للمنصة
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      {/* ================= FLOATING MINI-PLAYER (صورة مصغرة مع شعار المنصة) ================= */}
+      {isMiniPlayerOpen && activeVideo && (
+        <div
+          className="fixed bottom-5 left-5 z-[9999] w-72 sm:w-80 md:w-96 rounded-3xl overflow-hidden shadow-2xl border-2 border-emerald-500/70 bg-slate-900/95 backdrop-blur-xl animate-in slide-in-from-bottom-5 duration-300 select-none flex flex-col transition-all"
+          dir="rtl"
+        >
+          {/* Mini-Player Header with Platform Logo & Video Title */}
+          <div className="flex items-center justify-between px-3 py-2 bg-gradient-to-r from-emerald-950 via-slate-900 to-slate-950 border-b border-emerald-500/40 text-white">
+            <div className="flex items-center gap-2 min-w-0">
+              <BrandLogo customLogoUrl={systemSettings.logoUrl} size="sm" primaryColor={activeTheme?.primary} />
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-black text-emerald-400">منصة أقسام رعد ⚡</span>
+                  <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30">
+                    صورة مصغرة
+                  </span>
+                </div>
+                <div className="text-xs font-bold truncate max-w-[150px] sm:max-w-[200px]" title={activeVideo.title}>
+                  {activeVideo.title}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1">
+              {/* Return to Full Player */}
+              <button
+                type="button"
+                onClick={() => {
+                  if (miniVideoRef.current && mainVideoRef.current) {
+                    mainVideoRef.current.currentTime = miniVideoRef.current.currentTime;
+                    if (!miniVideoRef.current.paused) {
+                      mainVideoRef.current.play().catch(() => {});
+                    }
+                  }
+                  setIsMiniPlayerOpen(false);
+                  const el = document.getElementById('left-video-player-container');
+                  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }}
+                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition cursor-pointer"
+                title="تكبير الفيديو للوضع الطبيعي"
+              >
+                <Maximize2 className="w-3.5 h-3.5" />
+              </button>
+
+              {/* Close Mini Player */}
+              <button
+                type="button"
+                onClick={() => {
+                  setIsMiniPlayerOpen(false);
+                  pauseAllVideos();
+                }}
+                className="p-1.5 rounded-lg bg-rose-600/30 hover:bg-rose-600 text-rose-300 hover:text-white transition cursor-pointer"
+                title="إغلاق الصورة المصغرة"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+
+          {/* Mini Video Container */}
+          <div className="aspect-video w-full bg-black relative overflow-hidden group">
+            {/* Watermark logo inside the mini video player */}
+            <div className="absolute top-2 left-2 z-10 pointer-events-none flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-black/70 backdrop-blur-md border border-white/20 shadow-md">
+              <BrandLogo customLogoUrl={systemSettings.logoUrl} size="sm" primaryColor={activeTheme?.primary} />
+              <span className="text-[10px] font-black text-white">رعد</span>
+            </div>
+
+            <video
+              ref={miniVideoRef}
+              src={activeVideo.url}
+              controls
+              controlsList="nodownload"
+              onContextMenu={(e) => e.preventDefault()}
+              playsInline
+              className="w-full h-full object-contain"
+            />
           </div>
         </div>
       )}

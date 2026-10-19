@@ -1,0 +1,17 @@
+{
+  "name": "منصة أقسام رعد",
+  "short_name": "أقسام رعد",
+  "description": "منصة تعليمية متكاملة تشمل الفيديوهات والاختبارات التفاعلية والسبورة الذكية والإحصائيات ومجلدات الطلاب.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#090d16",
+  "theme_color": "#059669",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
