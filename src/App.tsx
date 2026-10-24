@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { StudentUser, SystemSettings, FeaturesConfig, IntroLessonConfig } from './types';
-import { db, testConnection, seedInitialPlatformData, DEFAULT_SETTINGS } from './firebase';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { StudentUser, SystemSettings, FeaturesConfig, IntroLessonConfig, CourseItem } from './types';
+import { db, testConnection, seedInitialPlatformData, DEFAULT_SETTINGS, INITIAL_COURSES, restoreDefaultCoursesAndContent } from './firebase';
+import { doc, onSnapshot, collection, updateDoc, arrayUnion } from 'firebase/firestore';
 import { AuthView } from './components/AuthView';
+import { CoursesPortal } from './components/CoursesPortal';
 import { StudentHome } from './components/StudentHome';
 import { AdminPanel } from './components/AdminPanel';
 import { AdminPasswordModal } from './components/AdminPasswordModal';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 const STUDENT_SESSION_KEY = 'raad_student_auth_session';
 const THEME_STORAGE_KEY = 'raad_platform_theme_dark';
@@ -36,6 +38,8 @@ export default function App() {
   const [isAdminOpen, setIsAdminOpen] = useState<boolean>(false);
   const [isAdminPasswordModalOpen, setIsAdminPasswordModalOpen] = useState<boolean>(false);
   const [systemSettings, setSystemSettings] = useState<SystemSettings>(DEFAULT_SETTINGS);
+  const [courses, setCourses] = useState<CourseItem[]>(INITIAL_COURSES);
+  const [activeCourse, setActiveCourse] = useState<CourseItem | null>(null);
 
   // Initialize and test connection on mount
   useEffect(() => {
@@ -67,7 +71,31 @@ export default function App() {
       }
     });
 
-    return () => unsub();
+    // Listen to real-time courses collection
+    const unsubCourses = onSnapshot(collection(db, 'courses'), (snap) => {
+      const list: CourseItem[] = [];
+      snap.forEach((d) => list.push({ id: d.id, ...d.data() } as CourseItem));
+      list.sort((a, b) => (a.order || 0) - (b.order || 0));
+      if (list.length > 0) {
+        setCourses(list);
+        setActiveCourse((prev) => {
+          if (!prev) return prev;
+          const fresh = list.find((c) => c.id === prev.id);
+          return fresh || prev;
+        });
+        if (list.length < 2) {
+          restoreDefaultCoursesAndContent().catch(() => {});
+        }
+      } else {
+        setCourses(INITIAL_COURSES);
+        restoreDefaultCoursesAndContent().catch(() => {});
+      }
+    });
+
+    return () => {
+      unsub();
+      unsubCourses();
+    };
   }, []);
 
   // Sync platform logo to browser favicon and shortcuts across all browsers
@@ -88,21 +116,21 @@ export default function App() {
   useEffect(() => {
     if (!currentUser?.id) return;
 
-    const unsubUser = onSnapshot(doc(db, 'users', currentUser.id), (docSnap) => {
-      if (docSnap.exists()) {
-        const updated = { id: docSnap.id, ...docSnap.data() } as StudentUser;
-        setCurrentUser(updated);
-        try {
-          localStorage.setItem(STUDENT_SESSION_KEY, JSON.stringify(updated));
-        } catch (e) {}
-      } else {
-        // User was deleted by admin
-        try {
-          localStorage.removeItem(STUDENT_SESSION_KEY);
-        } catch (e) {}
-        setCurrentUser(null);
+    const unsubUser = onSnapshot(
+      doc(db, 'users', currentUser.id),
+      (docSnap) => {
+        if (docSnap.exists()) {
+          const updated = { id: docSnap.id, ...docSnap.data() } as StudentUser;
+          setCurrentUser(updated);
+          try {
+            localStorage.setItem(STUDENT_SESSION_KEY, JSON.stringify(updated));
+          } catch (e) {}
+        }
+      },
+      (error) => {
+        console.warn('Realtime user sync notice (student session preserved):', error);
       }
-    });
+    );
 
     return () => unsubUser();
   }, [currentUser?.id]);
@@ -141,6 +169,7 @@ export default function App() {
       localStorage.removeItem(STUDENT_SESSION_KEY);
     } catch (e) {}
     setCurrentUser(null);
+    setActiveCourse(null);
   };
 
   // Student login success: save to state & localStorage
@@ -149,10 +178,46 @@ export default function App() {
       localStorage.setItem(STUDENT_SESSION_KEY, JSON.stringify(user));
     } catch (e) {}
     setCurrentUser(user);
+    // Student always starts on the Courses Portal per request
+    setActiveCourse(null);
+  };
+
+  // Course activation handler
+  const handleActivateCourse = async (courseId: string) => {
+    if (!currentUser) return;
+    try {
+      const userRef = doc(db, 'users', currentUser.id);
+      await updateDoc(userRef, {
+        enrolledCourseIds: arrayUnion(courseId)
+      });
+    } catch (err) {
+      console.error('Error updating enrolled courses in Firestore:', err);
+    }
+
+    const currentEnrolled = currentUser.enrolledCourseIds || [];
+    if (!currentEnrolled.includes(courseId)) {
+      const updatedUser: StudentUser = {
+        ...currentUser,
+        enrolledCourseIds: [...currentEnrolled, courseId]
+      };
+      setCurrentUser(updatedUser);
+      try {
+        localStorage.setItem(STUDENT_SESSION_KEY, JSON.stringify(updatedUser));
+      } catch (e) {}
+    }
+
+    const targetCourse = courses.find((c) => c.id === courseId);
+    if (targetCourse) {
+      setActiveCourse(targetCourse);
+    }
+  };
+
+  const handleSelectCourse = (course: CourseItem) => {
+    setActiveCourse(course);
   };
 
   return (
-    <div className={isDarkMode ? 'dark min-h-screen bg-slate-950 text-white' : 'light min-h-screen bg-white text-slate-900'} dir="rtl">
+    <div className={isDarkMode ? 'dark min-h-screen bg-slate-950 text-white w-full max-w-full overflow-x-hidden' : 'light min-h-screen bg-white text-slate-900 w-full max-w-full overflow-x-hidden'} dir="rtl">
       {/* If Admin Panel is open */}
       {isAdminOpen ? (
         <AdminPanel
@@ -160,15 +225,34 @@ export default function App() {
           onExit={() => setIsAdminOpen(false)}
         />
       ) : currentUser ? (
-        /* If logged in: Student Main Interface */
-        <StudentHome
-          currentUser={currentUser}
-          onLogout={handleStudentLogout}
-          systemSettings={systemSettings}
-          isDarkMode={isDarkMode}
-          toggleDarkMode={toggleDarkMode}
-          onSecretTriggerAdmin={handleSecretTriggerAdmin}
-        />
+        !activeCourse ? (
+          /* Student Courses Portal (واجهة الكورسات) */
+          <CoursesPortal
+            currentUser={currentUser}
+            courses={courses}
+            systemSettings={systemSettings}
+            isDarkMode={isDarkMode}
+            toggleDarkMode={toggleDarkMode}
+            onLogout={handleStudentLogout}
+            onSecretTriggerAdmin={handleSecretTriggerAdmin}
+            onActivateCourse={handleActivateCourse}
+            onSelectCourse={handleSelectCourse}
+          />
+        ) : (
+          /* Student Main Course Platform */
+          <ErrorBoundary fallbackTitle="تنبيه في المنصة">
+            <StudentHome
+              currentUser={currentUser}
+              onLogout={handleStudentLogout}
+              systemSettings={systemSettings}
+              isDarkMode={isDarkMode}
+              toggleDarkMode={toggleDarkMode}
+              onSecretTriggerAdmin={handleSecretTriggerAdmin}
+              activeCourse={activeCourse}
+              onBackToCourses={() => setActiveCourse(null)}
+            />
+          </ErrorBoundary>
+        )
       ) : (
         /* If not logged in: Login and Sign Up View */
         <AuthView

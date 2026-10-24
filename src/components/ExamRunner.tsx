@@ -88,23 +88,52 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
   folderTitle,
 }) => {
   // Normalize and guard questions to completely eliminate any possibility of an empty or broken screen
-  const safeQuestions: ExamQuestion[] = (Array.isArray(questions) && questions.length > 0)
-    ? questions.map((q, idx) => ({
+  const safeQuestions: ExamQuestion[] = useMemo(() => {
+    if (Array.isArray(questions) && questions.length > 0) {
+      return questions.map((q, idx) => ({
         id: q?.id || `q_${idx}`,
         questionText: q?.questionText || `سؤال ${idx + 1}`,
         imageUrl: q?.imageUrl || '',
         options: (Array.isArray(q?.options) && q.options.length > 0)
-          ? q.options
+          ? q.options.map((o) => (typeof o === 'string' ? o : String(o ?? '')))
           : ['الخيار أ', 'الخيار ب', 'الخيار ج', 'الخيار د'],
         correctOptionIndex: typeof q?.correctOptionIndex === 'number' ? q.correctOptionIndex : 0,
         explanation: q?.explanation || '',
-      }))
-    : [];
+      }));
+    }
+    return [
+      {
+        id: 'q_default_1',
+        questionText: 'سؤال تدريبي: ما ناتج قسمة 120 على 4؟',
+        imageUrl: '',
+        options: ['30', '25', '40', '35'],
+        correctOptionIndex: 0,
+        explanation: '120 ÷ 4 = 30.',
+      },
+      {
+        id: 'q_default_2',
+        questionText: 'سماء : نجوم (تناظر لفظي)',
+        imageUrl: '',
+        options: ['حديقة : أشجار', 'بحر : سمك', 'غابة : حيوانات', 'مدينة : سيارات'],
+        correctOptionIndex: 0,
+        explanation: 'العلاقة: مكانية وتكوينية (السماء تزينها النجوم والحديقة تزينها الأشجار).',
+      },
+      {
+        id: 'q_default_3',
+        questionText: 'إذا كان س + ص = 10 و س - ص = 4 ، فما قيمة س؟',
+        imageUrl: '',
+        options: ['7', '6', '8', '5'],
+        correctOptionIndex: 0,
+        explanation: 'بجمع المعادلتين: 2س = 14 => س = 7.',
+      }
+    ];
+  }, [questions]);
 
   const [currentIdx, setCurrentIdx] = useState(0);
   const [selectedAnswers, setSelectedAnswers] = useState<Record<number, number>>({});
   const [isFinished, setIsFinished] = useState(false);
   const [isTimed] = useState(isTimedInitial);
+  const [showMobileQuestionsList, setShowMobileQuestionsList] = useState(false);
 
   // Exam system mode: 'nimr' (Tiger Qiyas layout) or 'standard' (Platform layout)
   const [systemMode, setSystemMode] = useState<'nimr' | 'standard'>(examSystem || 'nimr');
@@ -175,25 +204,31 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
       collection(db, 'folders'),
       where('userId', '==', currentUser.id)
     );
-    const unsub = onSnapshot(q, (snapshot) => {
-      const list: FolderItem[] = [];
-      snapshot.forEach((d) => {
-        const item = { id: d.id, ...d.data() } as FolderItem;
-        if (item.isDefaultMistakesFolder || item.title === 'مجلد الاخطاء') {
-          item.isDefaultMistakesFolder = true;
-        }
-        list.push(item);
-      });
+    const unsub = onSnapshot(
+      q,
+      (snapshot) => {
+        const list: FolderItem[] = [];
+        snapshot.forEach((d) => {
+          const item = { id: d.id, ...d.data() } as FolderItem;
+          if (item.isDefaultMistakesFolder || item.title === 'مجلد الاخطاء') {
+            item.isDefaultMistakesFolder = true;
+          }
+          list.push(item);
+        });
 
-      // Sort with mistakes folder always first
-      list.sort((a, b) => {
-        if (a.isDefaultMistakesFolder) return -1;
-        if (b.isDefaultMistakesFolder) return 1;
-        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-      });
+        // Sort with mistakes folder always first
+        list.sort((a, b) => {
+          if (a.isDefaultMistakesFolder) return -1;
+          if (b.isDefaultMistakesFolder) return 1;
+          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+        });
 
-      setUserFolders(list);
-    });
+        setUserFolders(list);
+      },
+      (err) => {
+        console.warn('Live folders listener note:', err);
+      }
+    );
 
     return () => unsub();
   }, [currentUser?.id]);
@@ -205,19 +240,25 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
       collection(db, 'folder_questions'),
       where('userId', '==', currentUser.id)
     );
-    const unsubFQ = onSnapshot(qFQ, (snapshot) => {
-      const records: FolderQuestionDoc[] = [];
-      snapshot.forEach((d) => {
-        const data = d.data();
-        records.push({
-          id: d.id,
-          folderId: data.folderId,
-          originalQuestionId: data.originalQuestionId,
-          questionText: data.questionText || '',
+    const unsubFQ = onSnapshot(
+      qFQ,
+      (snapshot) => {
+        const records: FolderQuestionDoc[] = [];
+        snapshot.forEach((d) => {
+          const data = d.data();
+          records.push({
+            id: d.id,
+            folderId: data.folderId,
+            originalQuestionId: data.originalQuestionId,
+            questionText: data.questionText || '',
+          });
         });
-      });
-      setUserFolderQuestions(records);
-    });
+        setUserFolderQuestions(records);
+      },
+      (err) => {
+        console.warn('Live folder_questions listener note:', err);
+      }
+    );
 
     return () => unsubFQ();
   }, [currentUser?.id]);
@@ -654,21 +695,31 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
   };
 
   // Helper to find existing record for a given question in a given folder
-  const findFolderQuestionMatch = (question: ExamQuestion, folderId: string) => {
-    return userFolderQuestions.find(
-      (fq) => fq.folderId === folderId && (fq.originalQuestionId === question.id || fq.questionText === question.questionText)
-    );
+  const findFolderQuestionMatch = (question?: ExamQuestion | null, folderId?: string) => {
+    if (!question || !folderId || !Array.isArray(userFolderQuestions)) return undefined;
+    try {
+      return userFolderQuestions.find(
+        (fq) => fq && fq.folderId === folderId && ((question.id && fq.originalQuestionId === question.id) || (question.questionText && fq.questionText === question.questionText))
+      );
+    } catch (e) {
+      return undefined;
+    }
   };
 
   // Helper to get all non-mistakes folders that currently contain this question
-  const getCustomFoldersForQuestion = (question: ExamQuestion) => {
-    const mistakeFolder = userFolders.find((f) => f.isDefaultMistakesFolder || f.title === 'مجلد الاخطاء');
-    return userFolders.filter((f) => {
-      if (f.id === mistakeFolder?.id) return false;
-      return userFolderQuestions.some(
-        (fq) => fq.folderId === f.id && (fq.originalQuestionId === question.id || fq.questionText === question.questionText)
-      );
-    });
+  const getCustomFoldersForQuestion = (question?: ExamQuestion | null) => {
+    if (!question || !Array.isArray(userFolders) || !Array.isArray(userFolderQuestions)) return [];
+    try {
+      const mistakeFolder = userFolders.find((f) => f && (f.isDefaultMistakesFolder || f.title === 'مجلد الاخطاء'));
+      return userFolders.filter((f) => {
+        if (!f || f.id === mistakeFolder?.id) return false;
+        return userFolderQuestions.some(
+          (fq) => fq && fq.folderId === f.id && ((question.id && fq.originalQuestionId === question.id) || (question.questionText && fq.questionText === question.questionText))
+        );
+      });
+    } catch (e) {
+      return [];
+    }
   };
 
   // If exam has no questions at all
@@ -1030,7 +1081,17 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
   }
 
   // Safe active question
-  const currentQ = safeQuestions[currentIdx] || safeQuestions[0];
+  const currentQ: ExamQuestion = safeQuestions[currentIdx] || safeQuestions[0] || {
+    id: 'q_default',
+    questionText: 'سؤال الاختبار',
+    imageUrl: '',
+    options: ['الخيار أ', 'الخيار ب', 'الخيار ج', 'الخيار د'],
+    correctOptionIndex: 0,
+    explanation: '',
+  };
+  const safeOptions: string[] = (Array.isArray(currentQ?.options) && currentQ.options.length > 0)
+    ? currentQ.options.map((opt) => (typeof opt === 'string' ? opt : String(opt ?? '')))
+    : ['الخيار أ', 'الخيار ب', 'الخيار ج', 'الخيار د'];
   const answeredCount = Object.keys(selectedAnswers).length;
   const currentQCustomFolders = getCustomFoldersForQuestion(currentQ);
 
@@ -1325,40 +1386,40 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
           {/* خط إضاءة علوي باللون الأخضر المميز */}
           <div className="h-1.5 w-full bg-gradient-to-r from-emerald-400 via-teal-300 to-emerald-500" />
 
-          <div className="bg-gradient-to-r from-emerald-950 via-emerald-900 to-teal-950 p-2.5 sm:px-6 flex flex-col md:flex-row items-center justify-between gap-3 text-white">
+          <div className="bg-gradient-to-r from-emerald-950 via-emerald-900 to-teal-950 p-2 sm:p-2.5 md:px-6 flex items-center justify-between gap-2 text-white">
             {/* الجانب الأيمن (في RTL): زر الخروج + شعار نظام نمر + عنوان الاختبار */}
-            <div className="flex items-center gap-2.5">
+            <div className="flex items-center gap-1.5 sm:gap-2.5 min-w-0">
               <button
                 onClick={handleRequestExit}
-                className="p-2 rounded-xl bg-emerald-900/80 hover:bg-emerald-800 text-emerald-100 hover:text-white border border-emerald-600/50 transition cursor-pointer shrink-0 shadow-sm"
+                className="p-1.5 sm:p-2 rounded-xl bg-emerald-900/80 hover:bg-emerald-800 text-emerald-100 hover:text-white border border-emerald-600/50 transition cursor-pointer shrink-0 shadow-sm"
                 title="الخروج من الاختبار والعودة للمنصة"
               >
                 <ArrowRight className="w-4 h-4" />
               </button>
 
-              <div className="flex items-center gap-2">
-                <span className="px-2.5 py-1 rounded-xl bg-emerald-500/25 border border-emerald-400/50 font-black text-xs text-emerald-200 flex items-center gap-1.5 shadow-sm">
-                  <span className="text-sm">🐅</span>
-                  <span>نظام نمر</span>
+              <div className="flex items-center gap-1.5 min-w-0">
+                <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-xl bg-emerald-500/25 border border-emerald-400/50 font-black text-[11px] sm:text-xs text-emerald-200 flex items-center gap-1 shrink-0 shadow-sm">
+                  <span>🐅</span>
+                  <span className="hidden sm:inline">نظام نمر</span>
                 </span>
-                <h2 className="text-xs sm:text-base font-black truncate max-w-[180px] sm:max-w-xs md:max-w-md">
+                <h2 className="text-xs sm:text-base font-black truncate max-w-[110px] sm:max-w-xs md:max-w-md">
                   {examTitle}
                 </h2>
               </div>
             </div>
 
             {/* الجانب الأيسر (والمعلومات فوق عاليسار): اسم الطالب + الوقت + الهدف + عداد الأسئلة + إنهاء الاختبار */}
-            <div className="flex items-center justify-between md:justify-end w-full md:w-auto gap-2 sm:gap-2.5 flex-wrap">
+            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
               {/* اسم الطالب */}
               <div className="hidden lg:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-900/70 border border-emerald-500/40 text-xs font-black text-emerald-100 shadow-sm">
                 <User className="w-3.5 h-3.5 text-emerald-300" />
-                <span>الطالب: {currentUser.name || 'طالب'}</span>
+                <span>الطالب: {currentUser?.name || 'طالب'}</span>
               </div>
 
               {/* مؤقت الاختبار أو تدريب حر */}
               <div>
                 {isTimed ? (
-                  <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border font-mono font-black text-xs sm:text-sm shadow-sm ${
+                  <div className={`flex items-center gap-1 px-2 py-1 sm:px-3 sm:py-1.5 rounded-xl border font-mono font-black text-xs sm:text-sm shadow-sm ${
                     timeLeft < 60
                       ? 'bg-rose-500/30 border-rose-400 text-rose-200 animate-pulse'
                       : 'bg-emerald-800/80 border-emerald-400/60 text-emerald-100'
@@ -1367,32 +1428,24 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
                     <span>{formatTime(timeLeft)}</span>
                   </div>
                 ) : (
-                  <div className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-emerald-800/60 border border-emerald-500/40 text-[11px] font-black text-emerald-200">
+                  <div className="flex items-center gap-1 px-2 py-1 sm:px-2.5 sm:py-1.5 rounded-xl bg-emerald-800/60 border border-emerald-500/40 text-[10px] sm:text-[11px] font-black text-emerald-200">
                     <span>تدريب حر</span>
                   </div>
                 )}
               </div>
 
-              {/* نسبة الهدف المستهدف */}
-              {targetPercentage && (
-                <div className="hidden sm:flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-emerald-900/70 border border-emerald-500/40 text-xs font-black text-emerald-200">
-                  <Target className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>الهدف: %{targetPercentage}</span>
-                </div>
-              )}
-
-              {/* عداد الأسئلة ومؤشر الإنجاز */}
-              <div className="text-xs font-black px-2.5 py-1.5 rounded-xl bg-emerald-900/70 border border-emerald-500/40 text-emerald-100">
-                <span>سؤال {currentIdx + 1}/{safeQuestions.length}</span>
+              {/* عداد الأسئلة */}
+              <div className="text-[11px] sm:text-xs font-black px-2 py-1 sm:px-2.5 sm:py-1.5 rounded-xl bg-emerald-900/70 border border-emerald-500/40 text-emerald-100 shrink-0">
+                <span>{currentIdx + 1}/{safeQuestions.length}</span>
               </div>
 
               {/* زر إنهاء الاختبار وتسليم الإجابات */}
               <button
                 type="button"
                 onClick={finishTest}
-                className="px-3.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-black text-xs sm:text-sm transition shadow-lg shadow-rose-600/30 cursor-pointer"
+                className="px-2.5 py-1 sm:px-3.5 sm:py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-black text-xs sm:text-sm transition shadow-lg shadow-rose-600/30 cursor-pointer shrink-0"
               >
-                إنهاء وتسليم
+                إنهاء
               </button>
             </div>
           </div>
@@ -1482,7 +1535,7 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
 
               {/* 4 Choices / Options (الاختيارات عاليمين) */}
               <div className="space-y-3 pt-4">
-                {currentQ.options.map((option, optIdx) => {
+                {safeOptions.map((option, optIdx) => {
                   const isSelected = selectedAnswers[currentIdx] === optIdx;
                   const letter = optIdx === 0 ? 'أ' : optIdx === 1 ? 'ب' : optIdx === 2 ? 'ج' : 'د';
 
@@ -1524,42 +1577,89 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
             </div>
 
             {/* Bottom Question Navigation Toolbar */}
-            <div className="pt-5 mt-4 border-t border-emerald-500/20 flex items-center justify-between gap-3 flex-wrap">
+            <div className="pt-4 mt-4 border-t border-emerald-500/20 flex items-center justify-between gap-2">
               <button
                 type="button"
                 disabled={currentIdx === 0}
                 onClick={() => setCurrentIdx((i) => Math.max(0, i - 1))}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs md:text-sm border border-slate-700 transition cursor-pointer"
+                className="flex items-center gap-1.5 px-3.5 py-2 sm:px-5 sm:py-2.5 rounded-2xl bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs sm:text-sm border border-slate-700 transition cursor-pointer shrink-0"
               >
                 <ArrowRight className="w-4 h-4" />
-                <span>السؤال السابق</span>
+                <span>السابق</span>
+              </button>
+
+              {/* Mobile Questions List Toggle Button */}
+              <button
+                type="button"
+                onClick={() => setShowMobileQuestionsList(true)}
+                className="lg:hidden flex items-center gap-1.5 px-2.5 py-2 rounded-xl bg-emerald-950/90 hover:bg-emerald-900 border border-emerald-500/50 text-emerald-300 font-black text-xs shadow-md transition cursor-pointer"
+                title="عرض قائمة جميع الأسئلة"
+              >
+                <HelpCircle className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                <span>الأسئلة ({currentIdx + 1}/{safeQuestions.length})</span>
               </button>
 
               {currentIdx < safeQuestions.length - 1 ? (
                 <button
                   type="button"
                   onClick={() => setCurrentIdx((i) => Math.min(safeQuestions.length - 1, i + 1))}
-                  className="flex items-center gap-2 px-6 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs md:text-sm shadow-lg shadow-emerald-600/30 transition cursor-pointer"
+                  className="flex items-center gap-1.5 px-4 py-2 sm:px-6 sm:py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs sm:text-sm shadow-lg shadow-emerald-600/30 transition cursor-pointer shrink-0"
                 >
-                  <span>السؤال التالي</span>
+                  <span>التالي</span>
                   <ArrowLeft className="w-4 h-4" />
                 </button>
               ) : (
                 <button
                   type="button"
                   onClick={finishTest}
-                  className="flex items-center gap-2 px-6 py-2.5 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black text-xs md:text-sm shadow-xl shadow-emerald-500/30 transition cursor-pointer"
+                  className="flex items-center gap-1.5 px-4 py-2 sm:px-6 sm:py-2.5 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black text-xs sm:text-sm shadow-xl shadow-emerald-500/30 transition cursor-pointer shrink-0"
                 >
                   <CheckCircle2 className="w-4 h-4" />
-                  <span>إنهاء وتسليم الإجابات</span>
+                  <span>إنهاء الإجابات</span>
                 </button>
               )}
+            </div>
+
+            {/* Quick Actions Strip on Mobile */}
+            <div className="grid grid-cols-4 gap-1.5 pt-2.5 border-t border-emerald-500/20 lg:hidden mt-2.5">
+              <button
+                type="button"
+                onClick={() => setShowSectionModal(true)}
+                className="py-1.5 px-1 rounded-xl bg-slate-800/90 text-slate-200 border border-slate-700 text-[10px] font-black flex flex-col items-center justify-center gap-1 hover:border-emerald-500/40 cursor-pointer"
+              >
+                <FileText className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="truncate">تعليمات القسم</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowExamInstructionsModal(true)}
+                className="py-1.5 px-1 rounded-xl bg-slate-800/90 text-slate-200 border border-slate-700 text-[10px] font-black flex flex-col items-center justify-center gap-1 hover:border-emerald-500/40 cursor-pointer"
+              >
+                <HelpCircle className="w-3.5 h-3.5 text-blue-400" />
+                <span className="truncate">تعليمات الاختبار</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowEquationsModal(true)}
+                className="py-1.5 px-1 rounded-xl bg-slate-800/90 text-slate-200 border border-slate-700 text-[10px] font-black flex flex-col items-center justify-center gap-1 hover:border-emerald-500/40 cursor-pointer"
+              >
+                <Calculator className="w-3.5 h-3.5 text-amber-400" />
+                <span className="truncate">المعادلات</span>
+              </button>
+              <button
+                type="button"
+                onClick={finishTest}
+                className="py-1.5 px-1 rounded-xl bg-rose-600/90 hover:bg-rose-500 text-white border border-rose-500 text-[10px] font-black flex flex-col items-center justify-center gap-1 shadow-sm cursor-pointer"
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span className="truncate">إنهاء</span>
+              </button>
             </div>
 
           </div>
 
           {/* ================= ب. عدد الاسئلة عاليسار (Left Column in RTL) ================= */}
-          <div className={`w-full lg:w-72 xl:w-80 shrink-0 flex flex-col justify-between border-2 border-emerald-500/40 rounded-3xl p-3.5 sm:p-4 shadow-2xl backdrop-blur-xl ${
+          <div className={`hidden lg:flex w-72 xl:w-80 shrink-0 flex-col justify-between border-2 border-emerald-500/40 rounded-3xl p-3.5 sm:p-4 shadow-2xl backdrop-blur-xl ${
             isDarkMode ? 'bg-slate-900/90 text-white' : 'bg-white text-slate-900'
           }`}>
             {/* 1. فوق الأسئلة: صورة شخص مجهول + اسم الطالب + رقم الهوية + أرقام عشوائية */}
@@ -1577,7 +1677,7 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
 
               {/* وتحتيه اسم الطالب في المنصة */}
               <h4 className="text-xs sm:text-sm font-black text-white truncate max-w-full">
-                {currentUser.name || 'طالب المنصة'}
+                {currentUser?.name || 'طالب المنصة'}
               </h4>
 
               {/* وتحتيه رقم الهوية وجنبيه ارقام عشوائية */}
@@ -1707,6 +1807,104 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
             </div>
           </div>
         </div>
+
+        {/* ================= Mobile Questions List Modal / Sheet ================= */}
+        {showMobileQuestionsList && (
+          <div
+            onClick={() => setShowMobileQuestionsList(false)}
+            className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/85 backdrop-blur-sm lg:hidden animate-in fade-in duration-150"
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-lg max-h-[85vh] rounded-t-3xl sm:rounded-3xl border-2 border-emerald-500/50 bg-slate-900 text-white shadow-2xl flex flex-col overflow-hidden"
+            >
+              {/* Header */}
+              <div className="p-3.5 border-b border-emerald-500/20 flex items-center justify-between bg-emerald-950/70">
+                <div className="flex items-center gap-2">
+                  <span className="p-1.5 rounded-xl bg-emerald-500/20 text-emerald-400">
+                    <HelpCircle className="w-4 h-4" />
+                  </span>
+                  <div>
+                    <h3 className="font-black text-sm text-emerald-300">قائمة الأسئلة ومعلومات الطالب</h3>
+                    <span className="text-[10px] text-emerald-400 font-bold">
+                      تمت الإجابة: {answeredCount} من {safeQuestions.length} ({progressPercent}%)
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowMobileQuestionsList(false)}
+                  className="p-1.5 rounded-xl bg-slate-800 text-slate-300 hover:text-white cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Candidate Info Snippet */}
+              <div className="p-3 bg-slate-800/60 border-b border-emerald-500/20 flex items-center justify-between text-xs">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="w-7 h-7 rounded-full bg-emerald-600/30 text-emerald-300 flex items-center justify-center font-bold text-xs shrink-0">
+                    <User className="w-4 h-4" />
+                  </div>
+                  <span className="font-bold truncate">{currentUser?.name || 'طالب المنصة'}</span>
+                </div>
+                <div className="flex items-center gap-1.5 font-mono text-[11px]">
+                  <span className="text-emerald-300 bg-black/40 px-2 py-0.5 rounded-lg border border-slate-700">
+                    {nationalId}
+                  </span>
+                  <span className="text-amber-300 bg-black/40 px-2 py-0.5 rounded-lg border border-slate-700">
+                    #{randomSessionDigits}
+                  </span>
+                </div>
+              </div>
+
+              {/* Questions Grid */}
+              <div className="p-3.5 overflow-y-auto flex-1 max-h-[50vh]">
+                <div className="grid grid-cols-5 gap-2">
+                  {safeQuestions.map((_, i) => {
+                    const isCurrent = i === currentIdx;
+                    const isAnswered = selectedAnswers[i] !== undefined;
+
+                    let btnClass = 'bg-slate-800/80 text-slate-300 border-slate-700 hover:bg-slate-700';
+                    if (isCurrent) {
+                      btnClass = 'bg-emerald-500 text-slate-950 font-black ring-2 ring-emerald-300 shadow-md scale-105';
+                    } else if (isAnswered) {
+                      btnClass = 'bg-emerald-600/30 text-emerald-300 border-emerald-500/60 font-black';
+                    }
+
+                    return (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => {
+                          setCurrentIdx(i);
+                          setShowMobileQuestionsList(false);
+                        }}
+                        className={`h-9 rounded-xl text-xs font-bold border transition-all flex items-center justify-center relative cursor-pointer ${btnClass}`}
+                      >
+                        <span>{i + 1}</span>
+                        {isAnswered && !isCurrent && (
+                          <span className="absolute bottom-1 right-1 w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="p-3 border-t border-emerald-500/20 bg-slate-900/90 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowMobileQuestionsList(false)}
+                  className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs transition text-center cursor-pointer"
+                >
+                  إغلاق ومتابعة الاختبار ✓
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -2056,7 +2254,7 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
 
               {/* 4 Answer Options */}
               <div className="space-y-2.5 pt-2">
-                {currentQ.options.map((option, optIdx) => {
+                {safeOptions.map((option, optIdx) => {
                   const isSelected = selectedAnswers[currentIdx] === optIdx;
                   return (
                     <button

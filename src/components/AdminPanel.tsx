@@ -43,6 +43,11 @@ import {
   Film,
   Trophy,
   Zap,
+  BookOpen,
+  DollarSign,
+  Image as ImageIcon,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import {
   StudentUser,
@@ -54,9 +59,10 @@ import {
   ExamQuestion,
   IntroLessonConfig,
   FeaturesConfig,
+  CourseItem,
 } from '../types';
 import { BrandLogo } from './BrandLogo';
-import { db, THEME_PRESETS, DEFAULT_SETTINGS } from '../firebase';
+import { db, THEME_PRESETS, DEFAULT_SETTINGS, INITIAL_COURSES, restoreDefaultCoursesAndContent } from '../firebase';
 import {
   collection,
   onSnapshot,
@@ -76,11 +82,43 @@ interface AdminPanelProps {
 }
 
 export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }) => {
-  const [activeTab, setActiveTab] = useState<'students' | 'platform_lock' | 'announcement' | 'live_stream' | 'content' | 'designs' | 'intro_lesson' | 'features'>('students');
+  const [activeTab, setActiveTab] = useState<'courses' | 'students' | 'platform_lock' | 'announcement' | 'live_stream' | 'content' | 'designs' | 'intro_lesson' | 'features'>('courses');
+
+  // Courses management state
+  const [courses, setCourses] = useState<CourseItem[]>(INITIAL_COURSES);
+  const [selectedCourseId, setSelectedCourseId] = useState<string>('course_default_1');
+
+  // Course Add/Edit Modal
+  const [isAddingCourse, setIsAddingCourse] = useState(false);
+  const [editingCourse, setEditingCourse] = useState<CourseItem | null>(null);
+  const [courseFormTitle, setCourseFormTitle] = useState('');
+  const [courseFormDesc, setCourseFormDesc] = useState('');
+  const [courseFormImage, setCourseFormImage] = useState('');
+  const [courseFormIsLocked, setCourseFormIsLocked] = useState(false);
+  const [courseFormPrice, setCourseFormPrice] = useState('199 ريال');
+  const [courseFormBank1, setCourseFormBank1] = useState('');
+  const [courseFormBank2, setCourseFormBank2] = useState('');
+  const [courseFormPaymentMessage, setCourseFormPaymentMessage] = useState('الرجاء تحويل المبلغ على أحد الحسابين أعلاه ثم إرسال الإشعار لتفعيل الكورس فوراً.');
+  const [courseFormOrder, setCourseFormOrder] = useState<number>(1);
+  const [deletingCourse, setDeletingCourse] = useState<CourseItem | null>(null);
+  const [isUploadingCourseCover, setIsUploadingCourseCover] = useState(false);
+  const [isUploadingBank1, setIsUploadingBank1] = useState(false);
+  const [isUploadingBank2, setIsUploadingBank2] = useState(false);
+  const [isSavingCourse, setIsSavingCourse] = useState(false);
+  const [isRestoringCourses, setIsRestoringCourses] = useState(false);
 
   // Students list from Firestore
   const [students, setStudents] = useState<StudentUser[]>([]);
   
+  // Student Password View State
+  const [showAllPasswords, setShowAllPasswords] = useState<boolean>(false);
+  const [visiblePasswords, setVisiblePasswords] = useState<{ [id: string]: boolean }>({});
+
+  // Student Course Activation Modal State ("وبجانب حساب كل طالب كلمة اسمها تفعيل اضغط تفعيل واختار له كورس")
+  const [studentForCourseActivation, setStudentForCourseActivation] = useState<StudentUser | null>(null);
+  const [selectedCoursesForStudent, setSelectedCoursesForStudent] = useState<string[]>([]);
+  const [isSavingStudentActivation, setIsSavingStudentActivation] = useState<boolean>(false);
+
   // Student Days Modal state
   const [studentForDaysModal, setStudentForDaysModal] = useState<StudentUser | null>(null);
   const [selectedDaysAmount, setSelectedDaysAmount] = useState<number>(30);
@@ -127,6 +165,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
   // Platform Custom Logo State
   const [platformLogoUrl, setPlatformLogoUrl] = useState<string>(systemSettings.logoUrl || '');
   const [isUploadingLogo, setIsUploadingLogo] = useState<boolean>(false);
+
+  // Selected Course for Per-Course Intro Lesson and Features
+  const [selectedIntroCourseId, setSelectedIntroCourseId] = useState<string>('course_default_1');
+  const [selectedFeaturesCourseId, setSelectedFeaturesCourseId] = useState<string>('course_default_1');
+  const [isSavingIntroLesson, setIsSavingIntroLesson] = useState<boolean>(false);
 
   // Intro Lesson State ("الحصة التعريفية")
   const [introLessonState, setIntroLessonState] = useState<IntroLessonConfig>(
@@ -264,7 +307,41 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       setItems(list);
     });
 
+    const unsubCourses = onSnapshot(collection(db, 'courses'), (snap) => {
+      const list: CourseItem[] = [];
+      snap.forEach((d) => list.push({ id: d.id, ...d.data() } as CourseItem));
+      list.sort((a, b) => (a.order || 0) - (b.order || 0));
+      if (list.length > 0) {
+        setCourses(list);
+        setSelectedIntroCourseId((prev) => {
+          const valid = list.some((c) => c.id === prev) ? prev : list[0].id;
+          const target = list.find((c) => c.id === valid);
+          if (target?.introLesson) {
+            setIntroLessonState(target.introLesson);
+          }
+          return valid;
+        });
+        setSelectedFeaturesCourseId((prev) => {
+          const valid = list.some((c) => c.id === prev) ? prev : list[0].id;
+          const target = list.find((c) => c.id === valid);
+          if (target?.features) {
+            setFeaturesState(target.features);
+          }
+          return valid;
+        });
+
+        if (list.length < 2) {
+          // If a course was accidentally deleted, restore it with its content
+          restoreDefaultCoursesAndContent().catch(() => {});
+        }
+      } else {
+        setCourses(INITIAL_COURSES);
+        restoreDefaultCoursesAndContent().catch(() => {});
+      }
+    });
+
     return () => {
+      unsubCourses();
       unsubSections();
       unsubResources();
       unsubItems();
@@ -286,10 +363,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     setLiveStreamState(systemSettings.liveStream);
     setSelectedThemeId(systemSettings.activeTheme?.id || THEME_PRESETS[0].id);
     if (systemSettings.introLesson) {
-      setIntroLessonState(systemSettings.introLesson);
+      const activeIntroCourse = courses.find((c) => c.id === selectedIntroCourseId);
+      if (activeIntroCourse?.introLesson) {
+        setIntroLessonState(activeIntroCourse.introLesson);
+      } else {
+        setIntroLessonState(systemSettings.introLesson);
+      }
     }
     if (systemSettings.features) {
-      setFeaturesState(systemSettings.features);
+      const activeFeaturesCourse = courses.find((c) => c.id === selectedFeaturesCourseId);
+      if (activeFeaturesCourse?.features) {
+        setFeaturesState(activeFeaturesCourse.features);
+      } else {
+        setFeaturesState(systemSettings.features);
+      }
     }
   }, [systemSettings]);
 
@@ -361,6 +448,40 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       }
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  // Handler for activating student course from Admin Panel ("وبجانب حساب كل طالب كلمة اسمها تفعيل اضغط تفعيل واختار له كورس")
+  const handleOpenCourseActivationModal = (student: StudentUser) => {
+    setStudentForCourseActivation(student);
+    setSelectedCoursesForStudent(student.enrolledCourseIds || []);
+  };
+
+  const handleConfirmStudentCourseActivation = async () => {
+    if (!studentForCourseActivation) return;
+    setIsSavingStudentActivation(true);
+    try {
+      const userRef = doc(db, 'users', studentForCourseActivation.id);
+      await updateDoc(userRef, {
+        enrolledCourseIds: selectedCoursesForStudent,
+        isIndividuallyBlocked: false, // Opens the platform until admin locks it again: "تفتح له المنصة الى ان اقفلها عليه مرة ثانية"
+        blockedReason: null,
+        blockedCustomMessage: '',
+      });
+      setStudents((prev) =>
+        prev.map((s) =>
+          s.id === studentForCourseActivation.id
+            ? { ...s, enrolledCourseIds: selectedCoursesForStudent, isIndividuallyBlocked: false }
+            : s
+        )
+      );
+      notifySave(`تم تفعيل الكورسات للطالب "${studentForCourseActivation.name}" وفتح المنصة له بنجاح ⚡`);
+      setStudentForCourseActivation(null);
+    } catch (err) {
+      console.error('Error activating course for student:', err);
+      notifySave('حدث خطأ أثناء تفعيل الكورس للطالب');
+    } finally {
+      setIsSavingStudentActivation(false);
     }
   };
 
@@ -505,19 +626,89 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     reader.readAsDataURL(file);
   };
 
-  // 8.5. Save Intro Lesson ("الحصة التعريفية")
+  // Select Course for Intro Lesson Tab
+  const handleSelectIntroCourse = (courseId: string) => {
+    setSelectedIntroCourseId(courseId);
+    const target = courses.find((c) => c.id === courseId);
+    if (target?.introLesson) {
+      setIntroLessonState(target.introLesson);
+    } else {
+      setIntroLessonState({
+        isActive: true,
+        title: `الحصة التعريفية - ${target?.title || 'الكورس'}`,
+        videoUrl: '',
+        description: `شاهد هذا الفيديو للتعرف على طريقة دراسة ${target?.title || ''} وتحقيق المئوية بإذن الله`,
+      });
+    }
+  };
+
+  // Select Course for Features Tab
+  const handleSelectFeaturesCourse = (courseId: string) => {
+    setSelectedFeaturesCourseId(courseId);
+    const target = courses.find((c) => c.id === courseId);
+    if (target?.features) {
+      setFeaturesState(target.features);
+    } else {
+      setFeaturesState({
+        telegramMainGroupUrl: systemSettings.features?.telegramMainGroupUrl || 'https://t.me/raad_qiyas_main',
+        telegramDiscussionGroupUrl: systemSettings.features?.telegramDiscussionGroupUrl || 'https://t.me/raad_qiyas_discussion',
+        isDiagnosticEnabled: true,
+        isFriendsChallengeEnabled: true,
+      });
+    }
+  };
+
+  // 8.5. Save Intro Lesson ("الحصة التعريفية") per course
   const handleSaveIntroLesson = async () => {
+    const targetCourse = courses.find((c) => c.id === selectedIntroCourseId) || courses[0];
+    if (!targetCourse) {
+      notifySave('يرجى اختيار الكورس أولاً');
+      return;
+    }
+
+    setIsSavingIntroLesson(true);
     try {
-      await setDoc(doc(db, 'system_settings', 'global'), {
-        introLesson: {
-          ...introLessonState,
+      const cleanIntro: IntroLessonConfig = {
+        isActive: introLessonState.isActive !== false,
+        title: introLessonState.title?.trim() || `الحصة التعريفية - ${targetCourse.title}`,
+        videoUrl: introLessonState.videoUrl?.trim() || '',
+        description: introLessonState.description?.trim() || '',
+        updatedAt: new Date().toISOString(),
+      };
+
+      // 1. Save strictly to the chosen course doc in Firestore
+      await setDoc(
+        doc(db, 'courses', targetCourse.id),
+        {
+          introLesson: cleanIntro,
           updatedAt: new Date().toISOString(),
         },
-      }, { merge: true });
-      notifySave('تم حفظ وتحديث الحصة التعريفية بنجاح 🎬');
+        { merge: true }
+      );
+
+      // 2. Immediate local state update
+      setCourses((prev) =>
+        prev.map((c) => (c.id === targetCourse.id ? { ...c, introLesson: cleanIntro } : c))
+      );
+
+      // 3. Keep global fallback updated for primary course
+      if (targetCourse.id === 'course_default_1') {
+        await setDoc(
+          doc(db, 'system_settings', 'global'),
+          {
+            introLesson: cleanIntro,
+            updatedAt: new Date().toISOString(),
+          },
+          { merge: true }
+        ).catch(() => {});
+      }
+
+      notifySave(`تم حفظ وتحديث الحصة التعريفية الخاصة بكورس "${targetCourse.title}" بنجاح 🎬`);
     } catch (err) {
       console.error('Error saving intro lesson:', err);
       notifySave('حدث خطأ أثناء حفظ الحصة التعريفية');
+    } finally {
+      setIsSavingIntroLesson(false);
     }
   };
 
@@ -539,6 +730,175 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     reader.readAsDataURL(file);
   };
 
+  // ================= COURSES CRUD =================
+  const handleOpenAddCourse = () => {
+    setEditingCourse(null);
+    setCourseFormTitle('');
+    setCourseFormDesc('');
+    setCourseFormImage('');
+    setCourseFormIsLocked(false);
+    setCourseFormPrice('199 ريال');
+    setCourseFormBank1('');
+    setCourseFormBank2('');
+    setCourseFormPaymentMessage('الرجاء تحويل المبلغ على أحد الحسابين أعلاه ثم إرسال الإشعار لتفعيل الكورس فوراً.');
+    setCourseFormOrder(courses.length + 1);
+    setIsAddingCourse(true);
+  };
+
+  const handleOpenEditCourse = (course: CourseItem) => {
+    setEditingCourse(course);
+    setCourseFormTitle(course.title);
+    setCourseFormDesc(course.description || '');
+    setCourseFormImage(course.imageUrl || '');
+    setCourseFormIsLocked(Boolean(course.isLocked));
+    setCourseFormPrice(course.price || '199 ريال');
+    setCourseFormBank1(course.bankAccountImage1 || '');
+    setCourseFormBank2(course.bankAccountImage2 || '');
+    setCourseFormPaymentMessage(course.paymentMessage || 'الرجاء تحويل المبلغ على أحد الحسابين أعلاه ثم إرسال الإشعار لتفعيل الكورس فوراً.');
+    setCourseFormOrder(course.order || 1);
+    setIsAddingCourse(true);
+  };
+
+  const handleCourseFileUpload = (e: React.ChangeEvent<HTMLInputElement>, target: 'cover' | 'bank1' | 'bank2') => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (target === 'cover') setIsUploadingCourseCover(true);
+    if (target === 'bank1') setIsUploadingBank1(true);
+    if (target === 'bank2') setIsUploadingBank2(true);
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const rawData = event.target?.result as string;
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+        const maxDim = 800;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          const compressed = canvas.toDataURL('image/jpeg', 0.75);
+          if (target === 'cover') {
+            setCourseFormImage(compressed);
+            setIsUploadingCourseCover(false);
+          } else if (target === 'bank1') {
+            setCourseFormBank1(compressed);
+            setIsUploadingBank1(false);
+          } else if (target === 'bank2') {
+            setCourseFormBank2(compressed);
+            setIsUploadingBank2(false);
+          }
+        } else {
+          if (target === 'cover') { setCourseFormImage(rawData); setIsUploadingCourseCover(false); }
+          else if (target === 'bank1') { setCourseFormBank1(rawData); setIsUploadingBank1(false); }
+          else if (target === 'bank2') { setCourseFormBank2(rawData); setIsUploadingBank2(false); }
+        }
+        notifySave(`تم تحميل وضغط الصورة "${file.name}" بنجاح 🖼️`);
+      };
+      img.onerror = () => {
+        if (target === 'cover') setIsUploadingCourseCover(false);
+        if (target === 'bank1') setIsUploadingBank1(false);
+        if (target === 'bank2') setIsUploadingBank2(false);
+        notifySave('حدث خطأ أثناء معالجة الصورة');
+      };
+      img.src = rawData;
+    };
+    reader.onerror = () => {
+      if (target === 'cover') setIsUploadingCourseCover(false);
+      if (target === 'bank1') setIsUploadingBank1(false);
+      if (target === 'bank2') setIsUploadingBank2(false);
+      notifySave('حدث خطأ أثناء قراءة ملف الصورة');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleRestoreCourses = async () => {
+    setIsRestoringCourses(true);
+    try {
+      const res = await restoreDefaultCoursesAndContent();
+      notifySave(res.message);
+    } catch (e) {
+      console.error(e);
+      notifySave('حدث خطأ أثناء استرجاع الكورس');
+    } finally {
+      setIsRestoringCourses(false);
+    }
+  };
+
+  const handleSaveCourse = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!courseFormTitle.trim()) {
+      notifySave('يرجى كتابة اسم الكورس أولاً');
+      return;
+    }
+    setIsSavingCourse(true);
+    try {
+      const courseId = editingCourse ? editingCourse.id : `course_${Date.now()}`;
+      const courseRef = doc(db, 'courses', courseId);
+      
+      // CRITICAL: NEVER pass undefined values to setDoc in Firestore
+      const cleanData: Record<string, any> = {
+        id: courseId,
+        title: courseFormTitle.trim(),
+        description: courseFormDesc.trim(),
+        imageUrl: courseFormImage.trim() || 'https://images.unsplash.com/photo-1434030216411-0b793f4b4173?w=800&auto=format&fit=crop&q=80',
+        isLocked: Boolean(courseFormIsLocked),
+        price: courseFormPrice.trim() || '199 ريال',
+        order: Number(courseFormOrder) || (courses.length + 1),
+        bankAccountImage1: courseFormBank1.trim() || '',
+        bankAccountImage2: courseFormBank2.trim() || '',
+        paymentMessage: courseFormPaymentMessage.trim() || '',
+        createdAt: editingCourse?.createdAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      await setDoc(courseRef, cleanData, { merge: true });
+
+      // Immediate local state update for instant UI feedback
+      setCourses((prev) => {
+        const exists = prev.some((c) => c.id === courseId);
+        if (exists) {
+          return prev.map((c) => (c.id === courseId ? ({ ...c, ...cleanData } as CourseItem) : c));
+        }
+        return [...prev, cleanData as CourseItem].sort((a, b) => (a.order || 0) - (b.order || 0));
+      });
+      setSelectedCourseId(courseId);
+
+      setIsAddingCourse(false);
+      setEditingCourse(null);
+      notifySave(editingCourse ? 'تم تعديل وحفظ بيانات الكورس بنجاح 📚' : 'تم إضافة الكورس الجديد بنجاح 📚');
+    } catch (err) {
+      console.error('Error saving course:', err);
+      notifySave('حدث خطأ أثناء حفظ الكورس');
+    } finally {
+      setIsSavingCourse(false);
+    }
+  };
+
+  const handleDeleteCourse = async (courseId: string) => {
+    try {
+      await deleteDoc(doc(db, 'courses', courseId));
+      setCourses((prev) => prev.filter((c) => c.id !== courseId));
+      setDeletingCourse(null);
+      notifySave('تم حذف الكورس بنجاح 🗑️');
+    } catch (err) {
+      console.error('Error deleting course:', err);
+      notifySave('حدث خطأ أثناء حذف الكورس');
+    }
+  };
+
   // ================= CONTENT CRUD =================
   // 9. Section CRUD
   const handleCreateSection = async (e: React.FormEvent) => {
@@ -548,6 +908,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       const newRef = doc(collection(db, 'sections'));
       await setDoc(newRef, {
         id: newRef.id,
+        courseId: selectedCourseId || 'course_default_1',
         title: newSectionTitle.trim(),
         description: newSectionDesc.trim(),
         order: Number(newSectionOrder) || sections.length + 1,
@@ -573,6 +934,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         title: newSectionTitle.trim(),
         description: newSectionDesc.trim(),
         order: Number(newSectionOrder) || editingSection.order || 1,
+        courseId: editingSection.courseId || selectedCourseId || 'course_default_1',
       });
       setEditingSection(null);
       setNewSectionTitle('');
@@ -607,13 +969,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
   // 10. Resource CRUD
   const handleCreateResource = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newResourceTitle.trim() || !selectedSectionId) return;
+    const targetSecId = selectedSectionId || effectiveSectionId;
+    if (!newResourceTitle.trim() || !targetSecId) return;
     try {
       const newRef = doc(collection(db, 'resources'));
-      const secResources = resources.filter((r) => r.sectionId === selectedSectionId);
+      const secResources = resources.filter((r) => r.sectionId === targetSecId);
       await setDoc(newRef, {
         id: newRef.id,
-        sectionId: selectedSectionId,
+        courseId: selectedCourseId || 'course_default_1',
+        sectionId: targetSecId,
         title: newResourceTitle.trim(),
         description: newResourceDesc.trim(),
         order: Number(newResourceOrder) || secResources.length + 1,
@@ -624,7 +988,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       setNewResourceOrder(secResources.length + 2);
       setIsAddingResource(false);
       setSelectedResourceId(newRef.id);
-      notifySave('تم إضافة المصدر بنجاح');
+      notifySave('تم إضافة المصدر بنجاح لهذا الكورس 📚');
     } catch (err) {
       console.error(err);
       notifySave('حدث خطأ أثناء إضافة المصدر');
@@ -670,23 +1034,148 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     });
   };
 
-  // 11. Content Item CRUD
+  // 11. Content Item CRUD & Direct File Upload (Video, PDF, Exam files)
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setItemFileName(file.name);
-    setItemFileSize(`${(file.size / (1024 * 1024)).toFixed(2)} MB`);
+    const sizeMb = (file.size / (1024 * 1024)).toFixed(2);
+    setItemFileSize(`${sizeMb} MB`);
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const dataUri = event.target?.result as string;
-      setItemFileData(dataUri);
-      if (!itemUrl) {
-        setItemUrl(dataUri);
+    if (itemType === 'video') {
+      // Local Object URL for instant, smooth video playback preview without memory leaks
+      const localUrl = URL.createObjectURL(file);
+      if (!itemUrl || itemUrl.startsWith('blob:')) {
+        setItemUrl(localUrl);
       }
-    };
-    reader.readAsDataURL(file);
+      if (file.size < 750000) {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          const dataUri = event.target?.result as string;
+          setItemFileData(dataUri);
+        };
+        reader.readAsDataURL(file);
+      } else {
+        setItemFileData(localUrl);
+      }
+      notifySave(`تم رفع واختيار ملف الفيديو (${file.name}) بنجاح ✓`);
+    } else {
+      if (file.size < 750000) {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          const dataUri = event.target?.result as string;
+          setItemFileData(dataUri);
+          if (!itemUrl || itemUrl.startsWith('blob:')) {
+            setItemUrl(dataUri);
+          }
+        };
+        reader.readAsDataURL(file);
+      } else {
+        const localUrl = URL.createObjectURL(file);
+        setItemFileData(localUrl);
+        if (!itemUrl) {
+          setItemUrl(localUrl);
+        }
+      }
+      notifySave(`تم رفع واختيار الملف (${file.name}) بنجاح ✓`);
+    }
+  };
+
+  // Dedicated Exam File Upload & Parser (JSON, CSV, Excel/Text)
+  const handleExamFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setItemFileName(file.name);
+    const sizeMb = (file.size / (1024 * 1024)).toFixed(2);
+    setItemFileSize(`${sizeMb} MB`);
+
+    try {
+      const fileText = await file.text();
+      let importedQuestions: ExamQuestion[] = [];
+
+      // 1. Try parsing as JSON
+      const isJson = file.name.endsWith('.json') || file.type.includes('json') || fileText.trim().startsWith('[') || fileText.trim().startsWith('{');
+      if (isJson) {
+        try {
+          const parsed = JSON.parse(fileText);
+          const rawList = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.questions) ? parsed.questions : []);
+          if (parsed.title && !itemTitle) {
+            setItemTitle(parsed.title);
+          }
+          if (rawList.length > 0) {
+            importedQuestions = rawList.map((item: any, idx: number) => {
+              const qText = item.questionText || item.question || item.text || item.title || `سؤال ${idx + 1}`;
+              const rawOpts = item.options || item.choices || item.answers || [];
+              const opts = Array.isArray(rawOpts) && rawOpts.length > 0
+                ? rawOpts.map((o: any, oIdx: number) => String(o || `الخيار ${oIdx + 1}`).trim())
+                : ['الخيار أ', 'الخيار ب', 'الخيار ج', 'الخيار د'];
+              let correctIdx = 0;
+              if (typeof item.correctOptionIndex === 'number') {
+                correctIdx = item.correctOptionIndex;
+              } else if (typeof item.correctAnswer === 'number') {
+                correctIdx = item.correctAnswer;
+              } else if (typeof item.answer === 'number') {
+                correctIdx = item.answer;
+              } else if (typeof item.correctAnswer === 'string') {
+                const foundIdx = opts.findIndex((o: string) => o.trim() === item.correctAnswer.trim());
+                if (foundIdx >= 0) correctIdx = foundIdx;
+              }
+
+              return {
+                id: item.id || `q_${Date.now()}_${idx}`,
+                questionText: qText,
+                imageUrl: item.imageUrl || item.image || '',
+                options: opts.length >= 4 ? opts.slice(0, 4) : [...opts, ...['أ', 'ب', 'ج', 'د'].slice(opts.length)],
+                correctOptionIndex: correctIdx,
+                explanation: item.explanation || item.notes || '',
+              };
+            });
+          }
+        } catch (jsonErr) {
+          console.warn('Could not parse as standard JSON:', jsonErr);
+        }
+      }
+
+      // 2. If not JSON or JSON was empty, try parsing as CSV / Delimited lines
+      if (importedQuestions.length === 0) {
+        const lines = fileText.split(/\r?\n/).filter((l) => l.trim().length > 0);
+        lines.forEach((line, idx) => {
+          const parts = line.split(/[,\t;|]/).map((p) => p.trim());
+          if (parts.length >= 3) {
+            const qText = parts[0];
+            const opts = parts.slice(1, 5);
+            while (opts.length < 4) {
+              opts.push(`الخيار ${opts.length + 1}`);
+            }
+            const correctNum = parts[5] ? parseInt(parts[5], 10) : 0;
+            const explanation = parts[6] || '';
+            importedQuestions.push({
+              id: `q_csv_${Date.now()}_${idx}`,
+              questionText: qText,
+              imageUrl: '',
+              options: opts,
+              correctOptionIndex: isNaN(correctNum) ? 0 : Math.max(0, Math.min(3, correctNum)),
+              explanation,
+            });
+          }
+        });
+      }
+
+      if (importedQuestions.length > 0) {
+        setExamQuestions(importedQuestions);
+        if (!itemTitle) {
+          setItemTitle(file.name.replace(/\.[^/.]+$/, ''));
+        }
+        notifySave(`تم استيراد ${importedQuestions.length} سؤال من ملف الاختبار (${file.name}) بنجاح ✓`);
+      } else {
+        notifySave(`تم قراءة ملف الاختبار (${file.name}). تأكد من احتواء الملف على أسئلة وخيارات.`);
+      }
+    } catch (readErr) {
+      console.error('Error reading exam file:', readErr);
+      notifySave('حدث خطأ أثناء قراءة ملف الاختبار');
+    }
   };
 
   const handleQuestionImageUpload = (qIdx: number, e: React.ChangeEvent<HTMLInputElement>) => {
@@ -730,25 +1219,28 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
 
   const handleSaveContentItem = async (e: React.FormEvent) => {
     e.preventDefault();
-    let targetResId = modalResourceId || selectedResourceId;
+    let targetResId = modalResourceId || selectedResourceId || effectiveResourceId;
     if (!targetResId) {
-      const secId = modalSectionId || selectedSectionId || (sections[0]?.id);
-      const existingRes = resources.find((r) => r.sectionId === secId);
-      if (existingRes) {
-        targetResId = existingRes.id;
-      } else if (secId) {
-        const secObj = sections.find((s) => s.id === secId);
-        const newResRef = doc(collection(db, 'resources'));
-        await setDoc(newResRef, {
-          id: newResRef.id,
-          sectionId: secId,
-          title: `المحتوى العام (${secObj?.title || 'قسم جديد'})`,
-          description: 'تم إنشاؤه تلقائياً لتضمين المحتوى والمحافظة على ملفات المنصة',
-          order: 1,
-          createdAt: new Date().toISOString(),
-        });
-        targetResId = newResRef.id;
-        setSelectedResourceId(targetResId);
+      const secId = modalSectionId || selectedSectionId || effectiveSectionId;
+      if (secId) {
+        const existingRes = resources.find((r) => r.sectionId === secId);
+        if (existingRes) {
+          targetResId = existingRes.id;
+        } else {
+          const secObj = sections.find((s) => s.id === secId);
+          const newResRef = doc(collection(db, 'resources'));
+          await setDoc(newResRef, {
+            id: newResRef.id,
+            courseId: selectedCourseId || 'course_default_1',
+            sectionId: secId,
+            title: `المحتوى العام (${secObj?.title || 'قسم جديد'})`,
+            description: 'تم إنشاؤه تلقائياً لتضمين المحتوى المنفصل لهذا الكورس',
+            order: 1,
+            createdAt: new Date().toISOString(),
+          });
+          targetResId = newResRef.id;
+          setSelectedResourceId(targetResId);
+        }
       }
     }
 
@@ -770,19 +1262,27 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       };
 
       if (itemType === 'video') {
-        const finalUrl = itemUrl || itemFileData || (editingItem ? editingItem.url : '') || 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
+        let finalUrl = itemUrl || itemFileData || (editingItem ? editingItem.url : '') || 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
+        if (finalUrl.startsWith('data:') && finalUrl.length > 750000) {
+          finalUrl = editingItem?.url || 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
+        }
         basePayload.url = finalUrl;
         const finalFileData = itemFileData || (editingItem ? (editingItem.fileData || '') : '');
-        if (finalFileData && finalFileData.length < 850000) {
+        if (finalFileData && !finalFileData.startsWith('blob:') && finalFileData.length < 750000) {
           basePayload.fileData = finalFileData;
         }
+        basePayload.fileName = itemFileName || (editingItem ? editingItem.fileName : '') || 'video.mp4';
+        basePayload.fileSize = itemFileSize || (editingItem ? editingItem.fileSize : '') || '';
         basePayload.linkedExamIds = linkedExamIds;
         basePayload.linkedFileIds = linkedFileIds;
       } else if (itemType === 'file') {
-        const finalUrl = itemUrl || itemFileData || (editingItem ? editingItem.url : '');
+        let finalUrl: string = (itemUrl || itemFileData || (editingItem ? editingItem.url : '') || '') as string;
+        if (finalUrl && finalUrl.startsWith('data:') && finalUrl.length > 750000) {
+          finalUrl = editingItem?.url || '';
+        }
         basePayload.url = finalUrl;
         const finalFileData = itemFileData || (editingItem ? (editingItem.fileData || '') : '');
-        if (finalFileData && finalFileData.length < 850000) {
+        if (finalFileData && !finalFileData.startsWith('blob:') && finalFileData.length < 750000) {
           basePayload.fileData = finalFileData;
         }
         basePayload.fileName = itemFileName || (editingItem ? editingItem.fileName : '') || 'document.pdf';
@@ -932,10 +1432,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
   const handleOpenAddItem = (type: 'video' | 'exam' | 'file', targetResId?: string) => {
     setEditingItem(null);
     setItemType(type);
-    const chosenResId = targetResId || selectedResourceId || (currentResources[0]?.id) || (resources[0]?.id) || '';
+    const chosenResId = targetResId || selectedResourceId || effectiveResourceId || '';
     setModalResourceId(chosenResId);
     const chosenRes = resources.find((r) => r.id === chosenResId);
-    setModalSectionId(chosenRes?.sectionId || selectedSectionId || (sections[0]?.id) || '');
+    setModalSectionId(chosenRes?.sectionId || selectedSectionId || effectiveSectionId || '');
     setItemTitle('');
     setItemDesc('');
     setItemUrl('');
@@ -1143,19 +1643,52 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     }
   };
 
-  // Dedicated save for Features tab
+  // Dedicated save for Features tab per course
   const handleSaveFeatures = async () => {
+    const targetCourse = courses.find((c) => c.id === selectedFeaturesCourseId) || courses[0];
+    if (!targetCourse) {
+      notifySave('يرجى اختيار الكورس أولاً');
+      return;
+    }
+
     setIsSavingFeatures(true);
     try {
-      const settingsRef = doc(db, 'system_settings', 'global');
-      await setDoc(settingsRef, {
-        features: {
-          ...featuresState,
+      const cleanFeatures: FeaturesConfig = {
+        telegramMainGroupUrl: featuresState.telegramMainGroupUrl?.trim() || '',
+        telegramDiscussionGroupUrl: featuresState.telegramDiscussionGroupUrl?.trim() || '',
+        isDiagnosticEnabled: featuresState.isDiagnosticEnabled !== false,
+        isFriendsChallengeEnabled: featuresState.isFriendsChallengeEnabled !== false,
+        updatedAt: new Date().toISOString(),
+      };
+
+      // 1. Save strictly to the chosen course doc in Firestore
+      await setDoc(
+        doc(db, 'courses', targetCourse.id),
+        {
+          features: cleanFeatures,
           updatedAt: new Date().toISOString(),
         },
-        updatedAt: new Date().toISOString(),
-      }, { merge: true });
-      notifySave('تم حفظ روابط مجموعات التليجرام وإعدادات المميزات بنجاح! ⚡');
+        { merge: true }
+      );
+
+      // 2. Immediate local state update
+      setCourses((prev) =>
+        prev.map((c) => (c.id === targetCourse.id ? { ...c, features: cleanFeatures } : c))
+      );
+
+      // 3. Keep global fallback updated for primary course
+      if (targetCourse.id === 'course_default_1') {
+        await setDoc(
+          doc(db, 'system_settings', 'global'),
+          {
+            features: cleanFeatures,
+            updatedAt: new Date().toISOString(),
+          },
+          { merge: true }
+        ).catch(() => {});
+      }
+
+      notifySave(`تم حفظ روابط التليجرام والمميزات الخاصة بكورس "${targetCourse.title}" بنجاح ⚡`);
     } catch (err) {
       console.error('Error saving features in admin:', err);
       notifySave('حدث خطأ أثناء حفظ المميزات');
@@ -1164,15 +1697,38 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     }
   };
 
-  const currentResources = resources.filter((r) => r.sectionId === selectedSectionId);
-  const currentItems = items
-    .filter((i) => i.resourceId === selectedResourceId)
-    .sort((a, b) => {
-      const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-      const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-      if (tA !== tB) return tA - tB;
-      return (a.id || '').localeCompare(b.id || '');
-    });
+  const currentCourse = courses.find((c) => c.id === selectedCourseId) || courses[0] || null;
+  const courseSections = sections
+    .filter((s) => {
+      if (s.courseId) return s.courseId === selectedCourseId;
+      const defaultId = courses[0]?.id || 'course_default_1';
+      return selectedCourseId === 'course_default_1' || selectedCourseId === defaultId;
+    })
+    .sort((a, b) => (a.order || 0) - (b.order || 0));
+
+  // Active section strictly within current course
+  const effectiveSection = courseSections.find((s) => s.id === selectedSectionId) || courseSections[0] || null;
+  const effectiveSectionId = effectiveSection ? effectiveSection.id : '';
+
+  const currentResources = effectiveSectionId
+    ? resources
+        .filter((r) => r.sectionId === effectiveSectionId)
+        .sort((a, b) => (a.order || 0) - (b.order || 0))
+    : [];
+
+  const effectiveResource = currentResources.find((r) => r.id === selectedResourceId) || currentResources[0] || null;
+  const effectiveResourceId = effectiveResource ? effectiveResource.id : '';
+
+  const currentItems = effectiveResourceId
+    ? items
+        .filter((i) => i.resourceId === effectiveResourceId)
+        .sort((a, b) => {
+          const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+          const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          if (tA !== tB) return tA - tB;
+          return (a.id || '').localeCompare(b.id || '');
+        })
+    : [];
 
   const currentVideos = currentItems.filter((i) => i.type === 'video');
   const currentExams = currentItems.filter((i) => i.type === 'exam');
@@ -1240,6 +1796,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       {/* Admin Tabs */}
       <div className="bg-slate-900/60 border-b border-slate-800 px-4 md:px-8 py-2 overflow-x-auto">
         <div className="flex items-center gap-2 min-w-max">
+          <button
+            onClick={() => setActiveTab('courses')}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs md:text-sm font-bold transition ${
+              activeTab === 'courses'
+                ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20'
+                : 'text-indigo-400 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            <BookOpen className="w-4 h-4" />
+            <span>الكورسات ({courses.length}) 📚</span>
+          </button>
+
           <button
             onClick={() => setActiveTab('students')}
             className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs md:text-sm font-bold transition ${
@@ -1340,6 +1908,179 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
 
       {/* Main Tab Content */}
       <main className="flex-1 p-4 md:p-8 max-w-7xl mx-auto w-full">
+        {/* ================= TAB 0: COURSES MANAGEMENT ================= */}
+        {activeTab === 'courses' && (
+          <div className="space-y-6">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <h2 className="text-xl md:text-2xl font-black text-white flex items-center gap-2">
+                  <BookOpen className="w-6 h-6 text-indigo-400" />
+                  <span>إدارة الكورسات التعليمية ({courses.length})</span>
+                </h2>
+                <p className="text-xs text-slate-400 mt-1">
+                  إضافة وتعديل وحذف الكورسات، تغيير الغلاف والوصف، قفل الكورس وتحديد الأسعار، ورفع صورتين لرقم الحساب ورسالة التحويل.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={handleRestoreCourses}
+                  disabled={isRestoringCourses}
+                  className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs sm:text-sm font-black shadow-md transition cursor-pointer"
+                  title="استرجاع كورس التسريبات VIP ومحتوياته بالكامل"
+                >
+                  <RefreshCw className={`w-4 h-4 ${isRestoringCourses ? 'animate-spin' : ''}`} />
+                  <span>{isRestoringCourses ? 'جاري الاسترجاع...' : 'استرجاع الكورس المحذوف ومحتوياته ⚡'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleOpenAddCourse}
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white text-xs sm:text-sm font-black shadow-lg shadow-indigo-600/30 transition transform hover:scale-105 cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>إضافة كورس جديد 📚</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Courses Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+              {courses.map((course, idx) => {
+                const courseSectionsCount = sections.filter(
+                  (s) => s.courseId === course.id || (!s.courseId && course.id === 'course_default_1')
+                ).length;
+
+                return (
+                  <div
+                    key={course.id}
+                    className="rounded-3xl bg-slate-900 border border-slate-800 overflow-hidden shadow-xl flex flex-col justify-between group hover:border-slate-700 transition"
+                  >
+                    <div>
+                      {/* Course Cover Image */}
+                      <div className="relative h-44 w-full bg-slate-800 overflow-hidden">
+                        {course.imageUrl ? (
+                          <img
+                            src={course.imageUrl}
+                            alt={course.title}
+                            className="w-full h-full object-cover group-hover:scale-105 transition duration-300"
+                          />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-slate-500">
+                            <BookOpen className="w-12 h-12" />
+                          </div>
+                        )}
+                        <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/30 to-transparent" />
+                        
+                        {/* Lock / Free badge */}
+                        <div className="absolute top-3 right-3">
+                          {course.isLocked ? (
+                            <span className="px-3 py-1 rounded-full text-xs font-black bg-rose-600/90 text-white backdrop-blur-md shadow-md flex items-center gap-1">
+                              <Lock className="w-3.5 h-3.5" />
+                              <span>مقفول ({course.price || '199 ريال'})</span>
+                            </span>
+                          ) : (
+                            <span className="px-3 py-1 rounded-full text-xs font-black bg-emerald-600/90 text-white backdrop-blur-md shadow-md flex items-center gap-1">
+                              <Unlock className="w-3.5 h-3.5" />
+                              <span>مفتوح مجاناً 🔓</span>
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Order badge */}
+                        <span className="absolute bottom-3 left-3 px-2 py-0.5 rounded-lg bg-black/70 text-[11px] font-bold text-amber-300">
+                          ترتيب: #{course.order || idx + 1}
+                        </span>
+                      </div>
+
+                      {/* Course Info */}
+                      <div className="p-5 space-y-3">
+                        <div>
+                          <h3 className="text-base sm:text-lg font-black text-white">{course.title}</h3>
+                          <p className="text-xs text-slate-400 line-clamp-2 mt-1 leading-relaxed">
+                            {course.description || 'لا يوجد وصف مضاف لهذا الكورس'}
+                          </p>
+                        </div>
+
+                        {/* If locked: Preview of Bank Account Images and Message */}
+                        {course.isLocked && (
+                          <div className="p-3 rounded-2xl bg-slate-800/60 border border-slate-700/60 space-y-2">
+                            <span className="text-[11px] font-black text-amber-400 block">
+                              بيانات وصور التحويل لهذا الكورس:
+                            </span>
+                            <div className="grid grid-cols-2 gap-2">
+                              <div className="relative aspect-video rounded-xl overflow-hidden bg-slate-900 border border-slate-700 flex items-center justify-center">
+                                {course.bankAccountImage1 ? (
+                                  <img src={course.bankAccountImage1} alt="حساب 1" className="w-full h-full object-cover" />
+                                ) : (
+                                  <span className="text-[10px] text-slate-500">لا توجد صورة 1</span>
+                                )}
+                              </div>
+                              <div className="relative aspect-video rounded-xl overflow-hidden bg-slate-900 border border-slate-700 flex items-center justify-center">
+                                {course.bankAccountImage2 ? (
+                                  <img src={course.bankAccountImage2} alt="حساب 2" className="w-full h-full object-cover" />
+                                ) : (
+                                  <span className="text-[10px] text-slate-500">لا توجد صورة 2</span>
+                                )}
+                              </div>
+                            </div>
+                            {course.paymentMessage && (
+                              <p className="text-[10px] text-slate-300 truncate">
+                                💬 {course.paymentMessage}
+                              </p>
+                            )}
+                          </div>
+                        )}
+
+                        <div className="text-xs font-bold text-indigo-400 flex items-center gap-1">
+                          <FolderTree className="w-3.5 h-3.5" />
+                          <span>{courseSectionsCount} أقسام مخصصة لهذا الكورس</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Actions */}
+                    <div className="p-4 bg-slate-950/60 border-t border-slate-800 flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedCourseId(course.id);
+                          setActiveTab('content');
+                        }}
+                        className="px-3 py-2 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 text-indigo-300 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                        title="إدارة محتويات هذا الكورس وأقسامه ومصادره"
+                      >
+                        <FolderTree className="w-3.5 h-3.5" />
+                        <span>إدارة المحتوى 📂</span>
+                      </button>
+
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEditCourse(course)}
+                          className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition cursor-pointer"
+                          title="تعديل بيانات الكورس"
+                        >
+                          <Edit className="w-4 h-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDeletingCourse(course)}
+                          className="p-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 transition cursor-pointer"
+                          title="حذف هذا الكورس"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* ================= TAB 1: STUDENTS ================= */}
         {activeTab === 'students' && (
           <div className="space-y-6">
@@ -1360,6 +2101,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                     <tr>
                       <th className="p-4">الطالب</th>
                       <th className="p-4">البريد الإلكتروني</th>
+                      <th className="p-4">
+                        <div className="flex items-center gap-1.5">
+                          <span>كلمة المرور</span>
+                          <button
+                            type="button"
+                            onClick={() => setShowAllPasswords(!showAllPasswords)}
+                            className="text-[10px] px-2 py-0.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-amber-300 font-bold transition cursor-pointer"
+                            title="إظهار / إخفاء كلمات المرور للجميع"
+                          >
+                            {showAllPasswords ? 'إخفاء الكل' : 'إظهار الكل'}
+                          </button>
+                        </div>
+                      </th>
+                      <th className="p-4">الكورسات المفعلة</th>
+                      <th className="p-4 text-center">تفعيل كورس</th>
                       <th className="p-4">حالة الاشتراك والشريط</th>
                       <th className="p-4">تحديد الأيام</th>
                       <th className="p-4">قفل المنصة على الطالب</th>
@@ -1369,7 +2125,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                   <tbody className="divide-y divide-slate-800">
                     {students.length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="p-8 text-center text-slate-500">
+                        <td colSpan={9} className="p-8 text-center text-slate-500">
                           لا يوجد طلاب مسجلين حتى الآن.
                         </td>
                       </tr>
@@ -1414,6 +2170,68 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                             {/* Email */}
                             <td className="p-4 text-slate-300 font-mono text-xs">{st.email}</td>
 
+                            {/* Password with View Toggle: "مشاهدة كلمة مرور حساب كل طالب" */}
+                            <td className="p-4">
+                              <div className="flex items-center gap-1.5 font-mono text-xs font-bold text-amber-300 bg-slate-800/80 px-2.5 py-1 rounded-xl border border-slate-700/60 w-fit">
+                                <span>
+                                  {visiblePasswords[st.id] || showAllPasswords
+                                    ? st.password || 'لا توجد'
+                                    : '••••••••'}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setVisiblePasswords((prev) => ({
+                                      ...prev,
+                                      [st.id]: !prev[st.id],
+                                    }))
+                                  }
+                                  className="p-1 hover:text-white text-slate-400 transition cursor-pointer"
+                                  title="إظهار / إخفاء كلمة المرور"
+                                >
+                                  {visiblePasswords[st.id] || showAllPasswords ? (
+                                    <EyeOff className="w-3.5 h-3.5" />
+                                  ) : (
+                                    <Eye className="w-3.5 h-3.5" />
+                                  )}
+                                </button>
+                              </div>
+                            </td>
+
+                            {/* Enrolled Courses Badges */}
+                            <td className="p-4">
+                              <div className="flex flex-wrap gap-1 max-w-[180px]">
+                                {st.enrolledCourseIds && st.enrolledCourseIds.length > 0 ? (
+                                  st.enrolledCourseIds.map((cId) => {
+                                    const cObj = courses.find((c) => c.id === cId);
+                                    return (
+                                      <span
+                                        key={cId}
+                                        className="text-[10px] font-black px-2 py-0.5 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-300"
+                                      >
+                                        {cObj ? cObj.title : cId}
+                                      </span>
+                                    );
+                                  })
+                                ) : (
+                                  <span className="text-[11px] text-slate-500 font-bold">لا يوجد</span>
+                                )}
+                              </div>
+                            </td>
+
+                            {/* Course Activation Button: "وبجانب حساب كل طالب كلمة اسمها تفعيل اضغط تفعيل واختار له كورس" */}
+                            <td className="p-4 text-center">
+                              <button
+                                type="button"
+                                onClick={() => handleOpenCourseActivationModal(st)}
+                                className="px-3.5 py-1.5 text-xs font-black rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-md shadow-emerald-600/30 transition flex items-center justify-center gap-1.5 cursor-pointer transform hover:scale-105 mx-auto"
+                                title="تفعيل كورس لهذا الطالب وفتح المنصة له"
+                              >
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                                <span>تفعيل</span>
+                              </button>
+                            </td>
+
                             {/* Subscription Days Status */}
                             <td className="p-4">
                               {st.isUnlimited ? (
@@ -1427,20 +2245,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                                     <span className="font-bold text-white">اليوم {elapsedDays} من {st.daysAllowed} يوم</span>
                                     <span className="text-slate-400">{daysLeft} يوم متبقي</span>
                                   </div>
-                                    <div className="w-full bg-slate-800 h-2.5 rounded-full overflow-hidden">
-                                      <div
-                                        className={`h-full rounded-full transition-all ${
-                                          elapsedDays / st.daysAllowed < 0.35
-                                            ? 'bg-blue-500 shadow-sm shadow-blue-500/50'
-                                            : elapsedDays / st.daysAllowed < 0.65
-                                            ? 'bg-indigo-500'
-                                            : elapsedDays / st.daysAllowed < 0.85
-                                            ? 'bg-amber-500'
-                                            : 'bg-rose-500 animate-pulse'
-                                        }`}
-                                        style={{ width: `${Math.min(100, Math.max(5, (elapsedDays / st.daysAllowed) * 100))}%` }}
-                                      />
-                                    </div>
+                                  <div className="w-full bg-slate-800 h-2.5 rounded-full overflow-hidden">
+                                    <div
+                                      className={`h-full rounded-full transition-all ${
+                                        elapsedDays / st.daysAllowed < 0.35
+                                          ? 'bg-blue-500 shadow-sm shadow-blue-500/50'
+                                          : elapsedDays / st.daysAllowed < 0.65
+                                          ? 'bg-indigo-500'
+                                          : elapsedDays / st.daysAllowed < 0.85
+                                          ? 'bg-amber-500'
+                                          : 'bg-rose-500 animate-pulse'
+                                      }`}
+                                      style={{ width: `${Math.min(100, Math.max(5, (elapsedDays / st.daysAllowed) * 100))}%` }}
+                                    />
+                                  </div>
                                 </div>
                               ) : (
                                 <span className="text-amber-400/90 text-xs font-bold bg-amber-500/10 px-2 py-1 rounded-lg border border-amber-500/20">
@@ -1456,7 +2274,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                                   setStudentForDaysModal(st);
                                   setSelectedDaysAmount(st.daysAllowed || 30);
                                 }}
-                                className="px-3.5 py-1.5 text-xs font-bold rounded-xl bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/30 transition flex items-center gap-1"
+                                className="px-3.5 py-1.5 text-xs font-bold rounded-xl bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/30 transition flex items-center gap-1 cursor-pointer"
                               >
                                 <Calendar className="w-3.5 h-3.5" />
                                 <span>تحديد الأيام</span>
@@ -1947,101 +2765,256 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
               </div>
             </div>
 
-            {/* Content Structure Navigator */}
+            {/* Content Structure Navigator (Courses -> Sections -> Resources -> Items) */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-              {/* Sections Column */}
+              {/* Courses Column (before الأقسام الرئيسية) */}
               <div className="lg:col-span-3 bg-slate-900 border border-slate-800 rounded-3xl p-4 space-y-3">
                 <div className="flex items-center justify-between pb-2 border-b border-slate-800 text-xs font-bold text-slate-400">
-                  <span>الأقسام الرئيسية ({sections.length})</span>
+                  <span className="flex items-center gap-1.5 text-white font-black">
+                    <BookOpen className="w-4 h-4 text-purple-400" />
+                    <span>الكورسات ({courses.length})</span>
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    {courses.length < 2 && (
+                      <button
+                        type="button"
+                        onClick={handleRestoreCourses}
+                        disabled={isRestoringCourses}
+                        className="text-amber-400 hover:text-amber-300 font-bold flex items-center gap-1 text-[11px] cursor-pointer"
+                        title="استرجاع كورس VIP المحذوف"
+                      >
+                        <RefreshCw className={`w-3 h-3 ${isRestoringCourses ? 'animate-spin' : ''}`} />
+                        <span>استرجاع</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={handleOpenAddCourse}
+                      className="text-purple-400 hover:text-purple-300 font-bold flex items-center gap-1 text-xs cursor-pointer"
+                      title="إضافة كورس جديد"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>كورس جديد</span>
+                    </button>
+                  </div>
                 </div>
 
                 <div className="space-y-2">
-                  {sections.map((sec, sIdx) => (
-                    <div
-                      key={sec.id}
-                      className={`w-full p-3 rounded-2xl border text-xs font-bold transition flex items-center justify-between gap-2 group ${
-                        selectedSectionId === sec.id
-                          ? 'text-white shadow-md'
-                          : 'bg-slate-800/40 border-slate-700/60 text-slate-300 hover:bg-slate-800'
-                      }`}
-                      style={
-                        selectedSectionId === sec.id
-                          ? {
-                              backgroundColor: `${systemSettings.activeTheme?.primary || '#2563eb'}25`,
-                              borderColor: systemSettings.activeTheme?.primary || '#2563eb',
-                              boxShadow: `0 4px 14px ${systemSettings.activeTheme?.primary || '#2563eb'}30`,
-                            }
-                          : {}
-                      }
-                    >
-                      {/* Order select badge */}
-                      <div className="shrink-0 flex items-center gap-1" title="ترتيب هذا القسم">
-                        <span className="text-[10px] text-slate-500 font-normal">#</span>
-                        <select
-                          value={sec.order || sIdx + 1}
-                          onChange={(e) => handleReorderSection(sec.id, Number(e.target.value))}
-                          onClick={(e) => e.stopPropagation()}
-                          className="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-amber-300 font-mono font-black text-xs rounded-lg px-1.5 py-0.5 focus:outline-none focus:border-amber-400 cursor-pointer"
-                        >
-                          {sections.map((_, i) => (
-                            <option key={i + 1} value={i + 1}>
-                              {i + 1}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                  {courses.map((crs) => {
+                    const isSelected = selectedCourseId === crs.id;
+                    const secCount = sections.filter((s) => {
+                      if (s.courseId) return s.courseId === crs.id;
+                      const defaultId = courses[0]?.id || 'course_default_1';
+                      return crs.id === 'course_default_1' || crs.id === defaultId;
+                    }).length;
 
-                      <button
+                    return (
+                      <div
+                        key={crs.id}
                         onClick={() => {
-                          setSelectedSectionId(sec.id);
-                          const firstRes = resources.find((r) => r.sectionId === sec.id);
-                          if (firstRes) setSelectedResourceId(firstRes.id);
+                          setSelectedCourseId(crs.id);
+                          const matchingSections = sections
+                            .filter((s) => {
+                              if (s.courseId) return s.courseId === crs.id;
+                              const defaultId = courses[0]?.id || 'course_default_1';
+                              return crs.id === 'course_default_1' || crs.id === defaultId;
+                            })
+                            .sort((a, b) => (a.order || 0) - (b.order || 0));
+                          if (matchingSections.length > 0) {
+                            setSelectedSectionId(matchingSections[0].id);
+                            const firstRes = resources.filter((r) => r.sectionId === matchingSections[0].id);
+                            if (firstRes.length > 0) setSelectedResourceId(firstRes[0].id);
+                            else setSelectedResourceId('');
+                          } else {
+                            setSelectedSectionId('');
+                            setSelectedResourceId('');
+                          }
                         }}
-                        className="flex-1 text-right truncate"
+                        className={`w-full p-2.5 rounded-2xl border text-xs font-bold transition flex items-center justify-between gap-2 cursor-pointer group ${
+                          isSelected
+                            ? 'bg-purple-600/20 border-purple-500 text-white shadow-lg shadow-purple-500/20'
+                            : 'bg-slate-800/40 border-slate-700/60 text-slate-300 hover:bg-slate-800'
+                        }`}
                       >
-                        <div className="truncate">{sec.title}</div>
-                        <span className="text-[10px] text-slate-400 font-normal">
-                          {resources.filter((r) => r.sectionId === sec.id).length} مصادر
-                        </span>
-                      </button>
+                        <div className="flex items-center gap-2 truncate flex-1 min-w-0">
+                          {crs.imageUrl ? (
+                            <img
+                              src={crs.imageUrl}
+                              alt={crs.title}
+                              className="w-8 h-8 rounded-lg object-cover border border-slate-700 shrink-0"
+                            />
+                          ) : (
+                            <div className="w-8 h-8 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center shrink-0 text-slate-400">
+                              <BookOpen className="w-4 h-4" />
+                            </div>
+                          )}
+                          <div className="truncate text-right min-w-0 flex-1">
+                            <div className="truncate flex items-center gap-1">
+                              <span className="truncate">{crs.title}</span>
+                              {crs.isLocked ? (
+                                <span className="text-[9px] bg-rose-500/20 text-rose-300 border border-rose-500/30 px-1 rounded shrink-0">مغلق</span>
+                              ) : (
+                                <span className="text-[9px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-1 rounded shrink-0">مفتوح</span>
+                              )}
+                            </div>
+                            <span className="text-[10px] text-slate-400 font-normal">
+                              {secCount} أقسام
+                            </span>
+                          </div>
+                        </div>
 
-                      {/* Edit & Delete Section Buttons */}
-                      <div className="flex items-center gap-1 opacity-80 group-hover:opacity-100 shrink-0">
-                        <button
-                          onClick={() => {
-                            setEditingSection(sec);
-                            setNewSectionTitle(sec.title);
-                            setNewSectionDesc(sec.description || '');
-                            setNewSectionOrder(sec.order || sIdx + 1);
-                            setIsAddingSection(true);
-                          }}
-                          className="p-1 text-slate-400 hover:text-blue-400 transition"
-                          title="تعديل القسم"
-                        >
-                          <Edit className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDeleteSection(sec.id, sec.title);
-                          }}
-                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition"
-                          title="حذف هذا القسم"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                        <div className="flex items-center gap-1 opacity-80 group-hover:opacity-100 shrink-0">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleOpenEditCourse(crs);
+                            }}
+                            className="p-1 text-slate-400 hover:text-purple-400 transition"
+                            title="تعديل بيانات الكورس"
+                          >
+                            <Edit className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Sections Column (الأقسام الرئيسية) */}
+              <div className="lg:col-span-3 bg-slate-900 border border-slate-800 rounded-3xl p-4 space-y-3">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-800 text-xs font-bold text-slate-400">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-white font-bold">الأقسام الرئيسية</span>
+                    <span className="text-slate-400 text-[11px]">({courseSections.length})</span>
+                  </div>
+                  {currentCourse && (
+                    <span className="text-[10px] text-purple-300 font-normal truncate max-w-[100px]" title={currentCourse.title}>
+                      {currentCourse.title}
+                    </span>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  {courseSections.length === 0 ? (
+                    <div className="py-10 px-4 rounded-2xl bg-purple-500/5 border border-dashed border-purple-500/30 text-center space-y-3">
+                      <div className="w-10 h-10 rounded-xl bg-purple-500/10 text-purple-400 mx-auto flex items-center justify-center">
+                        <BookOpen className="w-5 h-5" />
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-xs font-black text-white">ابدأ بإضافة المحتوى المنفصل لهذا الكورس</p>
+                        <p className="text-[10px] text-slate-400 leading-relaxed">
+                          محتويات هذا الكورس منفصلة ومستقلة، أضف قسماً لتبدأ برفع الفيديوهات والاختبارات والملفات.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingSection(null);
+                          setNewSectionTitle('');
+                          setNewSectionDesc('');
+                          setNewSectionOrder(1);
+                          setIsAddingSection(true);
+                        }}
+                        className="px-3.5 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold transition flex items-center justify-center gap-1.5 mx-auto shadow-md shadow-purple-600/30 cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>+ إضافة أول قسم</span>
+                      </button>
                     </div>
-                  ))}
+                  ) : (
+                    courseSections.map((sec, sIdx) => {
+                      const isSecSelected = effectiveSectionId === sec.id;
+                      return (
+                        <div
+                          key={sec.id}
+                          className={`w-full p-3 rounded-2xl border text-xs font-bold transition flex items-center justify-between gap-2 group ${
+                            isSecSelected
+                              ? 'text-white shadow-md'
+                              : 'bg-slate-800/40 border-slate-700/60 text-slate-300 hover:bg-slate-800'
+                          }`}
+                          style={
+                            isSecSelected
+                              ? {
+                                  backgroundColor: `${systemSettings.activeTheme?.primary || '#2563eb'}25`,
+                                  borderColor: systemSettings.activeTheme?.primary || '#2563eb',
+                                  boxShadow: `0 4px 14px ${systemSettings.activeTheme?.primary || '#2563eb'}30`,
+                                }
+                              : {}
+                          }
+                        >
+                          {/* Order select badge */}
+                          <div className="shrink-0 flex items-center gap-1" title="ترتيب هذا القسم">
+                            <span className="text-[10px] text-slate-500 font-normal">#</span>
+                            <select
+                              value={sec.order || sIdx + 1}
+                              onChange={(e) => handleReorderSection(sec.id, Number(e.target.value))}
+                              onClick={(e) => e.stopPropagation()}
+                              className="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-amber-300 font-mono font-black text-xs rounded-lg px-1.5 py-0.5 focus:outline-none focus:border-amber-400 cursor-pointer"
+                            >
+                              {courseSections.map((_, i) => (
+                                <option key={i + 1} value={i + 1}>
+                                  {i + 1}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <button
+                            onClick={() => {
+                              setSelectedSectionId(sec.id);
+                              const firstRes = resources.filter((r) => r.sectionId === sec.id);
+                              if (firstRes.length > 0) setSelectedResourceId(firstRes[0].id);
+                              else setSelectedResourceId('');
+                            }}
+                            className="flex-1 text-right truncate"
+                          >
+                            <div className="truncate">{sec.title}</div>
+                            <span className="text-[10px] text-slate-400 font-normal">
+                              {resources.filter((r) => r.sectionId === sec.id).length} مصادر
+                            </span>
+                          </button>
+
+                          {/* Edit & Delete Section Buttons */}
+                          <div className="flex items-center gap-1 opacity-80 group-hover:opacity-100 shrink-0">
+                            <button
+                              onClick={() => {
+                                setEditingSection(sec);
+                                setNewSectionTitle(sec.title);
+                                setNewSectionDesc(sec.description || '');
+                                setNewSectionOrder(sec.order || sIdx + 1);
+                                setIsAddingSection(true);
+                              }}
+                              className="p-1 text-slate-400 hover:text-blue-400 transition"
+                              title="تعديل القسم"
+                            >
+                              <Edit className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteSection(sec.id, sec.title);
+                              }}
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition"
+                              title="حذف هذا القسم"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
                 </div>
               </div>
 
               {/* Resources Column */}
-              <div className="lg:col-span-3 bg-slate-900 border border-slate-800 rounded-3xl p-4 space-y-3">
+              <div className="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-3xl p-4 space-y-3">
                 <div className="flex items-center justify-between pb-2 border-b border-slate-800 text-xs font-bold text-slate-400">
-                  <span>المصادر التابعة للقسم</span>
-                  {selectedSectionId && (
+                  <span>المصادر</span>
+                  {effectiveSectionId && (
                     <button
                       onClick={() => {
                         setEditingResource(null);
@@ -2059,92 +3032,117 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                 </div>
 
                 <div className="space-y-2">
-                  {currentResources.length === 0 ? (
-                    <div className="py-8 text-center text-xs text-slate-500">لا توجد مصادر في هذا القسم</div>
-                  ) : (
-                    currentResources.map((res, rIdx) => (
-                      <div
-                        key={res.id}
-                        className={`w-full p-3 rounded-2xl border text-xs font-bold transition flex items-center justify-between gap-2 group ${
-                          selectedResourceId === res.id
-                            ? 'text-white shadow-md'
-                            : 'bg-slate-800/40 border-slate-700/60 text-slate-300 hover:bg-slate-800'
-                        }`}
-                        style={
-                          selectedResourceId === res.id
-                            ? {
-                                backgroundColor: `${systemSettings.activeTheme?.primary || '#059669'}25`,
-                                borderColor: systemSettings.activeTheme?.primary || '#059669',
-                                boxShadow: `0 4px 14px ${systemSettings.activeTheme?.primary || '#059669'}30`,
-                              }
-                            : {}
-                        }
-                      >
-                        {/* Order select badge */}
-                        <div className="shrink-0 flex items-center gap-1" title="ترتيب هذا المصدر">
-                          <span className="text-[10px] text-slate-500 font-normal">#</span>
-                          <select
-                            value={res.order || rIdx + 1}
-                            onChange={(e) => handleReorderResource(res.id, Number(e.target.value))}
-                            onClick={(e) => e.stopPropagation()}
-                            className="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-emerald-300 font-mono font-black text-xs rounded-lg px-1.5 py-0.5 focus:outline-none focus:border-emerald-400 cursor-pointer"
-                          >
-                            {currentResources.map((_, i) => (
-                              <option key={i + 1} value={i + 1}>
-                                {i + 1}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-
+                  {courseSections.length === 0 ? (
+                    <div className="py-8 px-2 text-center text-xs text-slate-500 font-bold">
+                      ابدأ بإضافة المحتوى المنفصل لهذا الكورس
+                    </div>
+                  ) : currentResources.length === 0 ? (
+                    <div className="py-8 px-2 text-center space-y-2">
+                      <p className="text-xs text-slate-400 font-bold">لا توجد مصادر في هذا القسم بعد</p>
+                      {effectiveSectionId && (
                         <button
-                          onClick={() => setSelectedResourceId(res.id)}
-                          className="flex-1 text-right truncate"
+                          type="button"
+                          onClick={() => {
+                            setEditingResource(null);
+                            setNewResourceTitle('');
+                            setNewResourceDesc('');
+                            setNewResourceOrder(1);
+                            setIsAddingResource(true);
+                          }}
+                          className="px-3 py-1 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 text-[11px] font-bold inline-flex items-center gap-1 cursor-pointer"
                         >
-                          <div className="truncate">{res.title}</div>
-                          {res.description && (
-                            <div className="text-[10px] text-slate-400 font-normal mt-0.5 truncate">{res.description}</div>
-                          )}
-                          <span className="text-[9px] text-slate-500 mt-1 block">
-                            {items.filter((i) => i.resourceId === res.id).length} عناصر
-                          </span>
+                          <Plus className="w-3 h-3" />
+                          <span>إضافة مصدر</span>
                         </button>
+                      )}
+                    </div>
+                  ) : (
+                    currentResources.map((res, rIdx) => {
+                      const isResSelected = effectiveResourceId === res.id;
+                      return (
+                        <div
+                          key={res.id}
+                          className={`w-full p-3 rounded-2xl border text-xs font-bold transition flex items-center justify-between gap-2 group ${
+                            isResSelected
+                              ? 'text-white shadow-md'
+                              : 'bg-slate-800/40 border-slate-700/60 text-slate-300 hover:bg-slate-800'
+                          }`}
+                          style={
+                            isResSelected
+                              ? {
+                                  backgroundColor: `${systemSettings.activeTheme?.primary || '#059669'}25`,
+                                  borderColor: systemSettings.activeTheme?.primary || '#059669',
+                                  boxShadow: `0 4px 14px ${systemSettings.activeTheme?.primary || '#059669'}30`,
+                                }
+                              : {}
+                          }
+                        >
+                          {/* Order select badge */}
+                          <div className="shrink-0 flex items-center gap-1" title="ترتيب هذا المصدر">
+                            <span className="text-[10px] text-slate-500 font-normal">#</span>
+                            <select
+                              value={res.order || rIdx + 1}
+                              onChange={(e) => handleReorderResource(res.id, Number(e.target.value))}
+                              onClick={(e) => e.stopPropagation()}
+                              className="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-emerald-300 font-mono font-black text-xs rounded-lg px-1.5 py-0.5 focus:outline-none focus:border-emerald-400 cursor-pointer"
+                            >
+                              {currentResources.map((_, i) => (
+                                <option key={i + 1} value={i + 1}>
+                                  {i + 1}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
 
-                        {/* Edit & Delete Resource Buttons */}
-                        <div className="flex items-center gap-1 opacity-80 group-hover:opacity-100 shrink-0">
                           <button
-                            onClick={() => {
-                              setEditingResource(res);
-                              setNewResourceTitle(res.title);
-                              setNewResourceDesc(res.description || '');
-                              setNewResourceOrder(res.order || rIdx + 1);
-                              setIsAddingResource(true);
-                            }}
-                            className="p-1 text-slate-400 hover:text-emerald-400 transition"
-                            title="تعديل المصدر"
+                            onClick={() => setSelectedResourceId(res.id)}
+                            className="flex-1 text-right truncate"
                           >
-                            <Edit className="w-3.5 h-3.5" />
+                            <div className="truncate">{res.title}</div>
+                            {res.description && (
+                              <div className="text-[10px] text-slate-400 font-normal mt-0.5 truncate">{res.description}</div>
+                            )}
+                            <span className="text-[9px] text-slate-500 mt-1 block">
+                              {items.filter((i) => i.resourceId === res.id).length} عناصر
+                            </span>
                           </button>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDeleteResource(res.id, res.title);
-                            }}
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition"
-                            title="حذف هذا المصدر"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+
+                          {/* Edit & Delete Resource Buttons */}
+                          <div className="flex items-center gap-1 opacity-80 group-hover:opacity-100 shrink-0">
+                            <button
+                              onClick={() => {
+                                setEditingResource(res);
+                                setNewResourceTitle(res.title);
+                                setNewResourceDesc(res.description || '');
+                                setNewResourceOrder(res.order || rIdx + 1);
+                                setIsAddingResource(true);
+                              }}
+                              className="p-1 text-slate-400 hover:text-emerald-400 transition"
+                              title="تعديل المصدر"
+                            >
+                              <Edit className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteResource(res.id, res.title);
+                              }}
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition"
+                              title="حذف هذا المصدر"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
               </div>
 
               {/* Items Column: Partitioned into Videos, Exams, and Files each part completely on its own */}
-              <div className="lg:col-span-6 bg-slate-900 border border-slate-800 rounded-3xl p-4 md:p-5 space-y-4">
+              <div className="lg:col-span-4 bg-slate-900 border border-slate-800 rounded-3xl p-4 md:p-5 space-y-4">
                 {/* Column Top Header */}
                 <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-800">
                   <div className="space-y-1">
@@ -2160,11 +3158,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                   </div>
 
                   <div className="flex flex-wrap items-center gap-1.5">
-                    {selectedResourceId && (
+                    {effectiveResourceId && (
                       <>
                         <button
                           type="button"
-                          onClick={() => handleOpenAddItem('video')}
+                          onClick={() => handleOpenAddItem('video', effectiveResourceId)}
                           className="px-2.5 py-1.5 rounded-xl bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/40 text-[11px] font-black flex items-center gap-1 transition cursor-pointer"
                           title="رفع وإضافة فيديو تعليمي جديد لهذا المصدر"
                         >
@@ -2174,7 +3172,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
 
                         <button
                           type="button"
-                          onClick={() => handleOpenAddItem('exam')}
+                          onClick={() => handleOpenAddItem('exam', effectiveResourceId)}
                           className="px-2.5 py-1.5 rounded-xl bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/40 text-[11px] font-black flex items-center gap-1 transition cursor-pointer"
                           title="إنشاء وإضافة اختبار تفاعلي جديد لهذا المصدر"
                         >
@@ -2184,7 +3182,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
 
                         <button
                           type="button"
-                          onClick={() => handleOpenAddItem('file')}
+                          onClick={() => handleOpenAddItem('file', effectiveResourceId)}
                           className="px-2.5 py-1.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 text-[11px] font-black flex items-center gap-1 transition cursor-pointer"
                           title="رفع وإضافة ملف أو ملخص جديد لهذا المصدر"
                         >
@@ -2288,7 +3286,61 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
 
                 {/* ================= CONTENT SECTIONS RENDERER ================= */}
                 <div className="space-y-4 max-h-[620px] overflow-y-auto pr-1">
-                  {/* ================= 1. قسم الفيديوهات التعليمية (VIDEOS SECTION) ================= */}
+                  {courseSections.length === 0 ? (
+                    <div className="py-16 px-6 rounded-3xl bg-slate-900 border border-dashed border-purple-500/30 text-center space-y-4 my-auto">
+                      <div className="w-16 h-16 rounded-3xl bg-purple-500/10 border border-purple-500/30 flex items-center justify-center text-purple-400 mx-auto shadow-lg shadow-purple-500/10">
+                        <BookOpen className="w-8 h-8" />
+                      </div>
+                      <div className="space-y-1.5 max-w-sm mx-auto">
+                        <h3 className="text-base font-black text-white">ابدأ بإضافة المحتوى المنفصل لهذا الكورس</h3>
+                        <p className="text-xs text-slate-400 leading-relaxed">
+                          محتويات هذا الكورس (فيديوهات، اختبارات، ملفات) ستكون مستقلة ومنفصلة تماماً عن محتوى باقي الكورسات. اضغط أدناه لإنشاء أول قسم والبدء برفع المحتوى.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingSection(null);
+                          setNewSectionTitle('');
+                          setNewSectionDesc('');
+                          setNewSectionOrder(1);
+                          setIsAddingSection(true);
+                        }}
+                        className="px-5 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-black text-xs transition inline-flex items-center gap-2 shadow-lg shadow-purple-600/30 cursor-pointer"
+                      >
+                        <Plus className="w-4 h-4" />
+                        <span>+ إضافة أول قسم لهذا الكورس الآن</span>
+                      </button>
+                    </div>
+                  ) : currentResources.length === 0 ? (
+                    <div className="py-14 px-6 rounded-2xl bg-slate-900 border border-dashed border-slate-700 text-center space-y-3 my-auto">
+                      <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 text-emerald-400 mx-auto flex items-center justify-center">
+                        <FolderTree className="w-6 h-6" />
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-xs font-bold text-white">هذا القسم لا يحتوي على مصادر تعليمية بعد</p>
+                        <p className="text-[11px] text-slate-400 max-w-xs mx-auto">
+                          أضف مصدراً تعليمياً لتتمكن من رفع الفيديوهات والاختبارات والملفات المنفصلة التابعة له
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingResource(null);
+                          setNewResourceTitle('');
+                          setNewResourceDesc('');
+                          setNewResourceOrder(1);
+                          setIsAddingResource(true);
+                        }}
+                        className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold inline-flex items-center gap-1.5 shadow cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>إضافة مصدر جديد لهذا القسم</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      {/* ================= 1. قسم الفيديوهات التعليمية (VIDEOS SECTION) ================= */}
                   {(adminContentSubTab === 'all' || adminContentSubTab === 'video') && (
                     <div className="rounded-2xl border-2 border-blue-500/30 bg-blue-950/20 p-4 space-y-3 shadow-lg shadow-blue-950/20">
                       <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-blue-500/20">
@@ -2442,14 +3494,31 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                         </div>
 
                         {selectedResourceId && (
-                          <button
-                            type="button"
-                            onClick={() => handleOpenAddItem('exam')}
-                            className="px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-slate-950 font-black text-[11px] flex items-center gap-1 shadow transition cursor-pointer"
-                          >
-                            <Plus className="w-3.5 h-3.5" />
-                            <span>إنشاء اختبار جديد</span>
-                          </button>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenAddItem('exam')}
+                              className="px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-slate-950 font-black text-[11px] flex items-center gap-1 shadow transition cursor-pointer"
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                              <span>إنشاء اختبار جديد</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                handleOpenAddItem('exam');
+                                setTimeout(() => {
+                                  const el = document.getElementById('exam-file-input');
+                                  if (el) el.click();
+                                }, 200);
+                              }}
+                              className="px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/50 font-black text-[11px] flex items-center gap-1 shadow transition cursor-pointer"
+                              title="رفع واستيراد ملف أسئلة اختبار جاهز (JSON / CSV / Excel / TXT)"
+                            >
+                              <Upload className="w-3.5 h-3.5 text-amber-400" />
+                              <span>رفع ملف اختبار 📁</span>
+                            </button>
+                          </div>
                         )}
                       </div>
 
@@ -2457,14 +3526,30 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                         <div className="py-6 px-4 rounded-xl bg-slate-900/60 border border-dashed border-amber-500/30 text-center space-y-2">
                           <p className="text-xs text-slate-400 font-bold">لا توجد اختبارات في هذا المصدر حتى الآن</p>
                           {selectedResourceId && (
-                            <button
-                              type="button"
-                              onClick={() => handleOpenAddItem('exam')}
-                              className="px-3.5 py-1.5 rounded-xl bg-amber-600/30 hover:bg-amber-600/40 text-amber-300 border border-amber-500/40 text-[11px] font-black inline-flex items-center gap-1"
-                            >
-                              <Plus className="w-3.5 h-3.5" />
-                              <span>إضافة أول اختبار لهذا المصدر</span>
-                            </button>
+                            <div className="flex items-center justify-center gap-2 flex-wrap pt-1">
+                              <button
+                                type="button"
+                                onClick={() => handleOpenAddItem('exam')}
+                                className="px-3.5 py-1.5 rounded-xl bg-amber-600/30 hover:bg-amber-600/40 text-amber-300 border border-amber-500/40 text-[11px] font-black inline-flex items-center gap-1"
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                                <span>إضافة أول اختبار لهذا المصدر</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  handleOpenAddItem('exam');
+                                  setTimeout(() => {
+                                    const el = document.getElementById('exam-file-input');
+                                    if (el) el.click();
+                                  }, 200);
+                                }}
+                                className="px-3.5 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-[11px] font-black inline-flex items-center gap-1"
+                              >
+                                <Upload className="w-3.5 h-3.5 text-amber-400" />
+                                <span>رفع ملف اختبار لهذا المصدر 📁</span>
+                              </button>
+                            </div>
                           )}
                         </div>
                       ) : (
@@ -2661,6 +3746,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                         </div>
                       )}
                     </div>
+                  )}
+                    </>
                   )}
                 </div>
               </div>
@@ -2907,7 +3994,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
 
         {/* ================= TAB 7: INTRO LESSON (الحصة التعريفية) ================= */}
         {activeTab === 'intro_lesson' && (
-          <div className="max-w-3xl mx-auto space-y-6">
+          <div className="max-w-4xl mx-auto space-y-6">
             <div>
               <div className="flex items-center gap-2">
                 <span className="px-3 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-bold">
@@ -2916,11 +4003,81 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                 <span className="text-xs text-slate-400">تظهر للطلاب في منتصف المصادر والأقسام</span>
               </div>
               <h2 className="text-xl md:text-2xl font-black text-white mt-1">
-                إدارة ورفع فيديو الحصة التعريفية
+                إدارة ورفع فيديو الحصة التعريفية لكل كورس
               </h2>
               <p className="text-xs text-slate-400 mt-1">
-                ارفع فيديو الحصة التعريفية مباشرة من جهازك أو ضع رابط فيديو مباشر ليظهر لجميع طلاب المنصة
+                اختر الكورس أولاً، ثم ارفع فيديو الحصة التعريفية الخاص به مباشرة أو ضع رابط فيديو مباشر
               </p>
+            </div>
+
+            {/* ================= اختيار الكورس للحصة التعريفية ================= */}
+            <div className="bg-slate-900 border-2 border-amber-500/40 rounded-3xl p-5 md:p-6 shadow-2xl space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-2xl">
+                    <BookOpen className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-base md:text-lg font-black text-white">
+                      اختر الكورس لتعديل الحصة التعريفية الخاصة به:
+                    </h3>
+                    <p className="text-xs text-slate-400">
+                      كل كورس يمتلك حصة تعريفية وفيديو توضيحي منفصل تماماً خاص به
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-400">الكورس المحدد للتعديل:</span>
+                  <span className="px-3 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-black">
+                    {courses.find((c) => c.id === selectedIntroCourseId)?.title || courses[0]?.title}
+                  </span>
+                </div>
+              </div>
+
+              {/* Horizontal Course Selector Cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 pt-1">
+                {courses.map((course, cIdx) => {
+                  const isSelected = (selectedIntroCourseId || courses[0]?.id) === course.id;
+                  const hasVideo = Boolean(course.introLesson?.videoUrl);
+
+                  return (
+                    <button
+                      key={course.id}
+                      type="button"
+                      onClick={() => handleSelectIntroCourse(course.id)}
+                      className={`p-4 rounded-2xl border-2 text-right transition-all flex flex-col justify-between gap-2 cursor-pointer ${
+                        isSelected
+                          ? 'border-amber-400 bg-amber-500/15 text-white shadow-xl ring-2 ring-amber-400/30 scale-[1.02]'
+                          : 'border-slate-800 bg-slate-800/50 hover:bg-slate-800 hover:border-slate-700 text-slate-300'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-2 truncate">
+                          <span className={`w-6 h-6 rounded-lg text-xs font-black flex items-center justify-center shrink-0 ${
+                            isSelected ? 'bg-amber-400 text-slate-950 font-black' : 'bg-slate-700 text-slate-300'
+                          }`}>
+                            {cIdx + 1}
+                          </span>
+                          <span className="font-black text-xs md:text-sm truncate">
+                            {course.title}
+                          </span>
+                        </div>
+                        {isSelected && <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />}
+                      </div>
+
+                      <div className="flex items-center justify-between text-[10px] pt-2 border-t border-slate-700/60">
+                        <span className={hasVideo ? 'text-emerald-400 font-bold' : 'text-slate-400'}>
+                          {hasVideo ? '🎬 فيديو خاص مرفوع' : '⚠️ افتراضي / لم يرفع'}
+                        </span>
+                        <span className="text-slate-400">
+                          {course.introLesson?.isActive === false ? 'مخفي' : 'ظاهر للطلاب'}
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 space-y-6 shadow-xl">
@@ -2931,7 +4088,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                     <Film className="w-6 h-6" />
                   </div>
                   <div>
-                    <h3 className="text-base font-bold text-white">إظهار الحصة التعريفية للطلاب</h3>
+                    <h3 className="text-base font-bold text-white">إظهار الحصة التعريفية لطلاب هذا الكورس</h3>
                     <p className="text-xs text-slate-400">تظهر في منتصف الصفحة تحت المصادر المتاحة وفوق الفيديوهات والملفات والاختبارات</p>
                   </div>
                 </div>
@@ -3068,10 +4225,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                 <button
                   type="button"
                   onClick={handleSaveIntroLesson}
-                  className="flex items-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black text-xs md:text-sm shadow-xl shadow-amber-500/25 transition cursor-pointer"
+                  disabled={isSavingIntroLesson}
+                  className="flex items-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black text-xs md:text-sm shadow-xl shadow-amber-500/25 transition cursor-pointer disabled:opacity-50"
                 >
                   <Save className="w-4 h-4" />
-                  <span>حفظ فيديو الحصة التعريفية الآن 🎬</span>
+                  <span>
+                    {isSavingIntroLesson
+                      ? 'جاري الحفظ...'
+                      : `حفظ فيديو الحصة التعريفية لكورس (${courses.find((c) => c.id === selectedIntroCourseId)?.title || 'الكورس المحدد'}) 🎬`}
+                  </span>
                 </button>
               </div>
             </div>
@@ -3085,10 +4247,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
               <div>
                 <h2 className="text-xl md:text-2xl font-black text-white flex items-center gap-2">
                   <Sparkles className="w-6 h-6 text-amber-400" />
-                  <span>إدارة المميزات وروابط مجموعات التليجرام</span>
+                  <span>إدارة المميزات وروابط مجموعات التليجرام لكل كورس</span>
                 </h2>
                 <p className="text-xs text-slate-400">
-                  إضافة وتعديل روابط جروبات التليجرام (الأساسي والمناقشة)، وتفعيل/تعطيل ميزات تحديد المستوى وتحدي الأصدقاء
+                  اختر الكورس أولاً، ثم خصص روابط مجموعات التليجرام وإعدادات تحديد المستوى وتحدي الأصدقاء الخاصة به
                 </p>
               </div>
 
@@ -3099,8 +4261,84 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                 className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black text-xs md:text-sm shadow-xl shadow-amber-500/25 transition cursor-pointer disabled:opacity-50"
               >
                 <Save className="w-4 h-4" />
-                <span>{isSavingFeatures ? 'جاري الحفظ...' : 'حفظ روابط التليجرام والمميزات الآن ⚡'}</span>
+                <span>
+                  {isSavingFeatures
+                    ? 'جاري الحفظ...'
+                    : `حفظ روابط التليجرام والمميزات لكورس (${courses.find((c) => c.id === selectedFeaturesCourseId)?.title || 'الكورس المحدد'}) ⚡`}
+                </span>
               </button>
+            </div>
+
+            {/* ================= اختيار الكورس للمميزات ================= */}
+            <div className="bg-slate-900 border-2 border-amber-500/40 rounded-3xl p-5 md:p-6 shadow-2xl space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-2xl">
+                    <BookOpen className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="text-base md:text-lg font-black text-white">
+                      اختر الكورس لتعديل المميزات وروابط التليجرام الخاصة به:
+                    </h3>
+                    <p className="text-xs text-slate-400">
+                      لكل كورس روابط جروبات تليجرام منفصلة (الأساسي والمناقشة) ومميزات مستقلة تماماً
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-400">الكورس المحدد للتعديل:</span>
+                  <span className="px-3 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-black">
+                    {courses.find((c) => c.id === selectedFeaturesCourseId)?.title || courses[0]?.title}
+                  </span>
+                </div>
+              </div>
+
+              {/* Horizontal Course Selector Cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 pt-1">
+                {courses.map((course, cIdx) => {
+                  const isSelected = (selectedFeaturesCourseId || courses[0]?.id) === course.id;
+                  const hasCustomLinks = Boolean(course.features?.telegramMainGroupUrl || course.features?.telegramDiscussionGroupUrl);
+
+                  return (
+                    <button
+                      key={course.id}
+                      type="button"
+                      onClick={() => handleSelectFeaturesCourse(course.id)}
+                      className={`p-4 rounded-2xl border-2 text-right transition-all flex flex-col justify-between gap-2 cursor-pointer ${
+                        isSelected
+                          ? 'border-amber-400 bg-amber-500/15 text-white shadow-xl ring-2 ring-amber-400/30 scale-[1.02]'
+                          : 'border-slate-800 bg-slate-800/50 hover:bg-slate-800 hover:border-slate-700 text-slate-300'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-2 truncate">
+                          <span className={`w-6 h-6 rounded-lg text-xs font-black flex items-center justify-center shrink-0 ${
+                            isSelected ? 'bg-amber-400 text-slate-950 font-black' : 'bg-slate-700 text-slate-300'
+                          }`}>
+                            {cIdx + 1}
+                          </span>
+                          <span className="font-black text-xs md:text-sm truncate">
+                            {course.title}
+                          </span>
+                        </div>
+                        {isSelected && <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />}
+                      </div>
+
+                      <div className="flex items-center justify-between text-[10px] pt-2 border-t border-slate-700/60">
+                        <span className={hasCustomLinks ? 'text-sky-400 font-bold' : 'text-slate-400'}>
+                          {hasCustomLinks ? '✈️ روابط خاصة بالكورس' : 'الروابط الافتراضية'}
+                        </span>
+                        <span className="text-slate-400">
+                          {course.features?.isDiagnosticEnabled === false || course.features?.isFriendsChallengeEnabled === false
+                            ? 'بعض الميزات معطلة'
+                            : 'كافة الميزات مفعلة'}
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 space-y-6 shadow-xl">
@@ -3275,7 +4513,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                   className="flex items-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black text-xs md:text-sm shadow-xl shadow-amber-500/25 transition cursor-pointer disabled:opacity-50"
                 >
                   <Save className="w-4 h-4" />
-                  <span>{isSavingFeatures ? 'جاري الحفظ...' : 'حفظ روابط التليجرام والمميزات الآن ⚡'}</span>
+                  <span>
+                    {isSavingFeatures
+                      ? 'جاري الحفظ...'
+                      : `حفظ روابط التليجرام والمميزات لكورس (${courses.find((c) => c.id === selectedFeaturesCourseId)?.title || 'الكورس المحدد'}) ⚡`}
+                  </span>
                 </button>
               </div>
             </div>
@@ -3881,23 +5123,30 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                     يمكنك لصق رابط Google Drive أو رابط خارجي مباشر لفتح وتحميل الملف بسرعة فائقة.
                   </p>
                 </div>
-                <div className="text-center text-xs text-slate-500">— أو رفع ملف مباشر من جهازك —</div>
-                <div>
-                  <input
-                    type="file"
-                    accept={itemType === 'video' ? 'video/*' : '.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.zip,.png,.jpg,.jpeg,.txt,*'}
-                    onChange={handleFileUpload}
-                    className="w-full text-xs text-slate-400 file:mr-2 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-blue-600 file:text-white hover:file:bg-blue-500 cursor-pointer"
-                  />
-                  <p className="text-[10px] text-slate-400 mt-1">
+                <div className="text-center text-xs text-slate-500 font-bold">— أو رفع ملف مباشر من جهازك —</div>
+                <div className="p-3.5 rounded-2xl bg-slate-900/80 border border-slate-700 space-y-2.5">
+                  <label className="flex items-center justify-center gap-2 w-full py-3 px-4 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-black text-xs cursor-pointer shadow-lg shadow-blue-600/25 transition">
+                    <Upload className="w-4 h-4" />
+                    <span>
+                      {itemType === 'video' ? 'اضغط لاختيار ورفع فيديو من جهازك 🎥' : 'اضغط لاختيار ورفع ملف / مستند من جهازك 📁'}
+                    </span>
+                    <input
+                      type="file"
+                      accept={itemType === 'video' ? 'video/*,.mp4,.webm,.mkv,.mov' : '.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.zip,.png,.jpg,.jpeg,.txt,*'}
+                      onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
+                      onChange={handleFileUpload}
+                      className="hidden"
+                    />
+                  </label>
+                  <p className="text-[10px] text-slate-400 text-center">
                     {itemType === 'video'
-                      ? 'يدعم ملفات الفيديو (MP4, WebM) أو وضع رابط مباشر'
+                      ? 'يدعم ملفات الفيديو المباشرة (MP4, WebM, MKV) مع إمكانية المعاينة الفورية.'
                       : 'يدعم ملفات PDF، Word، مستندات، عروض وصور مع الحفظ الآمن في المنصة.'}
                   </p>
                   {itemFileName && (
-                    <div className="flex items-center justify-between mt-2 p-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-[11px] text-emerald-400">
-                      <span className="flex items-center gap-1.5">
-                        <CheckCircle2 className="w-3.5 h-3.5" />
+                    <div className="flex items-center justify-between p-2.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-[11px] text-emerald-300">
+                      <span className="flex items-center gap-1.5 font-bold">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
                         <span>تم اختيار: {itemFileName} ({itemFileSize})</span>
                       </span>
                       <button
@@ -4252,6 +5501,82 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                         <p className="text-[10px] text-slate-400">
                           المدة الزمنية التي يبدأ بها المؤقت التنازلي في حال اختار الطالب اختباراً بوقت.
                         </p>
+                      </div>
+                    </div>
+
+                    {/* Exam File Upload & Import Box (رفع ملف أسئلة الاختبار) */}
+                    <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-950/40 via-slate-900 to-amber-950/30 border-2 border-amber-500/40 space-y-3">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div className="flex items-center gap-2">
+                          <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400">
+                            <Upload className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <span className="text-xs font-black text-amber-300 block">
+                              رفع واستيراد ملف أسئلة الاختبار 📁 (JSON أو Excel أو CSV أو نص)
+                            </span>
+                            <span className="text-[10px] text-slate-400">
+                              ارفع ملف يحتوي على الأسئلة والخيارات ليتم استيرادها فوراً وتجهيز الاختبار بنقرة واحدة
+                            </span>
+                          </div>
+                        </div>
+
+                        {itemFileName && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold">
+                            الملف الحالي: {itemFileName} ({itemFileSize})
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2.5 flex-wrap">
+                        <label className="flex-1 min-w-[200px] flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-amber-600 hover:bg-amber-500 text-slate-950 font-black text-xs cursor-pointer shadow-lg shadow-amber-600/25 transition">
+                          <Upload className="w-4 h-4" />
+                          <span>اختر ملف الاختبار لرفعه واستيراده الآن 📤</span>
+                          <input
+                            id="exam-file-input"
+                            type="file"
+                            accept=".json,.csv,.txt,.xlsx,.xls,application/json,text/csv,text/plain"
+                            onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
+                            onChange={handleExamFileUpload}
+                            className="hidden"
+                          />
+                        </label>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const template = JSON.stringify(
+                              [
+                                {
+                                  questionText: "ما ناتج 15 + 25؟",
+                                  options: ["40", "35", "50", "45"],
+                                  correctOptionIndex: 0,
+                                  explanation: "15 + 25 = 40"
+                                },
+                                {
+                                  questionText: "طائر : ريش",
+                                  options: ["خروف : صوف", "سمك : ماء", "أسد : غابة", "جمل : صحراء"],
+                                  correctOptionIndex: 0,
+                                  explanation: "علاقة غطاء خارجي"
+                                }
+                              ],
+                              null,
+                              2
+                            );
+                            const blob = new Blob([template], { type: 'application/json' });
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.download = 'exam_template.json';
+                            a.click();
+                            URL.revokeObjectURL(url);
+                          }}
+                          className="px-3 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold border border-slate-700 transition"
+                          title="تحميل نموذج JSON لتعبئة الأسئلة عليه"
+                        >
+                          <Download className="w-3.5 h-3.5 inline ml-1 text-amber-400" />
+                          <span>تحميل نموذج ملف الأسئلة</span>
+                        </button>
                       </div>
                     </div>
 
@@ -4697,6 +6022,429 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                 className="w-full py-3 rounded-2xl text-xs font-bold text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 transition"
               >
                 إلغاء التراجع
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= MODAL: ADD / EDIT COURSE ================= */}
+      {isAddingCourse && (
+        <div className="fixed inset-0 z-[99999] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md overflow-y-auto animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 max-w-2xl w-full shadow-2xl text-right my-8 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-2xl bg-purple-500/10 border border-purple-500/20 text-purple-400">
+                  <BookOpen className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-lg md:text-xl font-black text-white">
+                    {editingCourse ? 'تعديل بيانات الكورس' : 'إضافة كورس تدريبي جديد'}
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    يمكنك تحديد صورة الكورس، حالته (مفتوح أو مقفل)، وسعره وصور الحسابات البنكية ورسالة الدفع
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAddingCourse(false);
+                  setEditingCourse(null);
+                }}
+                className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveCourse} className="space-y-5 pt-4">
+              {/* Course Title */}
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold text-slate-300">اسم الكورس التدريبي: *</label>
+                <input
+                  type="text"
+                  required
+                  value={courseFormTitle}
+                  onChange={(e) => setCourseFormTitle(e.target.value)}
+                  placeholder="مثال: دورة القدرات العامة المكثفة 2025"
+                  className="w-full px-4 py-3 rounded-2xl bg-slate-800 border border-slate-700 text-white text-xs md:text-sm focus:outline-none focus:border-purple-500"
+                />
+              </div>
+
+              {/* Course Description */}
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold text-slate-300">وصف الكورس:</label>
+                <textarea
+                  rows={2}
+                  value={courseFormDesc}
+                  onChange={(e) => setCourseFormDesc(e.target.value)}
+                  placeholder="وصف مختصر لمحتويات ومميزات الكورس..."
+                  className="w-full px-4 py-2.5 rounded-2xl bg-slate-800 border border-slate-700 text-white text-xs md:text-sm focus:outline-none focus:border-purple-500"
+                />
+              </div>
+
+              {/* Course Cover Image */}
+              <div className="space-y-2">
+                <label className="block text-xs font-bold text-slate-300">صورة غلاف الكورس:</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="url"
+                    value={courseFormImage}
+                    onChange={(e) => setCourseFormImage(e.target.value)}
+                    placeholder="رابط الصورة (URL) أو ارفع من جهازك..."
+                    className="flex-1 px-4 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs font-mono focus:outline-none focus:border-purple-500"
+                  />
+                  <label className="px-3 py-2.5 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/30 text-xs font-bold flex items-center gap-1.5 cursor-pointer shrink-0 transition">
+                    <Upload className="w-4 h-4" />
+                    <span>{isUploadingCourseCover ? 'جاري التحميل...' : 'رفع صورة'}</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => handleCourseFileUpload(e, 'cover')}
+                    />
+                  </label>
+                </div>
+                {courseFormImage && (
+                  <div className="relative w-full h-32 rounded-xl overflow-hidden border border-slate-700 bg-slate-950 mt-2">
+                    <img src={courseFormImage} alt="معاينة الغلاف" className="w-full h-full object-cover" />
+                  </div>
+                )}
+              </div>
+
+              {/* Course Status: Free / Open vs Locked */}
+              <div className="p-4 rounded-2xl bg-slate-800/60 border border-slate-700/60 flex items-center justify-between gap-4">
+                <div>
+                  <div className="text-xs font-bold text-white flex items-center gap-2">
+                    {courseFormIsLocked ? (
+                      <span className="text-rose-400 flex items-center gap-1">
+                        <Lock className="w-4 h-4" /> كورس مقفول (مدفوع باشتراك)
+                      </span>
+                    ) : (
+                      <span className="text-emerald-400 flex items-center gap-1">
+                        <Unlock className="w-4 h-4" /> كورس مفتوح (متاح ومجاني)
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    {courseFormIsLocked
+                      ? 'عند قفل الكورس، يظهر للطالب تفاصيل السعر وصور أرقام الحسابات البنكية ورسالة التحويل'
+                      : 'عندما يكون الكورس مفتوحاً، يمكن للطالب تفعيله مباشرة والدخول للمحتوى'}
+                  </p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                  <input
+                    type="checkbox"
+                    checked={courseFormIsLocked}
+                    onChange={(e) => setCourseFormIsLocked(e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div className="w-14 h-7 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:right-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-rose-600"></div>
+                </label>
+              </div>
+
+              {/* Locked Course Details (Price, Bank 1, Bank 2, Payment Message) */}
+              {courseFormIsLocked && (
+                <div className="space-y-4 p-4 rounded-2xl bg-rose-500/5 border border-rose-500/20">
+                  <div className="text-xs font-bold text-rose-300 flex items-center gap-1.5">
+                    <DollarSign className="w-4 h-4" />
+                    <span>إعدادات الدفع والحسابات البنكية للكورس المقفول</span>
+                  </div>
+
+                  {/* Price */}
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-bold text-slate-300">سعر الكورس:</label>
+                    <input
+                      type="text"
+                      value={courseFormPrice}
+                      onChange={(e) => setCourseFormPrice(e.target.value)}
+                      placeholder="مثال: 199 ريال سعودي"
+                      className="w-full px-4 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs md:text-sm focus:outline-none focus:border-purple-500"
+                    />
+                  </div>
+
+                  {/* Bank Account Image 1 */}
+                  <div className="space-y-2">
+                    <label className="block text-xs font-bold text-slate-300">صورة الحساب البنكي 1 (رقم الحساب / الآيبان):</label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="url"
+                        value={courseFormBank1}
+                        onChange={(e) => setCourseFormBank1(e.target.value)}
+                        placeholder="رابط صورة الحساب 1 أو ارفعها من جهازك..."
+                        className="flex-1 px-4 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs font-mono focus:outline-none focus:border-purple-500"
+                      />
+                      <label className="px-3 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600 text-xs font-bold flex items-center gap-1.5 cursor-pointer shrink-0 transition">
+                        <Upload className="w-4 h-4" />
+                        <span>{isUploadingBank1 ? 'جاري التحميل...' : 'رفع صورة 1'}</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => handleCourseFileUpload(e, 'bank1')}
+                        />
+                      </label>
+                    </div>
+                    {courseFormBank1 && (
+                      <div className="relative w-full max-h-40 rounded-xl overflow-hidden border border-slate-700 bg-slate-950 mt-1">
+                        <img src={courseFormBank1} alt="صورة الحساب 1" className="w-full h-auto object-contain max-h-40" />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Bank Account Image 2 */}
+                  <div className="space-y-2">
+                    <label className="block text-xs font-bold text-slate-300">صورة الحساب البنكي 2 (حساب إضافي أو بنك آخر):</label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="url"
+                        value={courseFormBank2}
+                        onChange={(e) => setCourseFormBank2(e.target.value)}
+                        placeholder="رابط صورة الحساب 2 أو ارفعها من جهازك..."
+                        className="flex-1 px-4 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs font-mono focus:outline-none focus:border-purple-500"
+                      />
+                      <label className="px-3 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600 text-xs font-bold flex items-center gap-1.5 cursor-pointer shrink-0 transition">
+                        <Upload className="w-4 h-4" />
+                        <span>{isUploadingBank2 ? 'جاري التحميل...' : 'رفع صورة 2'}</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => handleCourseFileUpload(e, 'bank2')}
+                        />
+                      </label>
+                    </div>
+                    {courseFormBank2 && (
+                      <div className="relative w-full max-h-40 rounded-xl overflow-hidden border border-slate-700 bg-slate-950 mt-1">
+                        <img src={courseFormBank2} alt="صورة الحساب 2" className="w-full h-auto object-contain max-h-40" />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Payment Message */}
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-bold text-slate-300">رسالة تظهر تحت صورتي الحساب:</label>
+                    <textarea
+                      rows={2}
+                      value={courseFormPaymentMessage}
+                      onChange={(e) => setCourseFormPaymentMessage(e.target.value)}
+                      placeholder="اكتب التعليمات والرسالة التي تظهر للطالب أسفل صور الحساب..."
+                      className="w-full px-4 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs focus:outline-none focus:border-purple-500"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Order */}
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold text-slate-300">ترتيب الظهور:</label>
+                <input
+                  type="number"
+                  min={1}
+                  value={courseFormOrder}
+                  onChange={(e) => setCourseFormOrder(Number(e.target.value))}
+                  className="w-28 px-4 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs font-mono"
+                />
+              </div>
+
+              {/* Actions */}
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsAddingCourse(false);
+                    setEditingCourse(null);
+                  }}
+                  className="px-4 py-2.5 text-xs text-slate-400 hover:text-white cursor-pointer"
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingCourse}
+                  className="px-6 py-2.5 text-xs md:text-sm bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-bold rounded-xl shadow-lg shadow-purple-600/30 transition flex items-center gap-2 cursor-pointer"
+                >
+                  {isSavingCourse ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>جاري الحفظ...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Save className="w-4 h-4" />
+                      <span>{editingCourse ? 'حفظ تعديلات الكورس' : 'إضافة الكورس الآن 📚'}</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ================= MODAL: DELETE COURSE CONFIRMATION ================= */}
+      {deletingCourse && (
+        <div className="fixed inset-0 z-[999999] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 max-w-md w-full shadow-2xl text-right space-y-6">
+            <div className="p-4 bg-rose-500/10 border border-rose-500/20 text-rose-400 rounded-2xl w-fit mx-auto">
+              <Trash2 className="w-8 h-8" />
+            </div>
+
+            <div className="text-center space-y-2">
+              <span className="text-[11px] font-bold px-3 py-1 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30 inline-block">
+                حذف كورس تعليمي
+              </span>
+              <h3 className="text-xl font-black text-white">
+                هل أنت متأكد من حذف كورس "{deletingCourse.title}"؟
+              </h3>
+              <p className="text-xs text-slate-400 leading-relaxed px-2">
+                سيتم إزالة هذا الكورس من قائمة الكورسات المتاحة. لن يتمكن المشتركون الجدد من الوصول إليه.
+              </p>
+            </div>
+
+            <div className="space-y-3 pt-2">
+              <button
+                type="button"
+                onClick={() => handleDeleteCourse(deletingCourse.id)}
+                className="w-full py-3.5 px-4 rounded-2xl bg-rose-600 hover:bg-rose-500 text-white font-black text-xs md:text-sm transition flex items-center justify-center gap-2 shadow-lg shadow-rose-600/30 cursor-pointer"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>نعم، حذف الكورس نهائياً 🗑️</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setDeletingCourse(null)}
+                className="w-full py-3 rounded-2xl text-xs font-bold text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 transition cursor-pointer"
+              >
+                إلغاء التراجع
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= MODAL: STUDENT COURSE ACTIVATION ================= */}
+      {studentForCourseActivation && (
+        <div className="fixed inset-0 z-[99999] flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 max-w-lg w-full shadow-2xl text-right space-y-6">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
+                  <CheckCircle2 className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-base md:text-lg font-black text-white">
+                    تفعيل كورس للطالب: {studentForCourseActivation.name}
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    اختر الكورسات المراد تفعيلها لهذا الطالب ثم اضغط "تم" لفتح المنصة له
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setStudentForCourseActivation(null)}
+                className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <label className="block text-xs font-bold text-slate-300">
+                حدد الكورسات المفتوحة والمصرح لهذا الطالب بدخولها:
+              </label>
+
+              <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                {courses.map((crs) => {
+                  const isChecked = selectedCoursesForStudent.includes(crs.id);
+                  return (
+                    <label
+                      key={crs.id}
+                      className={`flex items-center justify-between p-3.5 rounded-2xl border transition cursor-pointer ${
+                        isChecked
+                          ? 'bg-emerald-500/15 border-emerald-500/50 text-white'
+                          : 'bg-slate-800/40 border-slate-700/60 text-slate-300 hover:bg-slate-800'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedCoursesForStudent((prev) => [...prev, crs.id]);
+                            } else {
+                              setSelectedCoursesForStudent((prev) => prev.filter((id) => id !== crs.id));
+                            }
+                          }}
+                          className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 focus:ring-offset-slate-900 cursor-pointer"
+                        />
+                        <div>
+                          <div className="font-bold text-xs md:text-sm flex items-center gap-2">
+                            <span>{crs.title}</span>
+                            {crs.isLocked ? (
+                              <span className="text-[10px] bg-rose-500/20 text-rose-300 border border-rose-500/30 px-1.5 py-0.2 rounded">
+                                مقفل ({crs.price || 'مدفوع'})
+                              </span>
+                            ) : (
+                              <span className="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-1.5 py-0.2 rounded">
+                                مفتوح
+                              </span>
+                            )}
+                          </div>
+                          {crs.description && (
+                            <p className="text-[10px] text-slate-400 mt-0.5 line-clamp-1">{crs.description}</p>
+                          )}
+                        </div>
+                      </div>
+
+                      {crs.imageUrl && (
+                        <img
+                          src={crs.imageUrl}
+                          alt={crs.title}
+                          className="w-10 h-10 rounded-xl object-cover border border-slate-700 shrink-0"
+                        />
+                      )}
+                    </label>
+                  );
+                })}
+              </div>
+
+              <div className="p-3 rounded-2xl bg-blue-500/10 border border-blue-500/20 text-blue-300 text-[11px] leading-relaxed">
+                💡 عند الضغط على <strong>"تم"</strong>، سيتم تفعيل الكورسات المحددة في حساب الطالب وإلغاء أي قفل فردي كان عليه، وتفتح له المنصة فوراً وتستمر مفتوحة له حتى تقوم بقفلها عليه مرة ثانية.
+              </div>
+            </div>
+
+            <div className="space-y-2 pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                disabled={isSavingStudentActivation}
+                onClick={handleConfirmStudentCourseActivation}
+                className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-50 text-white font-black text-xs md:text-sm transition flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/30 cursor-pointer"
+              >
+                {isSavingStudentActivation ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>جاري تفعيل الكورسات وفتح المنصة...</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="w-5 h-5" />
+                    <span>تم ✓ (تفعيل الكورس وفتح المنصة للطالب)</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                disabled={isSavingStudentActivation}
+                onClick={() => setStudentForCourseActivation(null)}
+                className="w-full py-2.5 rounded-xl text-xs font-bold text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 transition cursor-pointer"
+              >
+                إلغاء
               </button>
             </div>
           </div>

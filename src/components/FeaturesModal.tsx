@@ -27,6 +27,7 @@ import {
 import {
   StudentUser,
   SystemSettings,
+  FeaturesConfig,
   SectionItem,
   ResourceItem,
   ContentItem,
@@ -53,6 +54,9 @@ interface FeaturesModalProps {
   onClose: () => void;
   currentUser: StudentUser;
   systemSettings: SystemSettings;
+  courseTitle?: string;
+  courseId?: string;
+  featuresConfig?: FeaturesConfig;
   isDarkMode: boolean;
   sections: SectionItem[];
   resources: ResourceItem[];
@@ -71,6 +75,9 @@ export const FeaturesModal: React.FC<FeaturesModalProps> = ({
   onClose,
   currentUser,
   systemSettings,
+  courseTitle,
+  courseId,
+  featuresConfig,
   isDarkMode,
   sections,
   resources,
@@ -644,9 +651,10 @@ export const FeaturesModal: React.FC<FeaturesModalProps> = ({
     }
   };
 
-  // Telegram Group URLs from systemSettings with fallback
-  const mainTelegramUrl = systemSettings.features?.telegramMainGroupUrl || 'https://t.me/raad_qiyas_main';
-  const discussionTelegramUrl = systemSettings.features?.telegramDiscussionGroupUrl || 'https://t.me/raad_qiyas_discussion';
+  // Telegram Group URLs from course featuresConfig or systemSettings with fallback
+  const effectiveConfig = featuresConfig || systemSettings.features;
+  const mainTelegramUrl = effectiveConfig?.telegramMainGroupUrl || systemSettings.features?.telegramMainGroupUrl || 'https://t.me/raad_qiyas_main';
+  const discussionTelegramUrl = effectiveConfig?.telegramDiscussionGroupUrl || systemSettings.features?.telegramDiscussionGroupUrl || 'https://t.me/raad_qiyas_discussion';
 
   if (!isOpen) return null;
 
@@ -672,10 +680,15 @@ export const FeaturesModal: React.FC<FeaturesModalProps> = ({
                 <span className="text-xs px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-500 font-black border border-amber-500/30">
                   المميزات الذهبية ⭐
                 </span>
+                {courseTitle && (
+                  <span className="text-xs px-2.5 py-0.5 rounded-full bg-blue-500/20 text-blue-400 font-bold border border-blue-500/30 truncate max-w-[220px]">
+                    {courseTitle}
+                  </span>
+                )}
               </div>
               <h3 className={`text-base sm:text-lg font-black mt-0.5 ${isDarkMode ? 'text-white' : 'text-slate-950'}`}>
                 {activeView === 'main'
-                  ? 'المميزات الإضافية لمنصة أقسام رعد'
+                  ? `المميزات الإضافية ${courseTitle ? `- ${courseTitle}` : 'لمنصة أقسام رعد'}`
                   : activeView === 'diagnostic'
                   ? 'اختبار تحديد مستوى الطالب 🎯'
                   : 'تحدي الأصدقاء المباشر ⚔️'}

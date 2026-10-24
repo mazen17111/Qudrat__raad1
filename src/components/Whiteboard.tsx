@@ -28,18 +28,24 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({ isDark = true }) => {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Adjust canvas resolution for retina displays
-    const rect = canvas.getBoundingClientRect();
-    canvas.width = rect.width * 2;
-    canvas.height = rect.height * 2;
-    ctx.scale(2, 2);
+    try {
+      // Adjust canvas resolution for retina displays
+      const rect = canvas.getBoundingClientRect();
+      const w = Math.max(300, rect.width || 300);
+      const h = Math.max(200, rect.height || 200);
+      canvas.width = w * 2;
+      canvas.height = h * 2;
+      ctx.scale(2, 2);
 
-    // Initial background
-    ctx.fillStyle = isDark ? '#0f172a' : '#1e293b';
-    ctx.fillRect(0, 0, rect.width, rect.height);
+      // Initial background
+      ctx.fillStyle = isDark ? '#0f172a' : '#1e293b';
+      ctx.fillRect(0, 0, w, h);
 
-    // Save initial state
-    saveState();
+      // Save initial state safely
+      saveState();
+    } catch (e) {
+      console.warn('Canvas init warning:', e);
+    }
 
     const handleResize = () => {
       // Keep canvas drawing responsive
@@ -50,11 +56,15 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({ isDark = true }) => {
 
   const saveState = () => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas || canvas.width <= 0 || canvas.height <= 0) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    setHistory((prev) => [...prev.slice(-15), imageData]);
+    try {
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      setHistory((prev) => [...prev.slice(-15), imageData]);
+    } catch (e) {
+      console.warn('saveState note:', e);
+    }
   };
 
   const getCoordinates = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
@@ -120,13 +130,19 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({ isDark = true }) => {
 
   const clearCanvas = () => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas || canvas.width <= 0 || canvas.height <= 0) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    const rect = canvas.getBoundingClientRect();
-    ctx.fillStyle = isDark ? '#0f172a' : '#1e293b';
-    ctx.fillRect(0, 0, rect.width, rect.height);
-    saveState();
+    try {
+      const rect = canvas.getBoundingClientRect();
+      const w = Math.max(300, rect.width || 300);
+      const h = Math.max(200, rect.height || 200);
+      ctx.fillStyle = isDark ? '#0f172a' : '#1e293b';
+      ctx.fillRect(0, 0, w, h);
+      saveState();
+    } catch (e) {
+      console.warn('clearCanvas note:', e);
+    }
   };
 
   const undo = () => {
@@ -136,12 +152,16 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({ isDark = true }) => {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const newHistory = [...history];
-    newHistory.pop(); // remove current
-    const previousState = newHistory[newHistory.length - 1];
-    if (previousState) {
-      ctx.putImageData(previousState, 0, 0);
-      setHistory(newHistory);
+    try {
+      const newHistory = [...history];
+      newHistory.pop(); // remove current
+      const previousState = newHistory[newHistory.length - 1];
+      if (previousState) {
+        ctx.putImageData(previousState, 0, 0);
+        setHistory(newHistory);
+      }
+    } catch (e) {
+      console.warn('undo note:', e);
     }
   };
 

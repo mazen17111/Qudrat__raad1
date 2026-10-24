@@ -38,6 +38,7 @@ import {
   ArrowRight,
   Maximize2,
   Minimize2,
+  BookOpen,
 } from 'lucide-react';
 import { BrandLogo } from './BrandLogo';
 import {
@@ -47,7 +48,8 @@ import {
   ResourceItem,
   ContentItem,
   ExamQuestion,
-  FolderItem
+  FolderItem,
+  CourseItem
 } from '../types';
 import { db, INITIAL_SECTIONS, INITIAL_RESOURCES, INITIAL_CONTENT_ITEMS } from '../firebase';
 import {
@@ -65,6 +67,7 @@ import { StatsModal } from './StatsModal';
 import { FoldersModal } from './FoldersModal';
 import { FeaturesModal } from './FeaturesModal';
 import { ExamRunner } from './ExamRunner';
+import { ErrorBoundary } from './ErrorBoundary';
 
 interface StudentHomeProps {
   currentUser: StudentUser;
@@ -73,6 +76,8 @@ interface StudentHomeProps {
   isDarkMode: boolean;
   toggleDarkMode: () => void;
   onSecretTriggerAdmin: () => void;
+  activeCourse?: CourseItem | null;
+  onBackToCourses?: () => void;
 }
 
 interface SupervisorContactButtonsProps {
@@ -129,6 +134,8 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
   isDarkMode,
   toggleDarkMode,
   onSecretTriggerAdmin,
+  activeCourse,
+  onBackToCourses,
 }) => {
   // Navigation & Modals
   const [showStatsModal, setShowStatsModal] = useState(false);
@@ -326,9 +333,11 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
       list.sort((a, b) => (a.order || 0) - (b.order || 0));
       if (list.length > 0) {
         setSections(list);
-        try {
-          localStorage.setItem('raad_cached_sections', JSON.stringify(list));
-        } catch (e) {}
+        setTimeout(() => {
+          try {
+            localStorage.setItem('raad_cached_sections', JSON.stringify(list));
+          } catch (e) {}
+        }, 0);
         if (!selectedSectionId) {
           setSelectedSectionId(list[0].id);
         }
@@ -341,9 +350,11 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
       list.sort((a, b) => (a.order || 0) - (b.order || 0));
       if (list.length > 0) {
         setResources(list);
-        try {
-          localStorage.setItem('raad_cached_resources', JSON.stringify(list));
-        } catch (e) {}
+        setTimeout(() => {
+          try {
+            localStorage.setItem('raad_cached_resources', JSON.stringify(list));
+          } catch (e) {}
+        }, 0);
       }
     });
 
@@ -359,9 +370,11 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
       });
       if (list.length > 0) {
         setContentItems(list);
-        try {
-          localStorage.setItem('raad_cached_content_items', JSON.stringify(list));
-        } catch (e) {}
+        setTimeout(() => {
+          try {
+            localStorage.setItem('raad_cached_content_items', JSON.stringify(list));
+          } catch (e) {}
+        }, 0);
       }
     });
 
@@ -380,14 +393,25 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
     };
   }, [currentUser.id]);
 
-  // Ensure selectedSectionId always points to a valid section from latest updates
+  // Ensure selectedSectionId always points to a valid section for the active course
   useEffect(() => {
-    if (sections.length > 0) {
-      if (!selectedSectionId || !sections.some((s) => s.id === selectedSectionId)) {
-        setSelectedSectionId(sections[0].id);
+    const list = activeCourse
+      ? sections
+          .filter((s) => {
+            if (s.courseId) return s.courseId === activeCourse.id;
+            return activeCourse.id === 'course_default_1';
+          })
+          .sort((a, b) => (a.order || 0) - (b.order || 0))
+      : sections;
+
+    if (list.length > 0) {
+      if (!selectedSectionId || !list.some((s) => s.id === selectedSectionId)) {
+        setSelectedSectionId(list[0].id);
       }
+    } else {
+      setSelectedSectionId('');
     }
-  }, [sections, selectedSectionId]);
+  }, [sections, activeCourse, selectedSectionId]);
 
   // When selectedSectionId or resources change, ensure valid resource from latest updates
   useEffect(() => {
@@ -505,34 +529,50 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
     }
   };
 
+  const [isStartingExam, setIsStartingExam] = useState<boolean>(false);
+
   // Start Exam with Timed/Untimed preference and System mode ('nimr' | 'standard')
   const confirmStartExam = async (isTimed: boolean, systemMode: 'nimr' | 'standard' = selectedExamSystem) => {
     if (!examToStart) return;
+    setIsStartingExam(true);
+    pauseAllVideos();
+
     if (examToStart.isExternal && examToStart.url) {
       window.open(examToStart.url, '_blank');
       setExamToStart(null);
       setExamStartStep(1);
+      setIsStartingExam(false);
       return;
     }
 
     let finalQuestions: ExamQuestion[] = Array.isArray(examToStart.questions) ? [...examToStart.questions] : [];
 
-    // If questions array is empty in local state, fetch directly from Firestore to guarantee freshest data
+    // 1. Check if contentItems in memory has questions first
+    if (finalQuestions.length === 0) {
+      const matchInState = contentItems.find((i) => i.id === examToStart.id);
+      if (matchInState && Array.isArray(matchInState.questions) && matchInState.questions.length > 0) {
+        finalQuestions = [...matchInState.questions];
+      }
+    }
+
+    // 2. If questions array is still empty in local state, fetch directly from Firestore with a fast 800ms race timeout
     if (finalQuestions.length === 0) {
       try {
-        const snap = await getDoc(doc(db, 'content_items', examToStart.id));
-        if (snap.exists()) {
+        const fetchPromise = getDoc(doc(db, 'content_items', examToStart.id));
+        const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 800));
+        const snap = (await Promise.race([fetchPromise, timeoutPromise])) as any;
+        if (snap && snap.exists && snap.exists()) {
           const data = snap.data();
           if (Array.isArray(data.questions) && data.questions.length > 0) {
             finalQuestions = data.questions;
           }
         }
       } catch (err) {
-        console.error('Error fetching questions live from Firestore:', err);
+        console.warn('Fast questions fetch finished or timed out:', err);
       }
     }
 
-    // High-yield practice fallback: if exam is still empty, populate practice questions so student is NEVER blocked!
+    // 3. High-yield practice fallback: if exam is still empty, populate practice questions so student is NEVER blocked!
     if (finalQuestions.length === 0) {
       finalQuestions = [
         {
@@ -573,6 +613,7 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
     });
     setExamToStart(null);
     setExamStartStep(1);
+    setIsStartingExam(false);
   };
 
   // Start folder exam from FoldersModal
@@ -589,6 +630,145 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
       folderTitle: folderTitle,
     });
   };
+
+  const activeTheme = systemSettings.activeTheme;
+
+  // Performance Optimization: Memoize filtered and sorted lists strictly for active course
+  const courseSections = useMemo(() => {
+    if (!activeCourse) return sections;
+    return sections
+      .filter((s) => {
+        if (s.courseId) return s.courseId === activeCourse.id;
+        return activeCourse.id === 'course_default_1';
+      })
+      .sort((a, b) => (a.order || 0) - (b.order || 0));
+  }, [sections, activeCourse]);
+
+  // Scoped resources belonging strictly to the active course's sections
+  const courseSectionIds = useMemo(() => new Set(courseSections.map((s) => s.id)), [courseSections]);
+
+  const courseResources = useMemo(() => {
+    return resources
+      .filter((r) => courseSectionIds.has(r.sectionId))
+      .sort((a, b) => (a.order || 0) - (b.order || 0));
+  }, [resources, courseSectionIds]);
+
+  const courseResourceIds = useMemo(() => new Set(courseResources.map((r) => r.id)), [courseResources]);
+
+  // Scoped content items (exams, videos, files) belonging strictly to the active course's resources
+  const courseContentItems = useMemo(() => {
+    return contentItems.filter((i) => courseResourceIds.has(i.resourceId));
+  }, [contentItems, courseResourceIds]);
+
+  // Per-course intro lesson with graceful fallback
+  const effectiveIntroLesson = useMemo(() => {
+    return activeCourse?.introLesson || systemSettings.introLesson || {
+      isActive: true,
+      title: 'الحصة التعريفية لشرح المنصة وطريقة الاستفادة منها',
+      videoUrl: '',
+      description: 'شاهد هذا الفيديو للتعرف على طريقة التدرب واستخدام السبورة الذكية ومجلدات الأخطاء لتحقيق نسبة 100% بإذن الله',
+    };
+  }, [activeCourse?.introLesson, systemSettings.introLesson]);
+
+  // Per-course features with graceful fallback
+  const effectiveFeatures = useMemo(() => {
+    return activeCourse?.features || systemSettings.features || {
+      telegramMainGroupUrl: 'https://t.me/raad_qiyas_main',
+      telegramDiscussionGroupUrl: 'https://t.me/raad_qiyas_discussion',
+      isDiagnosticEnabled: true,
+      isFriendsChallengeEnabled: true,
+    };
+  }, [activeCourse?.features, systemSettings.features]);
+
+  const effectiveSectionId = useMemo(() => {
+    if (courseSections.length === 0) return '';
+    if (selectedSectionId && courseSections.some((s) => s.id === selectedSectionId)) {
+      return selectedSectionId;
+    }
+    return courseSections[0].id;
+  }, [courseSections, selectedSectionId]);
+
+  const currentSectionResources = useMemo(
+    () => (effectiveSectionId ? resources.filter((r) => r.sectionId === effectiveSectionId) : []),
+    [resources, effectiveSectionId]
+  );
+
+  const effectiveResourceId = useMemo(() => {
+    if (currentSectionResources.length === 0) return '';
+    if (selectedResourceId && currentSectionResources.some((r) => r.id === selectedResourceId)) {
+      return selectedResourceId;
+    }
+    return currentSectionResources[0].id;
+  }, [currentSectionResources, selectedResourceId]);
+
+  const currentResourceItems = useMemo(
+    () =>
+      effectiveResourceId
+        ? contentItems
+            .filter((i) => i.resourceId === effectiveResourceId)
+            .sort((a, b) => {
+              const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+              const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+              if (tA !== tB) return tA - tB;
+              return (a.id || '').localeCompare(b.id || '');
+            })
+        : [],
+    [contentItems, effectiveResourceId]
+  );
+
+  const resourceVideos = useMemo(
+    () => currentResourceItems.filter((i) => i.type === 'video'),
+    [currentResourceItems]
+  );
+
+  const resourceExams = useMemo(
+    () => currentResourceItems.filter((i) => i.type === 'exam'),
+    [currentResourceItems]
+  );
+
+  const resourceFiles = useMemo(
+    () => currentResourceItems.filter((i) => i.type === 'file'),
+    [currentResourceItems]
+  );
+
+  const selectedSectionObj = useMemo(
+    () => courseSections.find((s) => s.id === effectiveSectionId),
+    [courseSections, effectiveSectionId]
+  );
+
+  const selectedResourceObj = useMemo(
+    () => currentSectionResources.find((r) => r.id === effectiveResourceId),
+    [currentSectionResources, effectiveResourceId]
+  );
+
+  const activeVideoItem = useMemo(() => {
+    if (!activeVideo) return null;
+    return contentItems.find((i) => i.id === activeVideo.id) || activeVideo;
+  }, [activeVideo, contentItems]);
+
+  const linkedExams = useMemo(() => {
+    if (!activeVideoItem?.linkedExamIds || activeVideoItem.linkedExamIds.length === 0) return [];
+    return contentItems
+      .filter((it) => it.type === 'exam' && activeVideoItem.linkedExamIds?.includes(it.id))
+      .sort((a, b) => {
+        const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        if (tA !== tB) return tA - tB;
+        return (a.id || '').localeCompare(b.id || '');
+      });
+  }, [contentItems, activeVideoItem?.linkedExamIds]);
+
+  const linkedFiles = useMemo(() => {
+    if (!activeVideoItem?.linkedFileIds || activeVideoItem.linkedFileIds.length === 0) return [];
+    return contentItems
+      .filter((it) => it.type === 'file' && activeVideoItem.linkedFileIds?.includes(it.id))
+      .sort((a, b) => {
+        const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        if (tA !== tB) return tA - tB;
+        return (a.id || '').localeCompare(b.id || '');
+      });
+  }, [contentItems, activeVideoItem?.linkedFileIds]);
 
   // ================= 1. CHECK PLATFORM LOCK & SELECTIVE ACCESS =================
   const isWhitelisted = currentUser.isIndividuallyWhitelisted === true;
@@ -821,74 +1001,33 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
   if (activeExam) {
     return (
       <div className={`min-h-screen ${isDarkMode ? 'bg-slate-950 text-white' : 'bg-white text-slate-900'}`}>
-        <ExamRunner
-          examTitle={activeExam.title}
-          examId={activeExam.id}
-          questions={activeExam.questions}
-          currentUser={currentUser}
-          defaultFolders={folders}
-          isTimedInitial={activeExam.isTimed}
-          examSystem={activeExam.examSystem || 'nimr'}
-          durationMinutes={activeExam.durationMinutes}
-          targetPercentage={activeExam.targetPercentage}
-          isDarkMode={isDarkMode}
-          isFolderExam={activeExam.isFolderExam}
-          folderId={activeExam.folderId}
-          folderTitle={activeExam.folderTitle}
-          onFinishExam={() => {
-            // Exam finished and recorded
-          }}
-          onExit={() => setActiveExam(null)}
-        />
+        <ErrorBoundary
+          fallbackTitle="تنبيه أثناء تشغيل الاختبار"
+          onReset={() => setActiveExam(null)}
+        >
+          <ExamRunner
+            examTitle={activeExam.title}
+            examId={activeExam.id}
+            questions={activeExam.questions}
+            currentUser={currentUser}
+            defaultFolders={folders}
+            isTimedInitial={activeExam.isTimed}
+            examSystem={activeExam.examSystem || 'nimr'}
+            durationMinutes={activeExam.durationMinutes}
+            targetPercentage={activeExam.targetPercentage}
+            isDarkMode={isDarkMode}
+            isFolderExam={activeExam.isFolderExam}
+            folderId={activeExam.folderId}
+            folderTitle={activeExam.folderTitle}
+            onFinishExam={() => {
+              // Exam finished and recorded
+            }}
+            onExit={() => setActiveExam(null)}
+          />
+        </ErrorBoundary>
       </div>
     );
   }
-
-  const activeTheme = systemSettings.activeTheme;
-
-  // Performance Optimization: Memoize filtered and sorted lists to eliminate unnecessary re-computations
-  const currentSectionResources = useMemo(
-    () => resources.filter((r) => r.sectionId === selectedSectionId),
-    [resources, selectedSectionId]
-  );
-
-  const currentResourceItems = useMemo(
-    () =>
-      contentItems
-        .filter((i) => i.resourceId === selectedResourceId)
-        .sort((a, b) => {
-          const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-          const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-          if (tA !== tB) return tA - tB;
-          return (a.id || '').localeCompare(b.id || '');
-        }),
-    [contentItems, selectedResourceId]
-  );
-
-  const resourceVideos = useMemo(
-    () => currentResourceItems.filter((i) => i.type === 'video'),
-    [currentResourceItems]
-  );
-
-  const resourceExams = useMemo(
-    () => currentResourceItems.filter((i) => i.type === 'exam'),
-    [currentResourceItems]
-  );
-
-  const resourceFiles = useMemo(
-    () => currentResourceItems.filter((i) => i.type === 'file'),
-    [currentResourceItems]
-  );
-
-  const selectedSectionObj = useMemo(
-    () => sections.find((s) => s.id === selectedSectionId),
-    [sections, selectedSectionId]
-  );
-
-  const selectedResourceObj = useMemo(
-    () => resources.find((r) => r.id === selectedResourceId),
-    [resources, selectedResourceId]
-  );
 
   return (
     <div
@@ -896,24 +1035,29 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
         isDarkMode ? 'bg-slate-950 text-slate-100' : 'bg-white text-slate-900'
       }`}
     >
-      {/* Top Header */}
+      {/* Top Header: Neat and tight on mobile without gaps */}
       <header
-        className={`sticky top-0 z-30 px-4 md:px-8 py-3 border-b backdrop-blur-xl flex flex-wrap items-center justify-between gap-4 transition-all shadow-sm ${
+        className={`sticky top-0 z-30 px-2.5 sm:px-4 md:px-8 py-2 sm:py-3 border-b backdrop-blur-xl flex items-center justify-between gap-2 transition-all shadow-sm ${
           isDarkMode ? 'bg-slate-900/90 border-slate-800' : 'bg-white/95 border-slate-200'
         }`}
       >
         {/* Brand & Student Welcome - Platform Logo on any browser */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           <BrandLogo
             customLogoUrl={systemSettings.logoUrl}
             size="md"
             primaryColor={activeTheme?.primary || '#059669'}
           />
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-lg md:text-xl font-black tracking-tight">منصة أقسام رعد</h1>
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <h1 className="text-sm sm:text-lg md:text-xl font-black tracking-tight truncate">منصة أقسام رعد</h1>
+              {activeCourse && (
+                <span className="text-[10px] sm:text-xs font-black px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-400 border border-sky-500/30 truncate max-w-[120px] sm:max-w-xs">
+                  {activeCourse.title}
+                </span>
+              )}
               <span
-                className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider"
+                className="hidden sm:inline-block text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider"
                 style={{
                   backgroundColor: `${activeTheme?.primary || '#2563eb'}20`,
                   color: activeTheme?.accent || '#38bdf8',
@@ -922,68 +1066,68 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                 100% بإذن الله
               </span>
             </div>
-            <p className={`text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-600 font-bold'}`}>
-              مرحباً بك، {currentUser.name}
+            <p className={`text-[11px] sm:text-xs truncate ${isDarkMode ? 'text-slate-400' : 'text-slate-600 font-bold'}`}>
+              مرحباً، {currentUser.name}
             </p>
           </div>
         </div>
 
-        {/* Navigation Actions: "احصائياتي", "مجلداتي", Theme, Logout */}
-        <div className="flex items-center gap-2">
+        {/* Navigation Actions: Features, Stats, Folders, Theme, Logout */}
+        <div className="flex items-center gap-1 sm:gap-2 shrink-0">
           {/* كلمة المميزات باللون الذهبي بجانب احصائياتي */}
           <button
             onClick={() => setShowFeaturesModal(true)}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-black border transition shadow-md hover:scale-105 bg-gradient-to-r from-amber-500/20 via-amber-400/25 to-yellow-500/20 border-amber-400 text-amber-500 dark:text-amber-300 hover:border-amber-300 shadow-amber-500/20 cursor-pointer"
+            className="flex items-center gap-1 px-2 sm:px-3 py-1.5 sm:py-2 rounded-xl text-[11px] sm:text-xs font-black border transition shadow-sm hover:scale-105 bg-gradient-to-r from-amber-500/20 via-amber-400/25 to-yellow-500/20 border-amber-400 text-amber-500 dark:text-amber-300 hover:border-amber-300 cursor-pointer"
             title="المميزات الإضافية"
           >
-            <Sparkles className="w-4 h-4 text-amber-400 fill-amber-400/40" />
+            <Sparkles className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400 fill-amber-400/40" />
             <span className="font-black text-amber-600 dark:text-amber-300">المميزات</span>
           </button>
 
           <button
             onClick={() => setShowStatsModal(true)}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold border transition shadow-sm hover:scale-105"
+            className="flex items-center gap-1 px-2 sm:px-3 py-1.5 sm:py-2 rounded-xl text-[11px] sm:text-xs font-bold border transition shadow-sm hover:scale-105"
             style={{
               backgroundColor: `${activeTheme?.secondary || '#4f46e5'}20`,
               borderColor: `${activeTheme?.secondary || '#4f46e5'}40`,
               color: isDarkMode ? '#e2e8f0' : '#0f172a',
             }}
           >
-            <BarChart3 className="w-4 h-4 text-blue-500" />
+            <BarChart3 className="w-3.5 h-3.5 text-blue-500" />
             <span className={isDarkMode ? 'text-white' : 'text-slate-900 font-bold'}>احصائياتي</span>
           </button>
 
           <button
             onClick={() => setShowFoldersModal(true)}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold border transition shadow-sm hover:scale-105"
+            className="flex items-center gap-1 px-2 sm:px-3 py-1.5 sm:py-2 rounded-xl text-[11px] sm:text-xs font-bold border transition shadow-sm hover:scale-105"
             style={{
               backgroundColor: `${activeTheme?.primary || '#2563eb'}20`,
               borderColor: `${activeTheme?.primary || '#2563eb'}40`,
               color: isDarkMode ? '#e2e8f0' : '#0f172a',
             }}
           >
-            <Folder className="w-4 h-4 text-amber-500" />
+            <Folder className="w-3.5 h-3.5 text-amber-500" />
             <span className={isDarkMode ? 'text-white' : 'text-slate-900 font-bold'}>مجلداتي</span>
           </button>
 
           <button
             onClick={toggleDarkMode}
-            className={`p-2 rounded-xl border transition ${
+            className={`p-1.5 sm:p-2 rounded-xl border transition ${
               isDarkMode
                 ? 'bg-slate-800 border-slate-700 text-amber-300'
                 : 'bg-white border-slate-200 text-slate-800 hover:bg-slate-50 shadow-sm'
             }`}
             title={isDarkMode ? 'الوضع النهاري' : 'الوضع الليلي'}
           >
-            {isDarkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            {isDarkMode ? <Sun className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> : <Moon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />}
           </button>
 
           <button
             onClick={onLogout}
-            className="p-2 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 hover:bg-rose-500/20 transition"
+            className="p-1.5 sm:p-2 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 hover:bg-rose-500/20 transition"
             title="تسجيل الخروج"
           >
-            <LogOut className="w-4 h-4" />
+            <LogOut className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
           </button>
         </div>
       </header>
@@ -1053,20 +1197,20 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
       {/* ================= BIG SUBSCRIPTION DAYS PROGRESS BAR AT STUDENT ================= */}
       {/* "لا تجعل عندما يدخل الطالب للمنصة اول مرة يظهر له عداد ب 30 يوم العداد لا يظهر للطلاب الا لما انا لحدد لهم ايام داخل قسم التحكم" */}
       {(currentUser.isUnlimited || (totalDays > 0 && currentUser.subscriptionEndDate)) && (
-        <div className="p-4 md:px-8 max-w-[1700px] mx-auto w-full">
+        <div className="px-2.5 sm:px-4 md:px-8 py-2 sm:py-3 max-w-[1700px] mx-auto w-full">
           <div
-            className={`p-5 md:p-6 rounded-3xl border shadow-xl transition-all ${
+            className={`p-3.5 sm:p-5 md:p-6 rounded-2xl sm:rounded-3xl border shadow-xl transition-all ${
               isDarkMode ? 'bg-slate-900/90 border-slate-800' : 'bg-white border-slate-200 shadow-sm'
             }`}
           >
             {currentUser.isUnlimited ? (
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
-                  <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
-                    <InfinityIcon className="w-7 h-7" />
+                  <div className="p-2.5 sm:p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 shrink-0">
+                    <InfinityIcon className="w-6 h-6 sm:w-7 sm:h-7" />
                   </div>
                   <div>
-                    <h3 className={`text-base md:text-lg font-black flex items-center gap-2 ${
+                    <h3 className={`text-sm sm:text-base md:text-lg font-black flex items-center gap-2 ${
                       isDarkMode ? 'text-white' : 'text-slate-900'
                     }`}>
                       <span>حسابك يتمتع باشتراك مفتوح دائم ⚡</span>
@@ -1074,36 +1218,36 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                         VIP
                       </span>
                     </h3>
-                    <p className={`text-xs mt-0.5 ${isDarkMode ? 'text-slate-400' : 'text-slate-700 font-medium'}`}>
+                    <p className={`text-[11px] sm:text-xs mt-0.5 ${isDarkMode ? 'text-slate-400' : 'text-slate-700 font-medium'}`}>
                       المنصة مفتوحة لك بالكامل وبلا قيود زمنية، استمتع بجميع الفيديوهات والاختبارات والملفات!
                     </p>
                   </div>
                 </div>
               </div>
             ) : (
-              <div className="space-y-3">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex items-center gap-2.5">
-                    <div className="p-2.5 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-500">
-                      <Calendar className="w-5 h-5" />
+              <div className="space-y-2.5 sm:space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2.5 sm:gap-3">
+                  <div className="flex items-center gap-2 sm:gap-2.5">
+                    <div className="p-2 sm:p-2.5 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-500 shrink-0">
+                      <Calendar className="w-4 h-4 sm:w-5 sm:h-5" />
                     </div>
                     <div>
-                      <h3 className={`text-sm md:text-base font-black ${
+                      <h3 className={`text-xs sm:text-sm md:text-base font-black ${
                         isDarkMode ? 'text-white' : 'text-slate-900'
                       }`}>
                         متابعة اشتراكك في منصة أقسام رعد
                       </h3>
-                      <p className={`text-xs font-bold mt-0.5 ${isDarkMode ? 'text-amber-400' : 'text-amber-700 font-black'}`}>
+                      <p className={`text-[11px] sm:text-xs font-bold mt-0.5 ${isDarkMode ? 'text-amber-400' : 'text-amber-700 font-black'}`}>
                         نهاية الاشتراك: يوم {formattedEndDate}
                       </p>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-4 text-xs font-bold">
+                  <div className="flex items-center gap-2.5 sm:gap-4 text-xs font-bold">
                     <div className={isDarkMode ? 'text-slate-300' : 'text-slate-800 font-semibold'}>
-                      مضى: <span className={`font-black text-sm ${isDarkMode ? 'text-white' : 'text-slate-950'}`}>{elapsedDays}</span> من {totalDays} يوم
+                      مضى: <span className={`font-black text-xs sm:text-sm ${isDarkMode ? 'text-white' : 'text-slate-950'}`}>{elapsedDays}</span> من {totalDays} يوم
                     </div>
-                    <div className={`px-3 py-1 rounded-xl font-black ${
+                    <div className={`px-2.5 py-0.5 sm:px-3 sm:py-1 rounded-xl text-xs font-black ${
                       isDarkMode ? 'bg-blue-500/20 border border-blue-500/30 text-blue-300' : 'bg-blue-50 border border-blue-200 text-blue-900'
                     }`}>
                       متبقي: {daysLeft} يوم
@@ -1113,11 +1257,11 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
 
                 {/* Big Progress Bar: Starts from 0 and increases as days elapse */}
                 <div className="space-y-1">
-                  <div className={`w-full h-4 md:h-5 rounded-2xl overflow-hidden p-0.5 border shadow-inner ${
+                  <div className={`w-full h-3.5 sm:h-4 md:h-5 rounded-2xl overflow-hidden p-0.5 border shadow-inner ${
                     isDarkMode ? 'bg-slate-800/80 border-slate-700/60' : 'bg-slate-100 border-slate-200'
                   }`}>
                     <div
-                      className={`h-full rounded-xl transition-all duration-700 flex items-center justify-end px-2 text-[10px] font-black text-white shadow-lg ${
+                      className={`h-full rounded-xl transition-all duration-300 flex items-center justify-end px-2 text-[10px] font-black text-white shadow-lg ${
                         progressPercentage < 35
                           ? 'bg-gradient-to-r from-blue-600 via-blue-500 to-indigo-500 shadow-blue-500/25'
                           : progressPercentage < 65
@@ -1144,92 +1288,128 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
         </div>
       )}
 
-      {/* Section Switcher Tabs */}
-      <div className={`px-4 md:px-8 py-3 border-b overflow-x-auto ${
-        isDarkMode ? 'border-slate-800/60 bg-slate-900/30' : 'border-slate-200 bg-white'
-      }`}>
-        <div className="flex items-center gap-3 min-w-max max-w-[1700px] mx-auto">
-          <span className={`text-xs font-black ml-2 ${isDarkMode ? 'text-slate-400' : 'text-slate-700'}`}>
-            الأقسام التعليمية:
-          </span>
-          {sections.map((sec, sIdx) => (
-            <button
-              key={sec.id}
-              onClick={() => {
-                pauseAllVideos();
-                setSelectedSectionId(sec.id);
-              }}
-              className={`px-4 py-2.5 rounded-2xl text-xs md:text-sm font-black transition-all flex items-center gap-2 ${
-                selectedSectionId === sec.id
-                  ? 'text-white shadow-lg'
-                  : isDarkMode
-                  ? 'bg-slate-800/40 text-slate-400 hover:text-white hover:bg-slate-800/80'
-                  : 'bg-white text-slate-800 hover:text-black hover:bg-slate-50 border border-slate-200 shadow-sm'
-              }`}
-              style={
-                selectedSectionId === sec.id
-                  ? {
-                      backgroundColor: activeTheme?.primary || '#2563eb',
-                      borderColor: activeTheme?.accent || '#38bdf8',
-                      boxShadow: `0 4px 14px ${activeTheme?.primary || '#2563eb'}40`,
-                    }
-                  : {}
-              }
-            >
-              <span className={`w-5 h-5 rounded-full text-[10px] font-black font-mono flex items-center justify-center shrink-0 ${
-                selectedSectionId === sec.id
-                  ? 'bg-black/30 text-white'
-                  : isDarkMode
-                  ? 'bg-slate-700/60 text-slate-300'
-                  : 'bg-slate-100 text-slate-800 border border-slate-200'
-              }`}>
-                {sec.order || sIdx + 1}
+      {/* If Course has no sections/content yet */}
+      {courseSections.length === 0 ? (
+        <main className="flex-1 px-4 py-16 flex items-center justify-center max-w-2xl mx-auto w-full text-center">
+          <div className={`w-full p-8 sm:p-12 rounded-3xl border shadow-xl ${
+            isDarkMode ? 'bg-slate-900/90 border-slate-800' : 'bg-white border-slate-200'
+          }`}>
+            <div className="w-20 h-20 rounded-3xl bg-blue-500/10 border border-blue-500/20 text-blue-400 mx-auto flex items-center justify-center mb-6 text-3xl">
+              📚
+            </div>
+            <h3 className="text-xl sm:text-2xl font-black mb-3">
+              ابدأ بإضافة المحتوى المنفصل لهذا الكورس
+            </h3>
+            <p className={`text-sm max-w-md mx-auto mb-6 ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
+              لم يتم إضافة أي أقسام أو محاضرات أو اختبارات لهذا الكورس بعد. يمكنك العودة لقائمة الكورسات أو التواصل مع المشرف.
+            </p>
+            {onBackToCourses && (
+              <button
+                type="button"
+                onClick={onBackToCourses}
+                className="px-6 py-3 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-black text-sm shadow-lg hover:shadow-blue-500/25 transition-all active:scale-95 inline-flex items-center gap-2 cursor-pointer"
+              >
+                <span>الرجوع إلى الكورسات</span>
+              </button>
+            )}
+          </div>
+        </main>
+      ) : (
+        <>
+          {/* Section Switcher Tabs */}
+          <div className={`px-2.5 sm:px-4 md:px-8 py-2 sm:py-2.5 border-b overflow-x-auto ${
+            isDarkMode ? 'border-slate-800/60 bg-slate-900/30' : 'border-slate-200 bg-white'
+          }`}>
+            <div className="flex items-center gap-2 sm:gap-3 min-w-max max-w-[1700px] mx-auto">
+              <span className={`text-[11px] sm:text-xs font-black ml-1 sm:ml-2 ${isDarkMode ? 'text-slate-400' : 'text-slate-700'}`}>
+                الأقسام التعليمية:
               </span>
-              <span>{sec.title}</span>
-            </button>
-          ))}
-        </div>
-      </div>
+              {courseSections.map((sec, sIdx) => {
+                const isSecActive = effectiveSectionId === sec.id;
+                return (
+                  <button
+                    key={sec.id}
+                    onClick={() => {
+                      pauseAllVideos();
+                      setSelectedSectionId(sec.id);
+                    }}
+                    className={`px-3 sm:px-4 py-2 sm:py-2.5 rounded-2xl text-xs md:text-sm font-black transition-all flex items-center gap-1.5 sm:gap-2 ${
+                      isSecActive
+                        ? 'text-white shadow-lg'
+                        : isDarkMode
+                        ? 'bg-slate-800/40 text-slate-400 hover:text-white hover:bg-slate-800/80'
+                        : 'bg-white text-slate-800 hover:text-black hover:bg-slate-50 border border-slate-200 shadow-sm'
+                    }`}
+                    style={
+                      isSecActive
+                        ? {
+                            backgroundColor: activeTheme?.primary || '#2563eb',
+                            borderColor: activeTheme?.accent || '#38bdf8',
+                            boxShadow: `0 4px 14px ${activeTheme?.primary || '#2563eb'}40`,
+                          }
+                        : {}
+                    }
+                  >
+                    <span className={`w-4 h-4 sm:w-5 sm:h-5 rounded-full text-[10px] font-black font-mono flex items-center justify-center shrink-0 ${
+                      isSecActive
+                        ? 'bg-black/30 text-white'
+                        : isDarkMode
+                        ? 'bg-slate-700/60 text-slate-300'
+                        : 'bg-slate-100 text-slate-800 border border-slate-200'
+                    }`}>
+                      {sec.order || sIdx + 1}
+                    </span>
+                    <span>{sec.title}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
 
-      {/* ================= MAIN LEARNING VIEW ================= */}
-      {/* "اولا خلي الفيديو عاليسار والمصادر والاقسام عاليمين" */}
-      {/* In RTL: Column 1 is displayed on the RIGHT, Column 2 is displayed on the LEFT! */}
-      <main className="flex-1 p-4 md:px-8 md:py-6 max-w-[1700px] mx-auto w-full">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          {/* ================= RIGHT SIDE (اليمين): SECTIONS, RESOURCES, CONTENT TABS ================= */}
-          <div className="lg:col-span-5 xl:col-span-4 space-y-4">
-            {/* Resources list for active section */}
-            <div
-              className={`p-4 rounded-3xl border shadow-xl ${
-                isDarkMode ? 'bg-slate-900/90 border-slate-800' : 'bg-white border-slate-200 shadow-sm'
-              }`}
-            >
-              <div className={`flex items-center justify-between pb-3 border-b mb-3 ${
-                isDarkMode ? 'border-slate-800/60' : 'border-slate-200'
-              }`}>
-                <span className={`text-xs font-black ${isDarkMode ? 'text-slate-400' : 'text-slate-700'}`}>
-                  المصادر المتاحة ({currentSectionResources.length})
-                </span>
-                <span
-                  className="text-[11px] font-black"
-                  style={{ color: activeTheme?.accent || '#2563eb' }}
+          {/* ================= MAIN LEARNING VIEW ================= */}
+          {/* "اولا خلي الفيديو عاليسار والمصادر والاقسام عاليمين" */}
+          {/* In RTL: Column 1 is displayed on the RIGHT, Column 2 is displayed on the LEFT! */}
+          <main className="flex-1 px-2.5 sm:px-4 md:px-8 py-3 md:py-6 max-w-[1700px] mx-auto w-full">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 sm:gap-4 md:gap-6 items-start">
+              {/* ================= RIGHT SIDE (اليمين): SECTIONS, RESOURCES, CONTENT TABS ================= */}
+              <div className="lg:col-span-5 xl:col-span-4 space-y-3 sm:space-y-4">
+                {/* Resources list for active section */}
+                <div
+                  className={`p-4 rounded-3xl border shadow-xl ${
+                    isDarkMode ? 'bg-slate-900/90 border-slate-800' : 'bg-white border-slate-200 shadow-sm'
+                  }`}
                 >
-                  {selectedSectionObj?.title}
-                </span>
-              </div>
+                  <div className={`flex items-center justify-between pb-3 border-b mb-3 ${
+                    isDarkMode ? 'border-slate-800/60' : 'border-slate-200'
+                  }`}>
+                    <span className={`text-xs font-black ${isDarkMode ? 'text-slate-400' : 'text-slate-700'}`}>
+                      المصادر المتاحة ({currentSectionResources.length})
+                    </span>
+                    <span
+                      className="text-[11px] font-black"
+                      style={{ color: activeTheme?.accent || '#2563eb' }}
+                    >
+                      {selectedSectionObj?.title}
+                    </span>
+                  </div>
 
-              <div className="flex flex-col gap-2 max-h-48 overflow-y-auto pr-1">
-                {currentSectionResources.map((res, rIdx) => {
-                  const isSelected = selectedResourceId === res.id;
-                  return (
-                    <button
-                      key={res.id}
-                      onClick={() => {
-                        pauseAllVideos();
-                        setSelectedResourceId(res.id);
-                      }}
-                      className={`w-full text-right p-3 rounded-2xl border text-xs font-bold transition flex items-center justify-between gap-2.5 cursor-pointer ${
-                        isSelected
+                  <div className="flex flex-col gap-2 max-h-48 overflow-y-auto pr-1">
+                    {currentSectionResources.length === 0 ? (
+                      <div className="py-6 text-center text-xs text-slate-500 font-bold">
+                        لا توجد مصادر في هذا القسم بعد
+                      </div>
+                    ) : (
+                      currentSectionResources.map((res, rIdx) => {
+                        const isSelected = effectiveResourceId === res.id;
+                        return (
+                          <button
+                            key={res.id}
+                            onClick={() => {
+                              pauseAllVideos();
+                              setSelectedResourceId(res.id);
+                            }}
+                            className={`w-full text-right p-3 rounded-2xl border text-xs font-bold transition flex items-center justify-between gap-2.5 cursor-pointer ${
+                              isSelected
                           ? isDarkMode
                             ? 'text-white shadow-md'
                             : 'text-slate-950 font-black shadow-md bg-blue-50/70 border-blue-400'
@@ -1267,7 +1447,7 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                       <ChevronLeft className={`w-4 h-4 shrink-0 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`} />
                     </button>
                   );
-                })}
+                }))}
               </div>
             </div>
 
@@ -1275,7 +1455,7 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
             {/* "تحت كلمة المصادر المتاحة وفوق الفيديوهات والملفات والاختبارات يكون فالمنتصف بينهم حصة اسمه الحصة التعريفية" */}
             {/* ================= الحصة التعريفية ================= */}
             {/* "اولا صغر مستطيل الحصة التعريفية شوية رفعه" */}
-            {systemSettings.introLesson?.isActive !== false && (
+            {effectiveIntroLesson.isActive !== false && (
               <div
                 className={`py-2 px-3 sm:py-2.5 sm:px-4 rounded-2xl border transition-all duration-200 group relative overflow-hidden ${
                   isShowingIntroOnLeft
@@ -1298,14 +1478,14 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                         <h3 className={`text-xs sm:text-sm font-black truncate ${
                           isDarkMode ? 'text-white' : 'text-slate-950'
                         }`}>
-                          {systemSettings.introLesson?.title || 'شرح وتوجيهات المنصة'}
+                          {effectiveIntroLesson.title || 'شرح وتوجيهات المنصة'}
                         </h3>
                       </div>
-                      {systemSettings.introLesson?.description && (
+                      {effectiveIntroLesson.description && (
                         <p className={`text-[10px] sm:text-[11px] truncate mt-0.5 ${
                           isDarkMode ? 'text-slate-400' : 'text-slate-600 font-medium'
                         }`}>
-                          {systemSettings.introLesson.description}
+                          {effectiveIntroLesson.description}
                         </p>
                       )}
                     </div>
@@ -1646,11 +1826,11 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                     <span className="text-[11px] font-black text-white tracking-wide">أقسام رعد ⚡</span>
                   </div>
 
-                  {systemSettings.introLesson?.videoUrl ? (
+                  {effectiveIntroLesson.videoUrl ? (
                     <video
                       ref={introVideoRef}
-                      key="intro-left-player"
-                      src={systemSettings.introLesson.videoUrl}
+                      key={`intro-left-${effectiveIntroLesson.videoUrl}`}
+                      src={effectiveIntroLesson.videoUrl}
                       controls
                       controlsList="nodownload"
                       onContextMenu={(e) => e.preventDefault()}
@@ -1670,20 +1850,16 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                 {/* Intro Info */}
                 <div className="mt-5 space-y-2">
                   <h2 className={`text-xl md:text-2xl font-black ${isDarkMode ? 'text-white' : 'text-slate-950'}`}>
-                    {systemSettings.introLesson?.title || 'الحصة التعريفية لشرح المنصة'}
+                    {effectiveIntroLesson.title || 'الحصة التعريفية لشرح المنصة'}
                   </h2>
-                  {systemSettings.introLesson?.description && (
+                  {effectiveIntroLesson.description && (
                     <p className={`text-sm leading-relaxed pt-1 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
-                      {systemSettings.introLesson.description}
+                      {effectiveIntroLesson.description}
                     </p>
                   )}
                 </div>
               </div>
             ) : (() => {
-              const activeVideoItem = activeVideo
-                ? (contentItems.find((i) => i.id === activeVideo.id) || activeVideo)
-                : null;
-
               if (!activeVideoItem) {
                 return (
                   <div
@@ -1701,23 +1877,6 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
               }
 
               const isWatched = currentUser.watchedVideoIds?.includes(activeVideoItem.id);
-              // Linked exams and files sorted from oldest to newest
-              const linkedExams = contentItems
-                .filter((it) => it.type === 'exam' && activeVideoItem.linkedExamIds?.includes(it.id))
-                .sort((a, b) => {
-                  const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-                  const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-                  if (tA !== tB) return tA - tB;
-                  return (a.id || '').localeCompare(b.id || '');
-                });
-              const linkedFiles = contentItems
-                .filter((it) => it.type === 'file' && activeVideoItem.linkedFileIds?.includes(it.id))
-                .sort((a, b) => {
-                  const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-                  const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-                  if (tA !== tB) return tA - tB;
-                  return (a.id || '').localeCompare(b.id || '');
-                });
 
               return (
                 <div
@@ -1746,23 +1905,6 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                     </div>
 
                     <div className="flex items-center gap-2 flex-wrap">
-                      {/* زر صورة مصغرة (Picture-in-Picture / Mini-Player) */}
-                      <button
-                        type="button"
-                        onClick={handleToggleMiniPlayer}
-                        className={`px-3 py-2 rounded-xl text-xs font-black transition flex items-center gap-1.5 border shadow-sm cursor-pointer ${
-                          isMiniPlayerOpen
-                            ? 'bg-amber-500/20 text-amber-400 border-amber-500/50 ring-2 ring-amber-400/30'
-                            : isDarkMode
-                            ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
-                            : 'bg-slate-100 hover:bg-slate-200 text-slate-800 border-slate-300'
-                        }`}
-                        title="تشغيل الفيديو كصورة مصغرة عائمة لمتابعة التصفح والاستماع للشرح مع شعار المنصة"
-                      >
-                        <Minimize2 className="w-3.5 h-3.5 text-amber-500" />
-                        <span>{isMiniPlayerOpen ? 'إغلاق الصورة المصغرة' : 'صورة مصغرة 🗗'}</span>
-                      </button>
-
                       <button
                         type="button"
                         onClick={() => handleToggleWatchVideo(activeVideoItem.id)}
@@ -2038,6 +2180,8 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
           </div>
         </div>
       </main>
+    </>
+  )}
 
       {/* ================= FOOTER: 3 SENTENCES (RIGHT, CENTER, LEFT) ================= */}
       {/* "ثانيا اجعل الثلاث جمل واحدة عاليمين وواحدة عاليسار وواحدة فالنص" */}
@@ -2244,12 +2388,46 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                         </div>
                       </div>
 
-                      <button
-                        type="button"
-                        className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs md:text-sm shadow-lg shadow-emerald-600/30 transition flex items-center justify-center gap-2 group-hover:scale-[1.01] cursor-pointer"
-                      >
-                        <span>اختيار نظام نمر ومتابعة ⬅️</span>
-                      </button>
+                      <div className="space-y-2 pt-1">
+                        <button
+                          type="button"
+                          disabled={isStartingExam}
+                          onClick={() => {
+                            setSelectedExamSystem('nimr');
+                            setExamStartStep(2);
+                          }}
+                          className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs md:text-sm shadow-lg shadow-emerald-600/30 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                        >
+                          <span>{isStartingExam ? 'جاري التحميل...' : 'اختيار نظام نمر والمتابعة لتحديد الوقت ⬅️'}</span>
+                        </button>
+
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            disabled={isStartingExam}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              confirmStartExam(true, 'nimr');
+                            }}
+                            className="py-2.5 px-2 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 font-black text-[11px] flex items-center justify-center gap-1 transition cursor-pointer"
+                          >
+                            <Clock className="w-3.5 h-3.5 text-emerald-400" />
+                            <span>بدأ فوري (بوقت ⏱️)</span>
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isStartingExam}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              confirmStartExam(false, 'nimr');
+                            }}
+                            className="py-2.5 px-2 rounded-xl bg-teal-500/20 hover:bg-teal-500/30 text-teal-300 border border-teal-500/40 font-black text-[11px] flex items-center justify-center gap-1 transition cursor-pointer"
+                          >
+                            <Sparkles className="w-3.5 h-3.5 text-teal-400" />
+                            <span>بدأ فوري (بدون وقت 🎯)</span>
+                          </button>
+                        </div>
+                      </div>
                     </div>
 
                     {/* Option B: النظام العادي للمنصة */}
@@ -2312,12 +2490,46 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                         </div>
                       </div>
 
-                      <button
-                        type="button"
-                        className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-black text-xs md:text-sm shadow-lg shadow-blue-600/30 transition flex items-center justify-center gap-2 group-hover:scale-[1.01] cursor-pointer"
-                      >
-                        <span>اختيار النظام العادي ومتابعة ⬅️</span>
-                      </button>
+                      <div className="space-y-2 pt-1">
+                        <button
+                          type="button"
+                          disabled={isStartingExam}
+                          onClick={() => {
+                            setSelectedExamSystem('standard');
+                            setExamStartStep(2);
+                          }}
+                          className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-black text-xs md:text-sm shadow-lg shadow-blue-600/30 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                        >
+                          <span>{isStartingExam ? 'جاري التحميل...' : 'اختيار النظام العادي والمتابعة لتحديد الوقت ⬅️'}</span>
+                        </button>
+
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            disabled={isStartingExam}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              confirmStartExam(true, 'standard');
+                            }}
+                            className="py-2.5 px-2 rounded-xl bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 border border-blue-500/40 font-black text-[11px] flex items-center justify-center gap-1 transition cursor-pointer"
+                          >
+                            <Clock className="w-3.5 h-3.5 text-blue-400" />
+                            <span>بدأ فوري (بوقت ⏱️)</span>
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isStartingExam}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              confirmStartExam(false, 'standard');
+                            }}
+                            className="py-2.5 px-2 rounded-xl bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 border border-indigo-500/40 font-black text-[11px] flex items-center justify-center gap-1 transition cursor-pointer"
+                          >
+                            <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+                            <span>بدأ فوري (بدون وقت 🎯)</span>
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -2361,7 +2573,7 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-5 pt-2">
                     {/* Option 1: Timed Exam */}
                     <div
-                      onClick={() => confirmStartExam(true, selectedExamSystem)}
+                      onClick={() => !isStartingExam && confirmStartExam(true, selectedExamSystem)}
                       className={`group relative rounded-3xl p-6 border-2 cursor-pointer transition-all duration-200 hover:shadow-2xl hover:shadow-blue-500/20 hover:-translate-y-1 flex flex-col justify-between space-y-4 ${
                         isDarkMode
                           ? 'bg-gradient-to-b from-blue-950/40 to-slate-900 border-blue-500/30 hover:border-blue-400'
@@ -2406,16 +2618,25 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
 
                       <button
                         type="button"
-                        className="w-full py-3.5 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white font-black text-xs md:text-sm shadow-lg shadow-blue-600/30 transition flex items-center justify-center gap-2 group-hover:bg-blue-500 cursor-pointer"
+                        disabled={isStartingExam}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          confirmStartExam(true, selectedExamSystem);
+                        }}
+                        className="w-full py-3.5 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white font-black text-xs md:text-sm shadow-lg shadow-blue-600/30 transition flex items-center justify-center gap-2 group-hover:bg-blue-500 cursor-pointer disabled:opacity-50"
                       >
                         <Clock className="w-4 h-4" />
-                        <span>بدأ الاختبار بوقت الآن ({selectedExamSystem === 'nimr' ? 'نظام نمر 🐅' : 'النظام العادي 💻'})</span>
+                        <span>
+                          {isStartingExam
+                            ? 'جاري بدء الاختبار...'
+                            : `بدأ الاختبار بوقت الآن (${selectedExamSystem === 'nimr' ? 'نظام نمر 🐅' : 'النظام العادي 💻'})`}
+                        </span>
                       </button>
                     </div>
 
                     {/* Option 2: Untimed Free Training */}
                     <div
-                      onClick={() => confirmStartExam(false, selectedExamSystem)}
+                      onClick={() => !isStartingExam && confirmStartExam(false, selectedExamSystem)}
                       className={`group relative rounded-3xl p-6 border-2 cursor-pointer transition-all duration-200 hover:shadow-2xl hover:shadow-emerald-500/20 hover:-translate-y-1 flex flex-col justify-between space-y-4 ${
                         isDarkMode
                           ? 'bg-gradient-to-b from-emerald-950/40 to-slate-900 border-emerald-500/30 hover:border-emerald-400'
@@ -2460,10 +2681,19 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
 
                       <button
                         type="button"
-                        className="w-full py-3.5 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs md:text-sm shadow-lg shadow-emerald-600/30 transition flex items-center justify-center gap-2 group-hover:bg-emerald-500 cursor-pointer"
+                        disabled={isStartingExam}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          confirmStartExam(false, selectedExamSystem);
+                        }}
+                        className="w-full py-3.5 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs md:text-sm shadow-lg shadow-emerald-600/30 transition flex items-center justify-center gap-2 group-hover:bg-emerald-500 cursor-pointer disabled:opacity-50"
                       >
                         <Sparkles className="w-4 h-4" />
-                        <span>بدأ التدريب بدون وقت الآن ({selectedExamSystem === 'nimr' ? 'نظام نمر 🐅' : 'النظام العادي 💻'})</span>
+                        <span>
+                          {isStartingExam
+                            ? 'جاري بدء الاختبار...'
+                            : `بدأ التدريب بدون وقت الآن (${selectedExamSystem === 'nimr' ? 'نظام نمر 🐅' : 'النظام العادي 💻'})`}
+                        </span>
                       </button>
                     </div>
                   </div>
@@ -2517,11 +2747,18 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
         isOpen={showFeaturesModal}
         onClose={() => setShowFeaturesModal(false)}
         currentUser={currentUser}
-        systemSettings={systemSettings}
+        systemSettings={{
+          ...systemSettings,
+          features: effectiveFeatures,
+          introLesson: effectiveIntroLesson,
+        }}
+        courseTitle={activeCourse?.title}
+        courseId={activeCourse?.id}
+        featuresConfig={effectiveFeatures}
         isDarkMode={isDarkMode}
-        sections={sections}
-        resources={resources}
-        contentItems={contentItems}
+        sections={courseSections}
+        resources={courseResources}
+        contentItems={courseContentItems}
         onStartDiagnosticExam={(examData) => {
           pauseAllVideos();
           setActiveExam({
@@ -2554,9 +2791,14 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                     <span className="text-xs px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-500 font-bold border border-amber-500/30">
                       الحصة التعريفية 🎬
                     </span>
+                    {activeCourse?.title && (
+                      <span className="text-xs px-2.5 py-0.5 rounded-full bg-blue-500/20 text-blue-400 font-bold border border-blue-500/30">
+                        {activeCourse.title}
+                      </span>
+                    )}
                   </div>
                   <h3 className={`text-base sm:text-lg font-black mt-1 ${isDarkMode ? 'text-white' : 'text-slate-950'}`}>
-                    {systemSettings.introLesson?.title || 'الحصة التعريفية لشرح المنصة'}
+                    {effectiveIntroLesson.title || 'الحصة التعريفية لشرح المنصة'}
                   </h3>
                 </div>
               </div>
@@ -2578,11 +2820,11 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
             {/* Video Player (NO AUTOPLAY) */}
             <div className="p-4 sm:p-6 space-y-4 overflow-y-auto">
               <div className="aspect-video w-full rounded-2xl overflow-hidden bg-black shadow-inner">
-                {systemSettings.introLesson?.videoUrl ? (
+                {effectiveIntroLesson.videoUrl ? (
                     <video
                       ref={introVideoRef}
-                      key={systemSettings.introLesson.videoUrl}
-                      src={systemSettings.introLesson.videoUrl}
+                      key={effectiveIntroLesson.videoUrl}
+                      src={effectiveIntroLesson.videoUrl}
                       controls
                       controlsList="nodownload"
                       onContextMenu={(e) => e.preventDefault()}
@@ -2599,12 +2841,12 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                 )}
               </div>
 
-              {systemSettings.introLesson?.description && (
+              {effectiveIntroLesson.description && (
                 <div className={`p-4 rounded-2xl border text-xs md:text-sm leading-relaxed ${
                   isDarkMode ? 'bg-slate-800/50 border-slate-700 text-slate-300' : 'bg-slate-50 border-slate-200 text-slate-700'
                 }`}>
                   <p className="font-bold text-amber-500 mb-1">📌 تفاصيل وتوجيهات الحصة:</p>
-                  <p>{systemSettings.introLesson.description}</p>
+                  <p>{effectiveIntroLesson.description}</p>
                 </div>
               )}
             </div>

@@ -139,9 +139,32 @@
         "activeTheme": { "type": "object" },
         "updatedAt": { "type": "string" }
       }
+    },
+    "Course": {
+      "title": "Course",
+      "description": "Educational courses with pricing, bank account transfer data, and enrollment locks",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "isLocked": { "type": "boolean" },
+        "price": { "type": "string" },
+        "bankAccountImage1": { "type": "string" },
+        "bankAccountImage2": { "type": "string" },
+        "paymentMessage": { "type": "string" },
+        "order": { "type": "number" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "title"]
     }
   },
   "firestore": {
+    "/courses/{courseId}": {
+      "schema": { "$ref": "Course" },
+      "description": "Educational courses"
+    },
     "/users/{userId}": {
       "schema": { "$ref": "User" },
       "description": "Student profiles and status"

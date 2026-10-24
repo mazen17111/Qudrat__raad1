@@ -18,6 +18,23 @@ export interface StudentUser {
   phone?: string;
   createdAt: string;
   lastLoginAt?: string;
+  enrolledCourseIds?: string[]; // معرّفات الكورسات المفعلة والمدفوعة لهذا الطالب
+}
+
+export interface CourseItem {
+  id: string;
+  title: string;
+  description?: string;
+  imageUrl?: string;
+  isLocked: boolean; // مقفول أو مفتوح
+  price?: string; // تفاصيل سعر الكورس
+  bankAccountImage1?: string; // صورة رقم الحساب 1
+  bankAccountImage2?: string; // صورة رقم الحساب 2
+  paymentMessage?: string; // رسالة تحت صور الحساب
+  introLesson?: IntroLessonConfig;
+  features?: FeaturesConfig;
+  order: number;
+  createdAt: string;
 }
 
 export interface BannedEmail {
@@ -38,6 +55,7 @@ export interface ExamQuestion {
 
 export interface SectionItem {
   id: string;
+  courseId?: string; // الكورس التابع له هذا القسم
   title: string;
   description?: string;
   order: number;

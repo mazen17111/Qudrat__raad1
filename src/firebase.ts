@@ -14,7 +14,7 @@ import {
   updateDoc
 } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
-import { SystemSettings, ThemeConfig, SectionItem, ResourceItem, ContentItem } from './types';
+import { SystemSettings, ThemeConfig, SectionItem, ResourceItem, ContentItem, CourseItem } from './types';
 
 export const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
@@ -155,10 +155,37 @@ export const DEFAULT_SETTINGS: SystemSettings = {
   }
 };
 
+// Default initial courses
+export const INITIAL_COURSES: CourseItem[] = [
+  {
+    id: 'course_default_1',
+    title: 'كورس القدرات العامة الشامل (تأسيس وتدريب ومحاكيات)',
+    description: 'الكورس الشامل الأساسي: دورة متكاملة في التأسيس اللفظي والكمي، حل التجميعات الحديثة، واختبارات محاكية بنظام نمر ونظام المنصة.',
+    imageUrl: 'https://images.unsplash.com/photo-1434030216411-0b793f4b4173?w=800&auto=format&fit=crop&q=80',
+    isLocked: false,
+    order: 1,
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'course_default_2',
+    title: 'كورس التسريبات والنماذج الذهبية المقفلة (VIP)',
+    description: 'كورس مكثف وخاص بالنماذج الحديثة المتوقعة وتجميعات الـ 120 نموذج المنقحة مع حصص سرية ومتابعة فردية.',
+    imageUrl: 'https://images.unsplash.com/photo-1456513080510-7bf3a84b82f8?w=800&auto=format&fit=crop&q=80',
+    isLocked: true,
+    price: '199 ريال سعودي',
+    bankAccountImage1: 'https://images.unsplash.com/photo-1559526324-4b87b5e36e44?w=800&auto=format&fit=crop&q=80',
+    bankAccountImage2: 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?w=800&auto=format&fit=crop&q=80',
+    paymentMessage: 'الرجاء التحويل إلى أحد الحسابين الموضحين في الصورتين أعلاه، ثم إرسال إشعار التحويل عبر الواتساب لتفعيل الكورس فوراً.',
+    order: 2,
+    createdAt: new Date().toISOString()
+  }
+];
+
 // Default initial datasets for instantaneous zero-latency display upon entry
 export const INITIAL_SECTIONS: SectionItem[] = [
   {
     id: 'sec_verbal',
+    courseId: 'course_default_1',
     title: 'القسم اللفظي الشامل',
     description: 'التناظر اللفظي، إكمال الجمل، الخطأ السياقي، واستيعاب المقروء',
     order: 1,
@@ -166,6 +193,7 @@ export const INITIAL_SECTIONS: SectionItem[] = [
   },
   {
     id: 'sec_quant',
+    courseId: 'course_default_1',
     title: 'القسم الكمي الشامل',
     description: 'الحساب، الهندسة، الجبر، والإحصاء والاحتمالات',
     order: 2,
@@ -173,6 +201,7 @@ export const INITIAL_SECTIONS: SectionItem[] = [
   },
   {
     id: 'sec_hamada',
+    courseId: 'course_default_1',
     title: 'حمادة',
     description: 'قسم حمادة التعليمي الخاص',
     order: 3,
@@ -572,6 +601,9 @@ export async function seedInitialPlatformData() {
       console.warn("Could not seed Hamada section:", e);
     }
 
+    // Ensure both initial courses exist, restoring course_default_2 and its contents if missing
+    await restoreDefaultCoursesAndContent();
+
     // Mark permanent seeder lock so deleted items/sections NEVER return
     await setDoc(lockRef, { isInitialized: true, initializedAt: new Date().toISOString() }, { merge: true });
     try {
@@ -581,5 +613,211 @@ export async function seedInitialPlatformData() {
     } catch (e) {}
   } catch (err) {
     console.warn("Seeding notice (might already exist):", err);
+  }
+}
+
+// Dedicated function to restore both courses and full contents (especially course_default_2 if deleted by mistake)
+export async function restoreDefaultCoursesAndContent(): Promise<{ restored: boolean; message: string }> {
+  try {
+    // 1. Check Course 1
+    const c1Ref = doc(db, 'courses', 'course_default_1');
+    const c1Snap = await getDoc(c1Ref);
+    if (!c1Snap.exists()) {
+      await setDoc(c1Ref, {
+        id: 'course_default_1',
+        title: 'كورس القدرات العامة الشامل (تأسيس وتدريب ومحاكيات)',
+        description: 'الكورس الشامل الأساسي: دورة متكاملة في التأسيس اللفظي والكمي، حل التجميعات الحديثة، واختبارات محاكية بنظام نمر ونظام المنصة.',
+        imageUrl: 'https://images.unsplash.com/photo-1434030216411-0b793f4b4173?w=800&auto=format&fit=crop&q=80',
+        isLocked: false,
+        price: 'مجاني / متاح',
+        bankAccountImage1: '',
+        bankAccountImage2: '',
+        paymentMessage: '',
+        order: 1,
+        createdAt: new Date().toISOString(),
+      }, { merge: true });
+    }
+
+    // 2. Check Course 2 (VIP course requested by user)
+    const c2Ref = doc(db, 'courses', 'course_default_2');
+    const c2Snap = await getDoc(c2Ref);
+    if (!c2Snap.exists()) {
+      await setDoc(c2Ref, {
+        id: 'course_default_2',
+        title: 'كورس التسريبات والنماذج الذهبية المقفلة (VIP)',
+        description: 'كورس مكثف وخاص بالنماذج الحديثة المتوقعة وتجميعات الـ 120 نموذج المنقحة مع حصص سرية ومتابعة فردية.',
+        imageUrl: 'https://images.unsplash.com/photo-1456513080510-7bf3a84b82f8?w=800&auto=format&fit=crop&q=80',
+        isLocked: true,
+        price: '199 ريال سعودي',
+        bankAccountImage1: 'https://images.unsplash.com/photo-1559526324-4b87b5e36e44?w=800&auto=format&fit=crop&q=80',
+        bankAccountImage2: 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?w=800&auto=format&fit=crop&q=80',
+        paymentMessage: 'الرجاء التحويل إلى أحد الحسابين الموضحين في الصورتين أعلاه، ثم إرسال إشعار التحويل عبر الواتساب لتفعيل الكورس فوراً.',
+        order: 2,
+        createdAt: new Date().toISOString(),
+      }, { merge: true });
+    }
+
+    // 3. Restore Section 1 for Course 2
+    const secVip1Ref = doc(db, 'sections', 'sec_vip_120');
+    const secVip1Snap = await getDoc(secVip1Ref);
+    if (!secVip1Snap.exists()) {
+      await setDoc(secVip1Ref, {
+        id: 'sec_vip_120',
+        courseId: 'course_default_2',
+        title: 'قسم تجميعات الـ 120 نموذج الذهبية المنقحة',
+        description: 'شروحات ونماذج وتجميعات الـ 120 نموذج المحوسبة الأكثر تكراراً',
+        order: 1,
+        createdAt: new Date().toISOString(),
+      }, { merge: true });
+    }
+
+    // 4. Restore Resource 1 for Course 2
+    const resVip1Ref = doc(db, 'resources', 'res_vip_models');
+    const resVip1Snap = await getDoc(resVip1Ref);
+    if (!resVip1Snap.exists()) {
+      await setDoc(resVip1Ref, {
+        id: 'res_vip_models',
+        courseId: 'course_default_2',
+        sectionId: 'sec_vip_120',
+        title: 'نماذج وتجميعات التسريبات الذهبية VIP',
+        description: 'فيديوهات حل النماذج واختبارات وتجميعات محوسبة',
+        order: 1,
+        createdAt: new Date().toISOString(),
+      }, { merge: true });
+    }
+
+    // 5. Restore Video Item for Course 2
+    const itemVipVid1 = doc(db, 'content_items', 'item_vip_video_1');
+    const itemVipVid1Snap = await getDoc(itemVipVid1);
+    if (!itemVipVid1Snap.exists()) {
+      await setDoc(itemVipVid1, {
+        id: 'item_vip_video_1',
+        resourceId: 'res_vip_models',
+        type: 'video',
+        title: 'شرح تجميعات وتسريبات الـ 120 نموذج المتوقعة 2025',
+        description: 'المحاضرة الشاملة لحل وتفكيك أصعب نماذج التسريبات',
+        url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
+        durationMinutes: 25,
+        createdAt: new Date().toISOString(),
+      }, { merge: true });
+    }
+
+    // 6. Restore Exam Item for Course 2
+    const itemVipExam1 = doc(db, 'content_items', 'item_vip_exam_1');
+    const itemVipExam1Snap = await getDoc(itemVipExam1);
+    if (!itemVipExam1Snap.exists()) {
+      await setDoc(itemVipExam1, {
+        id: 'item_vip_exam_1',
+        resourceId: 'res_vip_models',
+        type: 'exam',
+        title: 'اختبار التسريبات والنماذج الذهبية المحاكي',
+        description: 'اختبار دقيق يقيس سرعتك في أسئلة التسريبات المتكررة',
+        isExternal: false,
+        durationMinutes: 15,
+        targetPercentage: 90,
+        questions: [
+          {
+            id: 'qv1',
+            questionText: 'ما الحد التالي في المتتابعة: 3 ، 7 ، 15 ، 31 ، ...؟',
+            imageUrl: '',
+            options: ['63', '60', '58', '65'],
+            correctOptionIndex: 0,
+            explanation: 'النمط: مضاعفة وإضافة 1 (3×2+1=7 ، 7×2+1=15 ، 15×2+1=31 ، 31×2+1=63).',
+          },
+          {
+            id: 'qv2',
+            questionText: 'إذا كان ثمن 3 أقلام ودفترين 28 ريالاً، وثمن قلم ودفترين 16 ريالاً، فما ثمن القلم؟',
+            imageUrl: '',
+            options: ['6 ريالات', '5 ريالات', '7 ريالات', '4 ريالات'],
+            correctOptionIndex: 0,
+            explanation: 'بطرح المعادلتين: 2 قلم = 12 => القلم الواحد = 6 ريالات.',
+          },
+          {
+            id: 'qv3',
+            questionText: 'قطار يسير بسرعة 120 كم/س، كم المسافة التي يقطعها في 20 دقيقة؟',
+            imageUrl: '',
+            options: ['40 كم', '30 كم', '50 كم', '60 كم'],
+            correctOptionIndex: 0,
+            explanation: '20 دقيقة = ثلث ساعة، المسافة = 120 ÷ 3 = 40 كم.',
+          },
+          {
+            id: 'qv4',
+            questionText: 'سماء : نجوم (تناظر لفظي)',
+            imageUrl: '',
+            options: ['حديقة : أشجار', 'بحر : سفينة', 'غابة : أسد', 'مدينة : سيارات'],
+            correctOptionIndex: 0,
+            explanation: 'العلاقة: تكوينية ومكانية (النجوم تزين السماء والأشجار تزين الحديقة).',
+          },
+        ],
+        createdAt: new Date().toISOString(),
+      }, { merge: true });
+    }
+
+    // 7. Restore File Item for Course 2
+    const itemVipFile1 = doc(db, 'content_items', 'item_vip_file_1');
+    const itemVipFile1Snap = await getDoc(itemVipFile1);
+    if (!itemVipFile1Snap.exists()) {
+      await setDoc(itemVipFile1, {
+        id: 'item_vip_file_1',
+        resourceId: 'res_vip_models',
+        type: 'file',
+        title: 'ملف بنك تسريبات الـ 120 نموذج المنقحة PDF',
+        description: 'ملف PDF يحتوي على جميع أسئلة وتجميعات الـ 120 نموذج المحوسبة مع الشرح والحل',
+        fileName: 'vip_120_models_raad.pdf',
+        fileSize: '3.8 MB',
+        url: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+        createdAt: new Date().toISOString(),
+      }, { merge: true });
+    }
+
+    // 8. Restore Section 2 for Course 2
+    const secVip2Ref = doc(db, 'sections', 'sec_vip_intensive');
+    const secVip2Snap = await getDoc(secVip2Ref);
+    if (!secVip2Snap.exists()) {
+      await setDoc(secVip2Ref, {
+        id: 'sec_vip_intensive',
+        courseId: 'course_default_2',
+        title: 'قسم الحصص المكثفة والتكنيكات السريعة',
+        description: 'حصص مكثفة وتكنيكات الحل في 30 ثانية لكل سؤال',
+        order: 2,
+        createdAt: new Date().toISOString(),
+      }, { merge: true });
+    }
+
+    // 9. Restore Resource 2 for Course 2
+    const resVip2Ref = doc(db, 'resources', 'res_vip_intensive_res');
+    const resVip2Snap = await getDoc(resVip2Ref);
+    if (!resVip2Snap.exists()) {
+      await setDoc(resVip2Ref, {
+        id: 'res_vip_intensive_res',
+        courseId: 'course_default_2',
+        sectionId: 'sec_vip_intensive',
+        title: 'محاضرات الشرح المركز وتكنيكات الحل السريع',
+        description: 'شروحات استراتيجيات الحل الذكي وتوفير الوقت في الاختبار',
+        order: 1,
+        createdAt: new Date().toISOString(),
+      }, { merge: true });
+    }
+
+    // 10. Restore Video & Exam for Section 2
+    const itemVipVid2 = doc(db, 'content_items', 'item_vip_video_2');
+    const itemVipVid2Snap = await getDoc(itemVipVid2);
+    if (!itemVipVid2Snap.exists()) {
+      await setDoc(itemVipVid2, {
+        id: 'item_vip_video_2',
+        resourceId: 'res_vip_intensive_res',
+        type: 'video',
+        title: 'تكنيك حل مسائل الهندسة والجبر في أقل من نصف دقيقة',
+        description: 'استراتيجيات الحل الذكي وتجنب المعادلات الطويلة',
+        url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4',
+        durationMinutes: 18,
+        createdAt: new Date().toISOString(),
+      }, { merge: true });
+    }
+
+    return { restored: true, message: 'تم استرجاع الكورس المحذوف ومحتوياته بالكامل بنجاح ⚡' };
+  } catch (err) {
+    console.error('Error in restoreDefaultCoursesAndContent:', err);
+    return { restored: false, message: 'حدث خطأ أثناء استرجاع الكورس' };
   }
 }
