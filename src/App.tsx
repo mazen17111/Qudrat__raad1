@@ -11,6 +11,8 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 
 const STUDENT_SESSION_KEY = 'raad_student_auth_session';
 const THEME_STORAGE_KEY = 'raad_platform_theme_dark';
+const CACHED_SETTINGS_KEY = 'raad_cached_system_settings';
+const CACHED_COURSES_KEY = 'raad_cached_courses';
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<StudentUser | null>(() => {
@@ -37,8 +39,43 @@ export default function App() {
 
   const [isAdminOpen, setIsAdminOpen] = useState<boolean>(false);
   const [isAdminPasswordModalOpen, setIsAdminPasswordModalOpen] = useState<boolean>(false);
-  const [systemSettings, setSystemSettings] = useState<SystemSettings>(DEFAULT_SETTINGS);
-  const [courses, setCourses] = useState<CourseItem[]>(INITIAL_COURSES);
+
+  // Initialize systemSettings from cached localStorage immediately for instant logo & branding rendering
+  const [systemSettings, setSystemSettings] = useState<SystemSettings>(() => {
+    try {
+      const cached = localStorage.getItem(CACHED_SETTINGS_KEY);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed?.logoUrl) {
+          const img = new Image();
+          img.src = parsed.logoUrl;
+        }
+        return { ...DEFAULT_SETTINGS, ...parsed };
+      }
+    } catch (e) {}
+    return DEFAULT_SETTINGS;
+  });
+
+  // Initialize courses from cached localStorage immediately so updated courses & covers show in 0ms with no stale flash
+  const [courses, setCourses] = useState<CourseItem[]>(() => {
+    try {
+      const saved = localStorage.getItem(CACHED_COURSES_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          parsed.forEach((c: CourseItem) => {
+            if (c.imageUrl) {
+              const img = new Image();
+              img.src = c.imageUrl;
+            }
+          });
+          return parsed;
+        }
+      }
+    } catch (e) {}
+    return INITIAL_COURSES;
+  });
+
   const [activeCourse, setActiveCourse] = useState<CourseItem | null>(null);
 
   // Initialize and test connection on mount
@@ -62,34 +99,46 @@ export default function App() {
           videoUrl: fetched.introLesson?.videoUrl || DEFAULT_SETTINGS.introLesson?.videoUrl || '',
           description: fetched.introLesson?.description || DEFAULT_SETTINGS.introLesson?.description,
         };
-        setSystemSettings({
+        const updated = {
           ...DEFAULT_SETTINGS,
           ...fetched,
           features: mergedFeatures,
           introLesson: mergedIntroLesson,
-        });
+        };
+        setSystemSettings(updated);
+        try {
+          localStorage.setItem(CACHED_SETTINGS_KEY, JSON.stringify(updated));
+        } catch (e) {}
+        if (updated.logoUrl) {
+          const img = new Image();
+          img.src = updated.logoUrl;
+        }
       }
     });
 
-    // Listen to real-time courses collection
+    // Listen to real-time courses collection (NEVER resurrect deleted courses automatically)
     const unsubCourses = onSnapshot(collection(db, 'courses'), (snap) => {
       const list: CourseItem[] = [];
       snap.forEach((d) => list.push({ id: d.id, ...d.data() } as CourseItem));
       list.sort((a, b) => (a.order || 0) - (b.order || 0));
-      if (list.length > 0) {
-        setCourses(list);
-        setActiveCourse((prev) => {
-          if (!prev) return prev;
-          const fresh = list.find((c) => c.id === prev.id);
-          return fresh || prev;
-        });
-        if (list.length < 2) {
-          restoreDefaultCoursesAndContent().catch(() => {});
+      setCourses(list);
+      try {
+        localStorage.setItem(CACHED_COURSES_KEY, JSON.stringify(list));
+      } catch (e) {}
+
+      // Preload current course images for 0-latency display
+      list.forEach((c) => {
+        if (c.imageUrl) {
+          const img = new Image();
+          img.src = c.imageUrl;
         }
-      } else {
-        setCourses(INITIAL_COURSES);
-        restoreDefaultCoursesAndContent().catch(() => {});
-      }
+      });
+
+      setActiveCourse((prev) => {
+        if (!prev) return prev;
+        const fresh = list.find((c) => c.id === prev.id);
+        return fresh || null;
+      });
     });
 
     return () => {

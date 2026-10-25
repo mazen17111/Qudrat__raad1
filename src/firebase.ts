@@ -150,6 +150,8 @@ export const DEFAULT_SETTINGS: SystemSettings = {
   features: {
     telegramMainGroupUrl: 'https://t.me/raad_qiyas_main',
     telegramDiscussionGroupUrl: 'https://t.me/raad_qiyas_discussion',
+    telegramMainGroupTitle: 'جروب التليجرام الأساسي للشروحات والمتابعة',
+    telegramDiscussionGroupTitle: 'جروب مناقشات واستفسارات الطلاب',
     isDiagnosticEnabled: true,
     isFriendsChallengeEnabled: true
   }
@@ -388,8 +390,9 @@ export async function seedInitialPlatformData() {
     }
 
     const sectionsSnap = await getDocs(collection(db, 'sections'));
-    // If sections already exist in the database, lock immediately so deleted sections/items never return
-    if (!sectionsSnap.empty) {
+    const coursesSnap = await getDocs(collection(db, 'courses'));
+    // If courses or sections already exist in the database, lock permanently so deleted courses/items NEVER return
+    if (!sectionsSnap.empty || !coursesSnap.empty) {
       await setDoc(lockRef, { isInitialized: true, initializedAt: new Date().toISOString() }, { merge: true });
       try {
         if (typeof window !== 'undefined') localStorage.setItem('raad_platform_seeder_initialized', 'true');

@@ -33,6 +33,8 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
           src={customLogoUrl}
           alt="شعار المنصة"
           className="w-full h-full object-cover"
+          loading="eager"
+          decoding="sync"
         />
       </div>
     );

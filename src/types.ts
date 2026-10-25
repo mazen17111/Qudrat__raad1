@@ -93,6 +93,7 @@ export interface ContentItem {
 export interface FolderItem {
   id: string;
   userId: string;
+  courseId?: string; // معرّف الكورس التابع له المجلد
   title: string;
   isDefaultMistakesFolder?: boolean;
   createdAt: string;
@@ -102,6 +103,7 @@ export interface FolderQuestionItem {
   id: string;
   folderId: string;
   userId: string;
+  courseId?: string; // معرّف الكورس التابع له السؤال
   questionText: string;
   imageUrl?: string;
   options: string[];
@@ -167,6 +169,8 @@ export interface IntroLessonConfig {
 export interface FeaturesConfig {
   telegramMainGroupUrl: string;
   telegramDiscussionGroupUrl: string;
+  telegramMainGroupTitle?: string;
+  telegramDiscussionGroupTitle?: string;
   isDiagnosticEnabled?: boolean;
   isFriendsChallengeEnabled?: boolean;
   updatedAt?: string;

@@ -660,6 +660,15 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
     return contentItems.filter((i) => courseResourceIds.has(i.resourceId));
   }, [contentItems, courseResourceIds]);
 
+  // Scoped folders belonging strictly to the active course (or default course for legacy folders)
+  const activeCourseId = activeCourse?.id || 'course_default_1';
+  const courseFolders = useMemo(() => {
+    return folders.filter((f) => {
+      if (f.courseId) return f.courseId === activeCourseId;
+      return activeCourseId === 'course_default_1';
+    });
+  }, [folders, activeCourseId]);
+
   // Per-course intro lesson with graceful fallback
   const effectiveIntroLesson = useMemo(() => {
     return activeCourse?.introLesson || systemSettings.introLesson || {
@@ -1010,7 +1019,9 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
             examId={activeExam.id}
             questions={activeExam.questions}
             currentUser={currentUser}
-            defaultFolders={folders}
+            defaultFolders={courseFolders}
+            courseId={activeCourse?.id || 'course_default_1'}
+            courseTitle={activeCourse?.title}
             isTimedInitial={activeExam.isTimed}
             examSystem={activeExam.examSystem || 'nimr'}
             durationMinutes={activeExam.durationMinutes}
@@ -2740,6 +2751,8 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
         currentUser={currentUser}
         onStartFolderExam={handleStartFolderExam}
         isDarkMode={isDarkMode}
+        courseId={activeCourse?.id || 'course_default_1'}
+        courseTitle={activeCourse?.title}
       />
 
       {/* المميزات Modal */}

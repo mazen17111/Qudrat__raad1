@@ -30,6 +30,8 @@ interface FoldersModalProps {
   isOpen: boolean;
   onClose: () => void;
   currentUser: StudentUser;
+  courseId?: string;
+  courseTitle?: string;
   onStartFolderExam: (folderTitle: string, questions: ExamQuestion[], isTimed: boolean, folderId?: string) => void;
   isDarkMode?: boolean;
 }
@@ -38,9 +40,12 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
   isOpen,
   onClose,
   currentUser,
+  courseId,
+  courseTitle,
   onStartFolderExam,
   isDarkMode = true,
 }) => {
+  const currentCourseId = courseId || 'course_default_1';
   const [folders, setFolders] = useState<FolderItem[]>([]);
   const [selectedFolder, setSelectedFolder] = useState<FolderItem | null>(null);
   const [folderQuestions, setFolderQuestions] = useState<FolderQuestionItem[]>([]);
@@ -54,7 +59,7 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
   const [folderNotice, setFolderNotice] = useState<string | null>(null);
   const [isDeletingFolder, setIsDeletingFolder] = useState(false);
 
-  // Load folders in real-time
+  // Load folders in real-time strictly for this course
   useEffect(() => {
     if (!isOpen || !currentUser) return;
     const q = query(
@@ -66,18 +71,22 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
       let hasMistakes = false;
       snapshot.forEach((d) => {
         const item = { id: d.id, ...d.data() } as FolderItem;
-        if (item.isDefaultMistakesFolder || item.title === 'مجلد الاخطاء') {
-          hasMistakes = true;
-          item.isDefaultMistakesFolder = true;
+        const matchesCourse = item.courseId ? item.courseId === currentCourseId : currentCourseId === 'course_default_1';
+        if (matchesCourse) {
+          if (item.isDefaultMistakesFolder || item.title === 'مجلد الاخطاء' || item.title === 'مجلد الأخطاء') {
+            hasMistakes = true;
+            item.isDefaultMistakesFolder = true;
+          }
+          list.push(item);
         }
-        list.push(item);
       });
 
-      // Ensure "مجلد الاخطاء" always exists
+      // Ensure "مجلد الأخطاء" always exists for this specific course
       if (!hasMistakes) {
         addDoc(collection(db, 'folders'), {
           userId: currentUser.id,
-          title: 'مجلد الاخطاء',
+          courseId: currentCourseId,
+          title: 'مجلد الأخطاء',
           isDefaultMistakesFolder: true,
           createdAt: new Date().toISOString(),
         });
@@ -91,13 +100,16 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
       });
 
       setFolders(list);
-      if (!selectedFolder && list.length > 0) {
-        setSelectedFolder(list[0]);
-      }
+      setSelectedFolder((prev) => {
+        if (prev && list.some((f) => f.id === prev.id)) {
+          return list.find((f) => f.id === prev.id) || list[0];
+        }
+        return list[0] || null;
+      });
     });
 
     return () => unsub();
-  }, [isOpen, currentUser]);
+  }, [isOpen, currentUser, currentCourseId]);
 
   // Load questions for selected folder
   useEffect(() => {
@@ -131,6 +143,7 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
     try {
       await addDoc(collection(db, 'folders'), {
         userId: currentUser.id,
+        courseId: currentCourseId,
         title: newFolderTitle.trim(),
         isDefaultMistakesFolder: false,
         createdAt: new Date().toISOString(),
@@ -235,9 +248,16 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
               <Folder className="w-6 h-6" />
             </div>
             <div>
-              <h2 className={`text-xl md:text-2xl font-black ${isDarkMode ? 'text-white' : 'text-black'}`}>مجلداتي</h2>
+              <div className="flex items-center gap-2">
+                <h2 className={`text-xl md:text-2xl font-black ${isDarkMode ? 'text-white' : 'text-black'}`}>مجلداتي</h2>
+                {courseTitle && (
+                  <span className="px-2.5 py-0.5 text-xs font-bold rounded-full bg-amber-500/15 text-amber-500 border border-amber-500/30">
+                    {courseTitle}
+                  </span>
+                )}
+              </div>
               <p className={`text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-700 font-medium'}`}>
-                مجلدات التمارين وحفظ الأسئلة الصعبة واختبار المجلدات
+                مجلدات التمارين ومجلد الأخطاء التلقائي مخصصة لكورس {courseTitle ? `"${courseTitle}"` : 'الحالي'}
               </p>
             </div>
           </div>

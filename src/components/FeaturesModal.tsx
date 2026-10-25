@@ -758,7 +758,7 @@ export const FeaturesModal: React.FC<FeaturesModalProps> = ({
 
                   <div>
                     <h4 className={`text-base md:text-lg font-black ${isDarkMode ? 'text-white' : 'text-slate-950'}`}>
-                      جروب أقسام رعد الأساسي
+                      {featuresConfig?.telegramMainGroupTitle || systemSettings.features?.telegramMainGroupTitle || 'جروب أقسام رعد الأساسي'}
                     </h4>
                     <p className={`text-xs mt-1 leading-relaxed ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
                       القناة والجروب الرسمي للحصول على التنبيهات الفورية، الجداول الدراسية، الشروحات، وأحدث تجميعات القدرات المنقحة أولاً بأول.
@@ -773,7 +773,7 @@ export const FeaturesModal: React.FC<FeaturesModalProps> = ({
                   className="w-full py-3 px-4 rounded-2xl bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 text-white font-black text-xs md:text-sm flex items-center justify-center gap-2 shadow-lg shadow-sky-500/25 transition cursor-pointer"
                 >
                   <Send className="w-4 h-4" />
-                  <span>انضمام لجروب الأساسي تليجرام ✈️</span>
+                  <span>انضمام إلى {featuresConfig?.telegramMainGroupTitle || 'الجروب الأساسي'} ✈️</span>
                 </a>
               </div>
 
@@ -800,7 +800,7 @@ export const FeaturesModal: React.FC<FeaturesModalProps> = ({
 
                   <div>
                     <h4 className={`text-base md:text-lg font-black ${isDarkMode ? 'text-white' : 'text-slate-950'}`}>
-                      جروب أقسام رعد المناقشة
+                      {featuresConfig?.telegramDiscussionGroupTitle || systemSettings.features?.telegramDiscussionGroupTitle || 'جروب أقسام رعد المناقشة'}
                     </h4>
                     <p className={`text-xs mt-1 leading-relaxed ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
                       مساحة حوارية وتفاعلية لجميع طلاب المنصة لتبادل حلول الأسئلة المعقدة، شرح الأفكار الرياضية واللفظية، والتحفيز المستمر.
@@ -815,7 +815,7 @@ export const FeaturesModal: React.FC<FeaturesModalProps> = ({
                   className="w-full py-3 px-4 rounded-2xl bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-400 hover:to-purple-500 text-white font-black text-xs md:text-sm flex items-center justify-center gap-2 shadow-lg shadow-indigo-500/25 transition cursor-pointer"
                 >
                   <MessageCircle className="w-4 h-4" />
-                  <span>انضمام لجروب المناقشة تليجرام 💬</span>
+                  <span>انضمام إلى {featuresConfig?.telegramDiscussionGroupTitle || 'جروب المناقشة'} 💬</span>
                 </a>
               </div>
 

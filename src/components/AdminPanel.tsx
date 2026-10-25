@@ -101,6 +101,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
   const [courseFormPaymentMessage, setCourseFormPaymentMessage] = useState('الرجاء تحويل المبلغ على أحد الحسابين أعلاه ثم إرسال الإشعار لتفعيل الكورس فوراً.');
   const [courseFormOrder, setCourseFormOrder] = useState<number>(1);
   const [deletingCourse, setDeletingCourse] = useState<CourseItem | null>(null);
+  const [isDeletingCourseInProgress, setIsDeletingCourseInProgress] = useState(false);
   const [isUploadingCourseCover, setIsUploadingCourseCover] = useState(false);
   const [isUploadingBank1, setIsUploadingBank1] = useState(false);
   const [isUploadingBank2, setIsUploadingBank2] = useState(false);
@@ -311,8 +312,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       const list: CourseItem[] = [];
       snap.forEach((d) => list.push({ id: d.id, ...d.data() } as CourseItem));
       list.sort((a, b) => (a.order || 0) - (b.order || 0));
+      setCourses(list);
+      try {
+        localStorage.setItem('raad_cached_courses', JSON.stringify(list));
+      } catch (e) {}
+
       if (list.length > 0) {
-        setCourses(list);
         setSelectedIntroCourseId((prev) => {
           const valid = list.some((c) => c.id === prev) ? prev : list[0].id;
           const target = list.find((c) => c.id === valid);
@@ -329,14 +334,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
           }
           return valid;
         });
-
-        if (list.length < 2) {
-          // If a course was accidentally deleted, restore it with its content
-          restoreDefaultCoursesAndContent().catch(() => {});
-        }
-      } else {
-        setCourses(INITIAL_COURSES);
-        restoreDefaultCoursesAndContent().catch(() => {});
       }
     });
 
@@ -647,11 +644,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     setSelectedFeaturesCourseId(courseId);
     const target = courses.find((c) => c.id === courseId);
     if (target?.features) {
-      setFeaturesState(target.features);
+      setFeaturesState({
+        telegramMainGroupUrl: target.features.telegramMainGroupUrl || '',
+        telegramDiscussionGroupUrl: target.features.telegramDiscussionGroupUrl || '',
+        telegramMainGroupTitle: target.features.telegramMainGroupTitle || 'جروب أقسام رعد الأساسي',
+        telegramDiscussionGroupTitle: target.features.telegramDiscussionGroupTitle || 'جروب أقسام رعد المناقشة',
+        isDiagnosticEnabled: target.features.isDiagnosticEnabled !== false,
+        isFriendsChallengeEnabled: target.features.isFriendsChallengeEnabled !== false,
+      });
     } else {
       setFeaturesState({
         telegramMainGroupUrl: systemSettings.features?.telegramMainGroupUrl || 'https://t.me/raad_qiyas_main',
         telegramDiscussionGroupUrl: systemSettings.features?.telegramDiscussionGroupUrl || 'https://t.me/raad_qiyas_discussion',
+        telegramMainGroupTitle: systemSettings.features?.telegramMainGroupTitle || 'جروب أقسام رعد الأساسي',
+        telegramDiscussionGroupTitle: systemSettings.features?.telegramDiscussionGroupTitle || 'جروب أقسام رعد المناقشة',
         isDiagnosticEnabled: true,
         isFriendsChallengeEnabled: true,
       });
@@ -888,14 +894,125 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
   };
 
   const handleDeleteCourse = async (courseId: string) => {
+    setIsDeletingCourseInProgress(true);
     try {
-      await deleteDoc(doc(db, 'courses', courseId));
-      setCourses((prev) => prev.filter((c) => c.id !== courseId));
+      // 1. Identify sections belonging to this course
+      const matchedSections = sections.filter(
+        (s) => s.courseId === courseId || (courseId === 'course_default_1' && !s.courseId)
+      );
+      const sectionIds = new Set(matchedSections.map((s) => s.id));
+
+      // 2. Identify resources belonging to these sections or directly matching courseId
+      const matchedResources = resources.filter(
+        (r) => sectionIds.has(r.sectionId) || (r as any).courseId === courseId
+      );
+      const resourceIds = new Set(matchedResources.map((r) => r.id));
+
+      // 3. Identify content items (videos, files, exams) belonging to these resources or courseId
+      const matchedItems = items.filter(
+        (item) => resourceIds.has(item.resourceId) || (item as any).courseId === courseId
+      );
+      const itemIds = new Set(matchedItems.map((i) => i.id));
+
+      // 4. Cascade delete content items from Firestore
+      const itemsDeletePromises: Promise<any>[] = [];
+      itemIds.forEach((itemId) => {
+        itemsDeletePromises.push(deleteDoc(doc(db, 'content_items', itemId)).catch(() => {}));
+      });
+
+      // Query any items by resourceId in Firestore to guarantee complete purge
+      for (const resId of Array.from(resourceIds)) {
+        try {
+          const snap = await getDocs(query(collection(db, 'content_items'), where('resourceId', '==', resId)));
+          snap.forEach((d) => {
+            if (!itemIds.has(d.id)) {
+              itemsDeletePromises.push(deleteDoc(d.ref).catch(() => {}));
+            }
+          });
+        } catch (e) {}
+      }
+
+      // 5. Cascade delete resources from Firestore
+      const resourcesDeletePromises: Promise<any>[] = [];
+      resourceIds.forEach((resId) => {
+        resourcesDeletePromises.push(deleteDoc(doc(db, 'resources', resId)).catch(() => {}));
+      });
+
+      for (const secId of Array.from(sectionIds)) {
+        try {
+          const snap = await getDocs(query(collection(db, 'resources'), where('sectionId', '==', secId)));
+          snap.forEach((d) => {
+            if (!resourceIds.has(d.id)) {
+              resourcesDeletePromises.push(deleteDoc(d.ref).catch(() => {}));
+            }
+          });
+        } catch (e) {}
+      }
+
+      // 6. Cascade delete sections from Firestore
+      const sectionsDeletePromises: Promise<any>[] = [];
+      sectionIds.forEach((secId) => {
+        sectionsDeletePromises.push(deleteDoc(doc(db, 'sections', secId)).catch(() => {}));
+      });
+
+      try {
+        const snap = await getDocs(query(collection(db, 'sections'), where('courseId', '==', courseId)));
+        snap.forEach((d) => {
+          sectionsDeletePromises.push(deleteDoc(d.ref).catch(() => {}));
+        });
+      } catch (e) {}
+
+      // 7. Cascade delete folders and folder questions associated with this course
+      const folderDeletePromises: Promise<any>[] = [];
+      try {
+        const foldersSnap = await getDocs(query(collection(db, 'folders'), where('courseId', '==', courseId)));
+        for (const fDoc of foldersSnap.docs) {
+          folderDeletePromises.push(deleteDoc(fDoc.ref).catch(() => {}));
+          const fqSnap = await getDocs(query(collection(db, 'folder_questions'), where('folderId', '==', fDoc.id)));
+          fqSnap.forEach((fqDoc) => {
+            folderDeletePromises.push(deleteDoc(fqDoc.ref).catch(() => {}));
+          });
+        }
+
+        const fqCourseSnap = await getDocs(query(collection(db, 'folder_questions'), where('courseId', '==', courseId)));
+        fqCourseSnap.forEach((fqDoc) => {
+          folderDeletePromises.push(deleteDoc(fqDoc.ref).catch(() => {}));
+        });
+      } catch (e) {}
+
+      // 8. Delete the Course document itself
+      const courseDocPromise = deleteDoc(doc(db, 'courses', courseId));
+
+      await Promise.all([
+        ...itemsDeletePromises,
+        ...resourcesDeletePromises,
+        ...sectionsDeletePromises,
+        ...folderDeletePromises,
+        courseDocPromise,
+      ]);
+
+      // 9. Update local state immediately for zero-delay UI feedback
+      const updatedCourses = courses.filter((c) => c.id !== courseId);
+      setCourses(updatedCourses);
+      try {
+        localStorage.setItem('raad_cached_courses', JSON.stringify(updatedCourses));
+      } catch (e) {}
+
+      setSections((prev) => prev.filter((s) => !sectionIds.has(s.id) && s.courseId !== courseId));
+      setResources((prev) => prev.filter((r) => !resourceIds.has(r.id)));
+      setItems((prev) => prev.filter((i) => !itemIds.has(i.id) && !resourceIds.has(i.resourceId)));
+
+      if (selectedCourseId === courseId) {
+        setSelectedCourseId(updatedCourses.length > 0 ? updatedCourses[0].id : '');
+      }
+
       setDeletingCourse(null);
-      notifySave('تم حذف الكورس بنجاح 🗑️');
+      notifySave('تم حذف الكورس وجميع أقسامه ومصادره وفيديوهاته وملفاته واختباراته بنجاح 🗑️');
     } catch (err) {
-      console.error('Error deleting course:', err);
-      notifySave('حدث خطأ أثناء حذف الكورس');
+      console.error('Error cascade deleting course:', err);
+      notifySave('حدث خطأ أثناء حذف الكورس ومحتوياته');
+    } finally {
+      setIsDeletingCourseInProgress(false);
     }
   };
 
@@ -1656,6 +1773,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       const cleanFeatures: FeaturesConfig = {
         telegramMainGroupUrl: featuresState.telegramMainGroupUrl?.trim() || '',
         telegramDiscussionGroupUrl: featuresState.telegramDiscussionGroupUrl?.trim() || '',
+        telegramMainGroupTitle: featuresState.telegramMainGroupTitle?.trim() || 'جروب أقسام رعد الأساسي',
+        telegramDiscussionGroupTitle: featuresState.telegramDiscussionGroupTitle?.trim() || 'جروب أقسام رعد المناقشة',
         isDiagnosticEnabled: featuresState.isDiagnosticEnabled !== false,
         isFriendsChallengeEnabled: featuresState.isFriendsChallengeEnabled !== false,
         updatedAt: new Date().toISOString(),
@@ -4372,25 +4491,40 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                   </span>
                 </div>
 
-                <div className="flex flex-col sm:flex-row items-center gap-2">
-                  <input
-                    type="url"
-                    value={featuresState.telegramMainGroupUrl || ''}
-                    onChange={(e) => setFeaturesState({ ...featuresState, telegramMainGroupUrl: e.target.value })}
-                    placeholder="https://t.me/your_main_group"
-                    className="flex-1 w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white text-xs font-mono focus:outline-none focus:border-sky-500"
-                  />
-                  {featuresState.telegramMainGroupUrl && (
-                    <a
-                      href={featuresState.telegramMainGroupUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="px-4 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold transition flex items-center gap-1.5 shrink-0"
-                    >
-                      <Send className="w-3.5 h-3.5" />
-                      <span>تجربة الرابط 🔗</span>
-                    </a>
-                  )}
+                <div className="space-y-2">
+                  <div>
+                    <label className="text-[11px] font-bold text-sky-300 block mb-1">اسم / عنوان الجروب الظاهر للطلاب:</label>
+                    <input
+                      type="text"
+                      value={featuresState.telegramMainGroupTitle || ''}
+                      onChange={(e) => setFeaturesState({ ...featuresState, telegramMainGroupTitle: e.target.value })}
+                      placeholder="جروب أقسام رعد الأساسي"
+                      className="w-full px-4 py-2 rounded-xl bg-slate-900 border border-slate-700 text-white text-xs font-bold focus:outline-none focus:border-sky-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-300 block mb-1">رابط الجروب (تليجرام):</label>
+                    <div className="flex flex-col sm:flex-row items-center gap-2">
+                      <input
+                        type="url"
+                        value={featuresState.telegramMainGroupUrl || ''}
+                        onChange={(e) => setFeaturesState({ ...featuresState, telegramMainGroupUrl: e.target.value })}
+                        placeholder="https://t.me/your_main_group"
+                        className="flex-1 w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white text-xs font-mono focus:outline-none focus:border-sky-500"
+                      />
+                      {featuresState.telegramMainGroupUrl && (
+                        <a
+                          href={featuresState.telegramMainGroupUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-4 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold transition flex items-center gap-1.5 shrink-0"
+                        >
+                          <Send className="w-3.5 h-3.5" />
+                          <span>تجربة الرابط 🔗</span>
+                        </a>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -4404,7 +4538,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                       </svg>
                     </div>
                     <div>
-                      <h4 className="text-sm font-black text-white">رابط جروب أقسام رعد المناقشة (تليجرام)</h4>
+                      <h4 className="text-sm font-black text-white">رابط ومسمى جروب المناقشة (تليجرام)</h4>
                       <p className="text-[11px] text-slate-400">مجموعة نقاش وتفاعل واستفسارات الطلاب وتبادل الشروحات</p>
                     </div>
                   </div>
@@ -4413,25 +4547,40 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                   </span>
                 </div>
 
-                <div className="flex flex-col sm:flex-row items-center gap-2">
-                  <input
-                    type="url"
-                    value={featuresState.telegramDiscussionGroupUrl || ''}
-                    onChange={(e) => setFeaturesState({ ...featuresState, telegramDiscussionGroupUrl: e.target.value })}
-                    placeholder="https://t.me/your_discussion_group"
-                    className="flex-1 w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white text-xs font-mono focus:outline-none focus:border-indigo-500"
-                  />
-                  {featuresState.telegramDiscussionGroupUrl && (
-                    <a
-                      href={featuresState.telegramDiscussionGroupUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition flex items-center gap-1.5 shrink-0"
-                    >
-                      <MessageCircle className="w-3.5 h-3.5" />
-                      <span>تجربة الرابط 💬</span>
-                    </a>
-                  )}
+                <div className="space-y-2">
+                  <div>
+                    <label className="text-[11px] font-bold text-indigo-300 block mb-1">اسم / عنوان الجروب الظاهر للطلاب:</label>
+                    <input
+                      type="text"
+                      value={featuresState.telegramDiscussionGroupTitle || ''}
+                      onChange={(e) => setFeaturesState({ ...featuresState, telegramDiscussionGroupTitle: e.target.value })}
+                      placeholder="جروب أقسام رعد المناقشة"
+                      className="w-full px-4 py-2 rounded-xl bg-slate-900 border border-slate-700 text-white text-xs font-bold focus:outline-none focus:border-indigo-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-300 block mb-1">رابط الجروب (تليجرام):</label>
+                    <div className="flex flex-col sm:flex-row items-center gap-2">
+                      <input
+                        type="url"
+                        value={featuresState.telegramDiscussionGroupUrl || ''}
+                        onChange={(e) => setFeaturesState({ ...featuresState, telegramDiscussionGroupUrl: e.target.value })}
+                        placeholder="https://t.me/your_discussion_group"
+                        className="flex-1 w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white text-xs font-mono focus:outline-none focus:border-indigo-500"
+                      />
+                      {featuresState.telegramDiscussionGroupUrl && (
+                        <a
+                          href={featuresState.telegramDiscussionGroupUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition flex items-center gap-1.5 shrink-0"
+                        >
+                          <MessageCircle className="w-3.5 h-3.5" />
+                          <span>تجربة الرابط 💬</span>
+                        </a>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -6284,46 +6433,94 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       )}
 
       {/* ================= MODAL: DELETE COURSE CONFIRMATION ================= */}
-      {deletingCourse && (
-        <div className="fixed inset-0 z-[999999] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md animate-in fade-in duration-200">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 max-w-md w-full shadow-2xl text-right space-y-6">
-            <div className="p-4 bg-rose-500/10 border border-rose-500/20 text-rose-400 rounded-2xl w-fit mx-auto">
-              <Trash2 className="w-8 h-8" />
-            </div>
+      {deletingCourse && (() => {
+        const matchedSecs = sections.filter(
+          (s) => s.courseId === deletingCourse.id || (deletingCourse.id === 'course_default_1' && !s.courseId)
+        );
+        const secIds = new Set(matchedSecs.map((s) => s.id));
+        const matchedRes = resources.filter(
+          (r) => secIds.has(r.sectionId) || (r as any).courseId === deletingCourse.id
+        );
+        const resIds = new Set(matchedRes.map((r) => r.id));
+        const matchedItems = items.filter(
+          (item) => resIds.has(item.resourceId) || (item as any).courseId === deletingCourse.id
+        );
+        const videosCount = matchedItems.filter((i) => i.type === 'video').length;
+        const examsAndFilesCount = matchedItems.filter((i) => i.type !== 'video').length;
 
-            <div className="text-center space-y-2">
-              <span className="text-[11px] font-bold px-3 py-1 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30 inline-block">
-                حذف كورس تعليمي
-              </span>
-              <h3 className="text-xl font-black text-white">
-                هل أنت متأكد من حذف كورس "{deletingCourse.title}"؟
-              </h3>
-              <p className="text-xs text-slate-400 leading-relaxed px-2">
-                سيتم إزالة هذا الكورس من قائمة الكورسات المتاحة. لن يتمكن المشتركون الجدد من الوصول إليه.
-              </p>
-            </div>
+        return (
+          <div className="fixed inset-0 z-[999999] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md animate-in fade-in duration-200">
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 max-w-md w-full shadow-2xl text-right space-y-5">
+              <div className="p-4 bg-rose-500/10 border border-rose-500/20 text-rose-400 rounded-2xl w-fit mx-auto">
+                <Trash2 className="w-8 h-8" />
+              </div>
 
-            <div className="space-y-3 pt-2">
-              <button
-                type="button"
-                onClick={() => handleDeleteCourse(deletingCourse.id)}
-                className="w-full py-3.5 px-4 rounded-2xl bg-rose-600 hover:bg-rose-500 text-white font-black text-xs md:text-sm transition flex items-center justify-center gap-2 shadow-lg shadow-rose-600/30 cursor-pointer"
-              >
-                <Trash2 className="w-4 h-4" />
-                <span>نعم، حذف الكورس نهائياً 🗑️</span>
-              </button>
+              <div className="text-center space-y-2">
+                <span className="text-[11px] font-bold px-3 py-1 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30 inline-block">
+                  حذف كورس تعليمي نهائياً
+                </span>
+                <h3 className="text-xl font-black text-white">
+                  هل أنت متأكد من حذف كورس "{deletingCourse.title}"؟
+                </h3>
+              </div>
 
-              <button
-                type="button"
-                onClick={() => setDeletingCourse(null)}
-                className="w-full py-3 rounded-2xl text-xs font-bold text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 transition cursor-pointer"
-              >
-                إلغاء التراجع
-              </button>
+              {/* Cascade Deletion Summary */}
+              <div className="p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs space-y-2 text-right">
+                <p className="font-black text-rose-400 flex items-center gap-1.5 justify-start">
+                  <span>⚠️</span>
+                  <span>تنبيه: الحذف الشامل والنهائي</span>
+                </p>
+                <p className="leading-relaxed text-[11px] text-slate-300">
+                  سيتم حذف الكورس نهائياً ولن يعود أبداً، مع حذف جميع محتوياته التالية تلقائياً:
+                </p>
+                <div className="grid grid-cols-2 gap-2 pt-1 font-bold text-[11px] text-slate-200">
+                  <div className="p-2 rounded-xl bg-slate-800/90 border border-slate-700/80 flex items-center justify-between">
+                    <span>الأقسام:</span>
+                    <span className="text-amber-400 font-mono font-black">{matchedSecs.length}</span>
+                  </div>
+                  <div className="p-2 rounded-xl bg-slate-800/90 border border-slate-700/80 flex items-center justify-between">
+                    <span>المصادر:</span>
+                    <span className="text-amber-400 font-mono font-black">{matchedRes.length}</span>
+                  </div>
+                  <div className="p-2 rounded-xl bg-slate-800/90 border border-slate-700/80 flex items-center justify-between">
+                    <span>الفيديوهات:</span>
+                    <span className="text-blue-400 font-mono font-black">{videosCount}</span>
+                  </div>
+                  <div className="p-2 rounded-xl bg-slate-800/90 border border-slate-700/80 flex items-center justify-between">
+                    <span>الاختبارات والملفات:</span>
+                    <span className="text-emerald-400 font-mono font-black">{examsAndFilesCount}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-3 pt-1">
+                <button
+                  type="button"
+                  disabled={isDeletingCourseInProgress}
+                  onClick={() => handleDeleteCourse(deletingCourse.id)}
+                  className="w-full py-3.5 px-4 rounded-2xl bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white font-black text-xs md:text-sm transition flex items-center justify-center gap-2 shadow-lg shadow-rose-600/30 cursor-pointer"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  <span>
+                    {isDeletingCourseInProgress
+                      ? 'جارٍ حذف الكورس ومحتوياته نهائياً...'
+                      : 'نعم، حذف الكورس ومحتوياته نهائياً 🗑️'}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isDeletingCourseInProgress}
+                  onClick={() => setDeletingCourse(null)}
+                  className="w-full py-3 rounded-2xl text-xs font-bold text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 transition cursor-pointer"
+                >
+                  إلغاء والتراجع
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ================= MODAL: STUDENT COURSE ACTIVATION ================= */}
       {studentForCourseActivation && (

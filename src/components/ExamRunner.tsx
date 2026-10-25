@@ -68,6 +68,8 @@ interface ExamRunnerProps {
   isFolderExam?: boolean;
   folderId?: string;
   folderTitle?: string;
+  courseId?: string;
+  courseTitle?: string;
 }
 
 export const ExamRunner: React.FC<ExamRunnerProps> = ({
@@ -86,7 +88,10 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
   isFolderExam = false,
   folderId,
   folderTitle,
+  courseId,
+  courseTitle,
 }) => {
+  const currentCourseId = courseId || 'course_default_1';
   // Normalize and guard questions to completely eliminate any possibility of an empty or broken screen
   const safeQuestions: ExamQuestion[] = useMemo(() => {
     if (Array.isArray(questions) && questions.length > 0) {
@@ -210,7 +215,13 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
         const list: FolderItem[] = [];
         snapshot.forEach((d) => {
           const item = { id: d.id, ...d.data() } as FolderItem;
-          if (item.isDefaultMistakesFolder || item.title === 'مجلد الاخطاء') {
+          // Scope folders strictly to current course (course_default_1 handles legacy records without courseId)
+          const matchesCourse = item.courseId
+            ? item.courseId === currentCourseId
+            : currentCourseId === 'course_default_1';
+          if (!matchesCourse) return;
+
+          if (item.isDefaultMistakesFolder || item.title === 'مجلد الاخطاء' || item.title === 'مجلد الأخطاء') {
             item.isDefaultMistakesFolder = true;
           }
           list.push(item);
@@ -231,7 +242,7 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
     );
 
     return () => unsub();
-  }, [currentUser?.id]);
+  }, [currentUser?.id, currentCourseId]);
 
   // Subscribe to all questions the user has in folders in real-time
   useEffect(() => {
@@ -280,12 +291,15 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
     return () => clearInterval(timer);
   }, [isTimed, isFinished, safeQuestions.length]);
 
-  // Ensure default Mistakes Folder exists for this student
+  // Ensure default Mistakes Folder exists for this student in the current course
   const ensureMistakesFolderExists = async (): Promise<string | null> => {
     if (!currentUser?.id) return null;
 
-    const isMistakes = (f: { title?: string; isDefaultMistakesFolder?: boolean }) =>
-      Boolean(f.isDefaultMistakesFolder || f.title === 'مجلد الاخطاء' || f.title === 'مجلد الأخطاء' || f.title === 'دفتر الاخطاء' || f.title === 'دفتر الأخطاء');
+    const isMistakes = (f: { title?: string; isDefaultMistakesFolder?: boolean; courseId?: string }) => {
+      const isName = Boolean(f.isDefaultMistakesFolder || f.title === 'مجلد الاخطاء' || f.title === 'مجلد الأخطاء' || f.title === 'دفتر الاخطاء' || f.title === 'دفتر الأخطاء');
+      const matchesCourse = f.courseId ? f.courseId === currentCourseId : currentCourseId === 'course_default_1';
+      return isName && matchesCourse;
+    };
 
     const existing = userFolders.find(isMistakes);
     if (existing) return existing.id;
@@ -299,7 +313,7 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
       let foundId: string | null = null;
       snap.forEach((docSnap) => {
         const d = docSnap.data();
-        if (isMistakes(d)) {
+        if (isMistakes(d as FolderItem)) {
           foundId = docSnap.id;
         }
       });
@@ -308,7 +322,8 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
 
       const newRef = await addDoc(collection(db, 'folders'), {
         userId: currentUser.id,
-        title: 'مجلد الاخطاء',
+        courseId: currentCourseId,
+        title: 'مجلد الأخطاء',
         isDefaultMistakesFolder: true,
         createdAt: new Date().toISOString(),
       });
@@ -350,6 +365,7 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
       if (!alreadySaved) {
         await addDoc(collection(db, 'folder_questions'), {
           folderId: folderId,
+          courseId: currentCourseId,
           userId: currentUser.id,
           originalQuestionId: question.id || '',
           questionText: question.questionText || '',
@@ -398,6 +414,7 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
     try {
       const addedDocRef = await addDoc(collection(db, 'folder_questions'), {
         folderId: folder.id,
+        courseId: currentCourseId,
         userId: currentUser.id,
         originalQuestionId: question.id,
         questionText: question.questionText,
@@ -480,6 +497,7 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
     try {
       const newRef = await addDoc(collection(db, 'folders'), {
         userId: currentUser.id,
+        courseId: currentCourseId,
         title: trimmed,
         isDefaultMistakesFolder: false,
         createdAt: new Date().toISOString(),
@@ -488,6 +506,7 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
       const newFolderItem: FolderItem = {
         id: newRef.id,
         userId: currentUser.id,
+        courseId: currentCourseId,
         title: trimmed,
         isDefaultMistakesFolder: false,
         createdAt: new Date().toISOString(),
@@ -1111,7 +1130,14 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
                 <Layers className="w-5 h-5" />
               </div>
               <div>
-                <h3 className={`text-base font-black ${isDarkMode ? 'text-white' : 'text-black'}`}>إدارة مجلدات السؤال</h3>
+                <div className="flex items-center gap-2">
+                  <h3 className={`text-base font-black ${isDarkMode ? 'text-white' : 'text-black'}`}>إدارة مجلدات السؤال</h3>
+                  {courseTitle && (
+                    <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-amber-500/15 text-amber-500 border border-amber-500/30">
+                      {courseTitle}
+                    </span>
+                  )}
+                </div>
                 <span className={`text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-800 font-medium'}`}>
                   اضغط على أي مجلد للإضافة وتظهر علامة صح ✓ أو اضغط ثانية للحذف
                 </span>
