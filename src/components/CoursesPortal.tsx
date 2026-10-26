@@ -80,16 +80,17 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
   const [isActivating, setIsActivating] = useState(false);
   const [copiedAccount, setCopiedAccount] = useState(false);
 
-  // Secret Admin 7-clicks trigger
+  // Secret Admin 20-clicks trigger strictly on the word "محفوظة" in the footer
   const [secretClicks, setSecretClicks] = useState(0);
   const [lastClickTime, setLastClickTime] = useState(0);
 
-  const handleHeaderSecretClick = () => {
+  const handleSecretWordClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
     const now = Date.now();
-    if (now - lastClickTime < 1000) {
+    if (now - lastClickTime < 4000) {
       const nextCount = secretClicks + 1;
       setSecretClicks(nextCount);
-      if (nextCount >= 7) {
+      if (nextCount >= 20) {
         setSecretClicks(0);
         onSecretTriggerAdmin();
       }
@@ -106,6 +107,7 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
 
   // Handle "تفعيل الآن" click on any course
   const handleActivateClick = (course: CourseItem) => {
+    setSelectedCourseId(course.id);
     const isEnrolled = (currentUser.enrolledCourseIds || []).includes(course.id);
     if (isEnrolled) {
       onSelectCourse(course);
@@ -165,7 +167,7 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
 
   return (
     <div
-      className={`min-h-screen flex flex-col transition-colors duration-200 select-none ${
+      className={`min-h-screen flex flex-col justify-between transition-colors duration-200 select-none ${
         isDarkMode ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-900'
       }`}
       dir="rtl"
@@ -176,11 +178,8 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
           isDarkMode ? 'bg-slate-900/90 border-slate-800' : 'bg-white/95 border-slate-200'
         }`}
       >
-        {/* Brand & Secret Clicks (completely normal text without pointer or button hover) */}
-        <div
-          onClick={handleHeaderSecretClick}
-          className="flex items-center gap-2.5 sm:gap-3.5 cursor-default select-none"
-        >
+        {/* Brand: Completely normal text, no pointer or button hover */}
+        <div className="flex items-center gap-2.5 sm:gap-3.5 cursor-default select-none">
           <BrandLogo
             customLogoUrl={systemSettings.logoUrl}
             size="md"
@@ -252,316 +251,490 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
       </header>
 
       {/* ================= MAIN VIEWPORT CONTAINER ================= */}
-      <main className="flex-1 max-w-[1700px] w-full mx-auto p-3 sm:p-5 md:p-6 lg:p-8 flex flex-col gap-6">
-        {/* Welcome & Instructions Banner */}
+      <main className="flex-1 max-w-[1750px] w-full mx-auto p-3 sm:p-5 md:p-6 lg:p-8 flex flex-col gap-6">
+        {/* Welcome & Quick Support Banner */}
         <div
-          className={`p-4 sm:p-6 rounded-3xl border shadow-xl relative overflow-hidden flex flex-col md:flex-row items-start md:items-center justify-between gap-4 ${
+          className={`p-4 sm:p-5 rounded-3xl border shadow-xl relative overflow-hidden flex flex-col md:flex-row items-start md:items-center justify-between gap-4 ${
             isDarkMode
               ? 'bg-gradient-to-r from-slate-900 via-indigo-950/40 to-slate-900 border-slate-800'
               : 'bg-gradient-to-r from-blue-50/70 via-white to-indigo-50/50 border-slate-200'
           }`}
         >
-          <div className="space-y-1.5 max-w-2xl">
+          <div className="space-y-1 max-w-2xl">
             <div className="flex items-center gap-2">
               <span className="px-2.5 py-0.5 rounded-full bg-blue-500/20 text-blue-400 text-xs font-black">
                 ✨ خطوتك الأولى للتميز
               </span>
               <span className="text-xs text-slate-400 font-bold">منصة أقسام رعد للقدرات</span>
             </div>
-            <h2 className={`text-lg sm:text-2xl md:text-3xl font-black ${isDarkMode ? 'text-white' : 'text-slate-950'}`}>
-              اختر الكورس التعليمي المناسب لك وابدأ دراستك الآن
+            <h2 className={`text-base sm:text-xl md:text-2xl font-black ${isDarkMode ? 'text-white' : 'text-slate-950'}`}>
+              اختر الدورة التعليمية المناسبة لك وابدأ دراستك وتدريبك الآن
             </h2>
             <p className={`text-xs sm:text-sm leading-relaxed ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
-              استعرض قائمة الكورسات المتاحة بالأسفل؛ يمكنك تفعيل الكورسات المفتوحة مجاناً فوراً، أو تفعيل الكورسات المدفوعة والمقفلة بكل سهولة.
+              اختر من القائمة في اليمين لعرض الكورسات المتفعلة أو الكورسات المتاحة بمستطيلات منظمة على اليسار، بالإضافة إلى خطوات التسجيل وقنوات التواصل.
             </p>
           </div>
 
-          <div className="flex flex-col gap-2 shrink-0 w-full sm:w-auto">
+          <div className="flex flex-col sm:flex-row gap-2 shrink-0 w-full md:w-auto">
             <a
               href={whatsappInquiryUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs sm:text-sm shadow-lg shadow-emerald-600/25 transition cursor-pointer"
+              className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs sm:text-sm shadow-md transition cursor-pointer"
             >
               <MessageCircle className="w-4 h-4" />
-              <span>مساعدة المشرف عبر الواتساب 📱</span>
+              <span>مساعدة المشرف واتساب 📱</span>
             </a>
             <a
               href={telegramInquiryUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-2xl bg-sky-600 hover:bg-sky-500 text-white font-black text-xs sm:text-sm shadow-lg shadow-sky-600/25 transition cursor-pointer"
+              className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-2xl bg-sky-600 hover:bg-sky-500 text-white font-black text-xs sm:text-sm shadow-md transition cursor-pointer"
             >
               <Send className="w-4 h-4" />
-              <span>استفسار ومساعدة المشرف عبر التليجرام ✈️</span>
+              <span>استفسار تليجرام ✈️</span>
             </a>
           </div>
         </div>
 
-        {/* ================= 2-COLUMN COURSES LAYOUT =================
-            - On the Right (in RTL): List of Available Courses & Paid Courses Button/Section
-            - On the Left (in RTL): Selected Course Display, Cover Image, Lock status & "تفعيل الآن"
+        {/* ================= 2-COLUMN PORTAL LAYOUT =================
+            - On the Right (in RTL): Menu buttons strictly stacked vertically inside a full-height black box.
+            - On the Left (in RTL): The actual content (courses as small rectangles, registration steps, contact cards).
         */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 sm:gap-6 flex-1 items-start">
-          {/* ================= RIGHT COLUMN (in RTL): قائمة الخانات الـ 4 تحت بعض في مستطيل أسود بملء الشاشة ================= */}
-          <div className="lg:col-span-5 xl:col-span-4 order-2 lg:order-1 bg-black border-2 border-slate-800/90 rounded-3xl p-4 sm:p-5 flex flex-col gap-4 shadow-2xl min-h-[calc(100vh-140px)] text-white">
-            {/* Header: عنوان القائمة اليمينية */}
-            <div className="pb-2 border-b border-slate-800/80 flex items-center justify-between">
-              <span className="text-xs font-black text-slate-300 flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                <span>قائمة المنصة الرئيسية</span>
-              </span>
-              <span className="text-[10px] font-bold text-slate-400 bg-slate-900 px-2 py-0.5 rounded-md border border-slate-800">
-                أقسام رعد
-              </span>
-            </div>
-
-            {/* القائمة الرأسية - الخانات الـ 4 تحت بعض بالترتيب الدقيق */}
-            <div className="flex flex-col gap-2.5">
-              {/* 1. الكورسات المتفعلة (تتصدر القائمة دائماً) */}
-              <button
-                type="button"
-                onClick={() => setActiveListView('paid')}
-                className={`w-full p-3.5 rounded-2xl font-black text-xs sm:text-sm flex items-center justify-between transition-all cursor-pointer border-2 ${
-                  activeListView === 'paid'
-                    ? 'bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-600 text-white border-emerald-400 shadow-xl shadow-emerald-600/30 ring-2 ring-emerald-500/30'
-                    : 'bg-slate-900/90 hover:bg-slate-800/90 text-slate-200 border-slate-800 hover:border-slate-700'
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <div className={`p-2.5 rounded-xl ${activeListView === 'paid' ? 'bg-white/20 text-white' : 'bg-emerald-500/20 text-emerald-400'}`}>
-                    <Award className="w-5 h-5" />
-                  </div>
-                  <div className="text-right">
-                    <span className="block font-black text-sm">الكورسات المتفعلة</span>
-                    <span className="text-[11px] text-slate-400 font-bold">الدورات المفعلة وجاهزة للدخول الفوري</span>
-                  </div>
-                </div>
-                <span className={`px-2.5 py-1 rounded-full text-xs font-black ${
-                  activeListView === 'paid' ? 'bg-white text-emerald-700' : 'bg-emerald-500/20 text-emerald-300'
-                }`}>
-                  {paidCourses.length}
+          {/* ================= RIGHT COLUMN (in RTL): قائمة الخانات الـ 4 تحت بعض في مستطيل فخم بملء الشاشة بالعرض المريح ================= */}
+          <div className={`lg:col-span-5 xl:col-span-4 order-2 lg:order-1 border-2 rounded-3xl p-5 sm:p-6 flex flex-col justify-between gap-6 shadow-2xl min-h-[calc(100vh-220px)] transition-colors ${
+            isDarkMode
+              ? 'bg-slate-950 border-slate-800/90 text-white'
+              : 'bg-white border-slate-200 text-slate-900 shadow-xl'
+          }`}>
+            <div className="space-y-4">
+              {/* Header: عنوان القائمة اليمينية */}
+              <div className={`pb-3 border-b flex items-center justify-between ${
+                isDarkMode ? 'border-slate-800/80 text-slate-300' : 'border-slate-200 text-slate-700'
+              }`}>
+                <span className="text-xs font-black flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                  <span>قائمة المنصة الرئيسية</span>
                 </span>
-              </button>
-
-              {/* 2. الكورسات المتاحة */}
-              <button
-                type="button"
-                onClick={() => setActiveListView('available')}
-                className={`w-full p-3.5 rounded-2xl font-black text-xs sm:text-sm flex items-center justify-between transition-all cursor-pointer border-2 ${
-                  activeListView === 'available'
-                    ? 'bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-600 text-white border-blue-400 shadow-xl shadow-blue-600/30 ring-2 ring-blue-500/30'
-                    : 'bg-slate-900/90 hover:bg-slate-800/90 text-slate-200 border-slate-800 hover:border-slate-700'
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <div className={`p-2.5 rounded-xl ${activeListView === 'available' ? 'bg-white/20 text-white' : 'bg-blue-500/20 text-blue-400'}`}>
-                    <BookOpen className="w-5 h-5" />
-                  </div>
-                  <div className="text-right">
-                    <span className="block font-black text-sm">الكورسات المتاحة</span>
-                    <span className="text-[11px] text-slate-400 font-bold">تصفح وتفعيل الدورات المفتوحة والمدفوعة</span>
-                  </div>
-                </div>
-                <span className={`px-2.5 py-1 rounded-full text-xs font-black ${
-                  activeListView === 'available' ? 'bg-white text-blue-700' : 'bg-blue-500/20 text-blue-300'
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${
+                  isDarkMode
+                    ? 'text-slate-400 bg-slate-900 border-slate-800'
+                    : 'text-slate-600 bg-slate-100 border-slate-200'
                 }`}>
-                  {sortedCourses.length}
+                  أقسام رعد
                 </span>
-              </button>
+              </div>
 
-              {/* 3. خطوات التسجيل */}
-              <button
-                type="button"
-                onClick={() => setActiveListView('steps')}
-                className={`w-full p-3.5 rounded-2xl font-black text-xs sm:text-sm flex items-center justify-between transition-all cursor-pointer border-2 ${
-                  activeListView === 'steps'
-                    ? 'bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-600 text-white border-purple-400 shadow-xl shadow-purple-600/30 ring-2 ring-purple-500/30'
-                    : 'bg-slate-900/90 hover:bg-slate-800/90 text-slate-200 border-slate-800 hover:border-slate-700'
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <div className={`p-2.5 rounded-xl ${activeListView === 'steps' ? 'bg-white/20 text-white' : 'bg-purple-500/20 text-purple-400'}`}>
-                    <Sparkles className="w-5 h-5" />
+              {/* القائمة الرأسية - الخانات الـ 4 تحت بعض بالترتيب المحدد من المستخدم وبشكل عريض ومريح */}
+              <div className="flex flex-col gap-3.5">
+                {/* 1. الكورسات المتفعلة (تتصدر القائمة دائماً) */}
+                <button
+                  type="button"
+                  onClick={() => setActiveListView('paid')}
+                  className={`w-full p-4 sm:p-5 rounded-2xl font-black text-xs sm:text-sm flex items-center justify-between transition-all cursor-pointer border-2 ${
+                    activeListView === 'paid'
+                      ? 'bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-600 text-white border-emerald-400 shadow-xl shadow-emerald-600/30 ring-2 ring-emerald-500/30'
+                      : isDarkMode
+                      ? 'bg-slate-900/95 hover:bg-slate-800/90 text-slate-200 border-slate-800 hover:border-slate-700'
+                      : 'bg-slate-50 hover:bg-slate-100 text-slate-800 border-slate-200 hover:border-slate-300 shadow-xs'
+                  }`}
+                >
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    <div className={`p-3 rounded-2xl shrink-0 ${
+                      activeListView === 'paid'
+                        ? 'bg-white/20 text-white'
+                        : isDarkMode
+                        ? 'bg-emerald-500/20 text-emerald-400'
+                        : 'bg-emerald-100 text-emerald-700'
+                    }`}>
+                      <Award className="w-5 h-5 sm:w-6 sm:h-6" />
+                    </div>
+                    <div className="text-right space-y-0.5 min-w-0">
+                      <span className={`block font-black text-sm sm:text-base ${
+                        activeListView === 'paid'
+                          ? 'text-white'
+                          : isDarkMode
+                          ? 'text-slate-100'
+                          : 'text-slate-900'
+                      }`}>
+                        الكورسات المتفعلة
+                      </span>
+                      <span className={`block text-xs font-medium leading-tight ${
+                        activeListView === 'paid'
+                          ? 'text-white/85'
+                          : isDarkMode
+                          ? 'text-slate-400'
+                          : 'text-slate-500'
+                      }`}>
+                        دوراتك المفعلة وجاهزة للدخول الفوري
+                      </span>
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <span className="block font-black text-sm">خطوات التسجيل والتفعيل</span>
-                    <span className="text-[11px] text-slate-400 font-bold">طريقة تفعيل الكورس المجاني والمدفوع</span>
-                  </div>
-                </div>
-                <ChevronLeft className={`w-4 h-4 transition-transform ${activeListView === 'steps' ? '-translate-x-1 text-white' : 'text-slate-500'}`} />
-              </button>
+                  <span className={`px-3 py-1 rounded-full text-xs font-black shrink-0 mr-2 ${
+                    activeListView === 'paid'
+                      ? 'bg-white text-emerald-700 shadow-sm'
+                      : isDarkMode
+                      ? 'bg-emerald-500/20 text-emerald-300'
+                      : 'bg-emerald-100 text-emerald-700'
+                  }`}>
+                    {paidCourses.length}
+                  </span>
+                </button>
 
-              {/* 4. تواصل معنا */}
-              <button
-                type="button"
-                onClick={() => setActiveListView('contact')}
-                className={`w-full p-3.5 rounded-2xl font-black text-xs sm:text-sm flex items-center justify-between transition-all cursor-pointer border-2 ${
-                  activeListView === 'contact'
-                    ? 'bg-gradient-to-r from-amber-600 via-orange-600 to-amber-600 text-white border-amber-400 shadow-xl shadow-amber-600/30 ring-2 ring-amber-500/30'
-                    : 'bg-slate-900/90 hover:bg-slate-800/90 text-slate-200 border-slate-800 hover:border-slate-700'
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <div className={`p-2.5 rounded-xl ${activeListView === 'contact' ? 'bg-white/20 text-white' : 'bg-amber-500/20 text-amber-400'}`}>
-                    <Phone className="w-5 h-5" />
+                {/* 2. الكورسات المتاحة */}
+                <button
+                  type="button"
+                  onClick={() => setActiveListView('available')}
+                  className={`w-full p-4 sm:p-5 rounded-2xl font-black text-xs sm:text-sm flex items-center justify-between transition-all cursor-pointer border-2 ${
+                    activeListView === 'available'
+                      ? 'bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-600 text-white border-blue-400 shadow-xl shadow-blue-600/30 ring-2 ring-blue-500/30'
+                      : isDarkMode
+                      ? 'bg-slate-900/95 hover:bg-slate-800/90 text-slate-200 border-slate-800 hover:border-slate-700'
+                      : 'bg-slate-50 hover:bg-slate-100 text-slate-800 border-slate-200 hover:border-slate-300 shadow-xs'
+                  }`}
+                >
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    <div className={`p-3 rounded-2xl shrink-0 ${
+                      activeListView === 'available'
+                        ? 'bg-white/20 text-white'
+                        : isDarkMode
+                        ? 'bg-blue-500/20 text-blue-400'
+                        : 'bg-blue-100 text-blue-700'
+                    }`}>
+                      <BookOpen className="w-5 h-5 sm:w-6 sm:h-6" />
+                    </div>
+                    <div className="text-right space-y-0.5 min-w-0">
+                      <span className={`block font-black text-sm sm:text-base ${
+                        activeListView === 'available'
+                          ? 'text-white'
+                          : isDarkMode
+                          ? 'text-slate-100'
+                          : 'text-slate-900'
+                      }`}>
+                        الكورسات المتاحة
+                      </span>
+                      <span className={`block text-xs font-medium leading-tight ${
+                        activeListView === 'available'
+                          ? 'text-white/85'
+                          : isDarkMode
+                          ? 'text-slate-400'
+                          : 'text-slate-500'
+                      }`}>
+                        جميع الدورات المفتوحة والمدفوعة
+                      </span>
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <span className="block font-black text-sm">تواصل معنا</span>
-                    <span className="text-[11px] text-slate-400 font-bold">واتساب وتليجرام المشرف المباشر</span>
+                  <span className={`px-3 py-1 rounded-full text-xs font-black shrink-0 mr-2 ${
+                    activeListView === 'available'
+                      ? 'bg-white text-blue-700 shadow-sm'
+                      : isDarkMode
+                      ? 'bg-blue-500/20 text-blue-300'
+                      : 'bg-blue-100 text-blue-700'
+                  }`}>
+                    {sortedCourses.length}
+                  </span>
+                </button>
+
+                {/* 3. خطوات التسجيل */}
+                <button
+                  type="button"
+                  onClick={() => setActiveListView('steps')}
+                  className={`w-full p-4 sm:p-5 rounded-2xl font-black text-xs sm:text-sm flex items-center justify-between transition-all cursor-pointer border-2 ${
+                    activeListView === 'steps'
+                      ? 'bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-600 text-white border-purple-400 shadow-xl shadow-purple-600/30 ring-2 ring-purple-500/30'
+                      : isDarkMode
+                      ? 'bg-slate-900/95 hover:bg-slate-800/90 text-slate-200 border-slate-800 hover:border-slate-700'
+                      : 'bg-slate-50 hover:bg-slate-100 text-slate-800 border-slate-200 hover:border-slate-300 shadow-xs'
+                  }`}
+                >
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    <div className={`p-3 rounded-2xl shrink-0 ${
+                      activeListView === 'steps'
+                        ? 'bg-white/20 text-white'
+                        : isDarkMode
+                        ? 'bg-purple-500/20 text-purple-400'
+                        : 'bg-purple-100 text-purple-700'
+                    }`}>
+                      <Sparkles className="w-5 h-5 sm:w-6 sm:h-6" />
+                    </div>
+                    <div className="text-right space-y-0.5 min-w-0">
+                      <span className={`block font-black text-sm sm:text-base ${
+                        activeListView === 'steps'
+                          ? 'text-white'
+                          : isDarkMode
+                          ? 'text-slate-100'
+                          : 'text-slate-900'
+                      }`}>
+                        خطوات التسجيل والتفعيل
+                      </span>
+                      <span className={`block text-xs font-medium leading-tight ${
+                        activeListView === 'steps'
+                          ? 'text-white/85'
+                          : isDarkMode
+                          ? 'text-slate-400'
+                          : 'text-slate-500'
+                      }`}>
+                        طريقة تفعيل المجاني والمدفوع
+                      </span>
+                    </div>
                   </div>
-                </div>
-                <ChevronLeft className={`w-4 h-4 transition-transform ${activeListView === 'contact' ? '-translate-x-1 text-white' : 'text-slate-500'}`} />
-              </button>
+                  <ChevronLeft className={`w-5 h-5 transition-transform shrink-0 mr-2 ${
+                    activeListView === 'steps'
+                      ? '-translate-x-1 text-white'
+                      : isDarkMode
+                      ? 'text-slate-500'
+                      : 'text-slate-400'
+                  }`} />
+                </button>
+
+                {/* 4. تواصل معنا */}
+                <button
+                  type="button"
+                  onClick={() => setActiveListView('contact')}
+                  className={`w-full p-4 sm:p-5 rounded-2xl font-black text-xs sm:text-sm flex items-center justify-between transition-all cursor-pointer border-2 ${
+                    activeListView === 'contact'
+                      ? 'bg-gradient-to-r from-amber-600 via-orange-600 to-amber-600 text-white border-amber-400 shadow-xl shadow-amber-600/30 ring-2 ring-amber-500/30'
+                      : isDarkMode
+                      ? 'bg-slate-900/95 hover:bg-slate-800/90 text-slate-200 border-slate-800 hover:border-slate-700'
+                      : 'bg-slate-50 hover:bg-slate-100 text-slate-800 border-slate-200 hover:border-slate-300 shadow-xs'
+                  }`}
+                >
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    <div className={`p-3 rounded-2xl shrink-0 ${
+                      activeListView === 'contact'
+                        ? 'bg-white/20 text-white'
+                        : isDarkMode
+                        ? 'bg-amber-500/20 text-amber-400'
+                        : 'bg-amber-100 text-amber-700'
+                    }`}>
+                      <Phone className="w-5 h-5 sm:w-6 sm:h-6" />
+                    </div>
+                    <div className="text-right space-y-0.5 min-w-0">
+                      <span className={`block font-black text-sm sm:text-base ${
+                        activeListView === 'contact'
+                          ? 'text-white'
+                          : isDarkMode
+                          ? 'text-slate-100'
+                          : 'text-slate-900'
+                      }`}>
+                        تواصل معنا
+                      </span>
+                      <span className={`block text-xs font-medium leading-tight ${
+                        activeListView === 'contact'
+                          ? 'text-white/85'
+                          : isDarkMode
+                          ? 'text-slate-400'
+                          : 'text-slate-500'
+                      }`}>
+                        واتساب وتليجرام المشرف المباشر
+                      </span>
+                    </div>
+                  </div>
+                  <ChevronLeft className={`w-5 h-5 transition-transform shrink-0 mr-2 ${
+                    activeListView === 'contact'
+                      ? '-translate-x-1 text-white'
+                      : isDarkMode
+                      ? 'text-slate-500'
+                      : 'text-slate-400'
+                  }`} />
+                </button>
+              </div>
             </div>
 
-            {/* خط فاصل أنيق وعنوان المحتوى المختار */}
-            <div className="pt-2 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400 font-bold px-1">
-              <span>
-                {activeListView === 'paid'
-                  ? '⚡ محتوى الكورسات المتفعلة لديك:'
-                  : activeListView === 'available'
-                  ? '📚 قائمة الكورسات المتاحة بالمنصة:'
-                  : activeListView === 'steps'
-                  ? '📝 خطوات تفعيل الكورسات داخل المنصة:'
-                  : '📞 قنوات التواصل المباشرة مع المشرف:'}
+            {/* Bottom info callout inside right container */}
+            <div className={`p-3.5 rounded-2xl border text-center space-y-1 ${
+              isDarkMode
+                ? 'bg-slate-900/90 border-slate-800 text-slate-300'
+                : 'bg-slate-50 border-slate-200 text-slate-700 shadow-xs'
+            }`}>
+              <span className={`text-[11px] font-bold block ${
+                isDarkMode ? 'text-slate-300' : 'text-slate-800'
+              }`}>
+                ⚡ منصة أقسام رعد للقدرات
               </span>
+              <p className={`text-[10px] ${
+                isDarkMode ? 'text-slate-400' : 'text-slate-500'
+              }`}>
+                اختر أي قسم من القائمة أعلاه لعرض التفاصيل فوراً على اليسار.
+              </p>
             </div>
+          </div>
 
-            {/* Content Container based on selected tab */}
-            <div className="space-y-3">
-              {/* ================= 1. الخانة الأولى: الكورسات المتفعلة ================= */}
-              {activeListView === 'paid' && (
-                paidCourses.length === 0 ? (
+          {/* ================= LEFT COLUMN (in RTL): محتوى الخانة المختارة يعرض بالكامل على اليسار ================= */}
+          <div className="lg:col-span-7 xl:col-span-8 order-1 lg:order-2 space-y-6">
+            {/* ================= 1. محتوى: الكورسات المتفعلة (مستطيلات كبيرة وأنيقة بجانب بعضهما) ================= */}
+            {activeListView === 'paid' && (
+              <div className="space-y-4">
+                {/* Title Bar */}
+                <div className={`p-4 rounded-2xl border flex items-center justify-between gap-3 ${
+                  isDarkMode ? 'bg-slate-900/90 border-slate-800' : 'bg-white border-slate-200 shadow-sm'
+                }`}>
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 rounded-xl bg-emerald-500/20 text-emerald-400">
+                      <Award className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className={`text-sm sm:text-base font-black ${isDarkMode ? 'text-white' : 'text-slate-950'}`}>
+                        الكورسات المتفعلة لديك ({paidCourses.length})
+                      </h3>
+                      <p className={`text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-600 font-bold'}`}>
+                        الدورات المفعلة والمربوطة بحسابك؛ انقر على "دخول لمحتوى المنصة" للبدء الفوري
+                      </p>
+                    </div>
+                  </div>
+                  <span className="text-xs px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-black">
+                    متاحة للدخول ⚡
+                  </span>
+                </div>
+
+                {paidCourses.length === 0 ? (
                   <div
-                    className={`p-8 rounded-3xl border text-center space-y-3 ${
-                      isDarkMode ? 'bg-slate-900/60 border-slate-800 text-slate-400' : 'bg-white border-slate-200 text-slate-600'
+                    className={`p-10 rounded-3xl border-2 text-center space-y-4 ${
+                      isDarkMode ? 'bg-slate-900/60 border-slate-800 text-slate-400' : 'bg-white border-slate-200 text-slate-600 shadow-sm'
                     }`}
                   >
-                    <div className="w-12 h-12 mx-auto rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center justify-center">
-                      <Lock className="w-6 h-6" />
+                    <div className="w-16 h-16 mx-auto rounded-3xl bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center justify-center">
+                      <Lock className="w-8 h-8" />
                     </div>
-                    <div className="space-y-1">
-                      <h4 className={`font-black text-sm ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>لم تقم بتفعيل أي كورس بعد</h4>
-                      <p className="text-xs max-w-xs mx-auto leading-relaxed">
-                        اختر أحد الكورسات من خانة "الكورسات المتاحة" واضغط على تفعيل الآن للبدء الفوري!
+                    <div className="space-y-1.5 max-w-md mx-auto">
+                      <h4 className={`font-black text-base ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
+                        لم تقم بتفعيل أي كورس بعد
+                      </h4>
+                      <p className="text-xs leading-relaxed">
+                        اختر أي كورس ترغب بدراسته من خانة "الكورسات المتاحة" واضغط على تفعيل الآن للبدء الفوري بدراسة المحاضرات والاختبارات!
                       </p>
                     </div>
                     <button
                       type="button"
                       onClick={() => setActiveListView('available')}
-                      className="px-4 py-2 rounded-xl bg-blue-600 text-white font-black text-xs transition cursor-pointer shadow-md"
+                      className="px-6 py-3 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white font-black text-xs sm:text-sm transition cursor-pointer shadow-lg shadow-blue-600/25"
                     >
-                      تصفح الكورسات المتاحة 📚
+                      تصفح الكورسات المتاحة الآن 📚
                     </button>
                   </div>
                 ) : (
-                  /* إذا مفعل أكثر من كورس يأتوا بجانب بعض كمستطيلات صغيرة بالصورة وزر دخول */
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {paidCourses.map((course) => {
-                      const isSelected = selectedCourse?.id === course.id;
+                  /* مستطيلات دورات عريضة وأنيقة بالصورة بنسبة العرض الصحيحة وزر دخول للمنصة */
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 sm:gap-7">
+                    {paidCourses.map((course) => (
+                      <div
+                        key={course.id}
+                        className={`rounded-3xl p-5 sm:p-6 border-2 transition-all duration-200 flex flex-col justify-between gap-5 shadow-lg hover:shadow-2xl hover:-translate-y-1 ${
+                          isDarkMode
+                            ? 'bg-slate-900/90 border-emerald-500/40 hover:border-emerald-400'
+                            : 'bg-white border-emerald-500/40 hover:border-emerald-500 shadow-sm'
+                        }`}
+                      >
+                        {/* Course Thumbnail Image - Wide & Properly Proportioned 16:9 Aspect Ratio */}
+                        <div className="w-full aspect-video rounded-2xl overflow-hidden bg-slate-800 border border-slate-700/80 shrink-0 relative group shadow-inner">
+                          {course.imageUrl ? (
+                            <img
+                              src={course.imageUrl}
+                              alt={course.title}
+                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                              loading="eager"
+                              decoding="sync"
+                            />
+                          ) : (
+                            <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-emerald-950 via-slate-900 to-slate-950 text-emerald-400">
+                              <Award className="w-16 h-16" />
+                            </div>
+                          )}
 
-                      return (
-                        <div
-                          key={course.id}
-                          onClick={() => setSelectedCourseId(course.id)}
-                          className={`group relative rounded-2xl p-3 border-2 cursor-pointer transition-all duration-200 flex flex-col justify-between gap-2.5 ${
-                            isSelected
-                              ? isDarkMode
-                                ? 'bg-slate-800/95 border-emerald-500 shadow-xl shadow-emerald-500/15 ring-2 ring-emerald-500/30'
-                                : 'bg-white border-emerald-500 shadow-xl shadow-emerald-500/15 ring-2 ring-emerald-400/30'
-                              : isDarkMode
-                              ? 'bg-slate-900/80 hover:bg-slate-800/80 border-slate-800 hover:border-slate-700'
-                              : 'bg-white hover:bg-slate-50 border-slate-200 hover:border-slate-300'
-                          }`}
-                        >
-                          {/* Course Thumbnail Image */}
-                          <div className="w-full h-24 sm:h-28 rounded-xl overflow-hidden bg-slate-800 border border-slate-700 shrink-0 relative">
-                            {course.imageUrl ? (
-                              <img
-                                src={course.imageUrl}
-                                alt={course.title}
-                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                                loading="eager"
-                                decoding="sync"
-                              />
-                            ) : (
-                              <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-emerald-950 via-slate-900 to-slate-950 text-emerald-400">
-                                <Award className="w-8 h-8" />
-                              </div>
-                            )}
-
-                            <span className="absolute top-1.5 right-1.5 px-2 py-0.5 rounded-lg bg-emerald-950/90 text-emerald-300 border border-emerald-500/40 text-[9px] font-black backdrop-blur-sm">
-                              مفعل لديك ✓
-                            </span>
-                          </div>
-
-                          {/* Title */}
-                          <div className="space-y-0.5 min-w-0">
-                            <h4 className={`text-xs font-black line-clamp-1 ${isDarkMode ? 'text-white' : 'text-slate-950'}`}>
-                              {course.title}
-                            </h4>
-                            {course.description && (
-                              <p className="text-[10px] text-slate-400 line-clamp-1">
-                                {course.description}
-                              </p>
-                            )}
-                          </div>
-
-                          {/* زر دخول لمحتوى المنصة */}
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onSelectCourse(course);
-                            }}
-                            className="w-full py-2 px-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs shadow-md transition flex items-center justify-center gap-1.5 cursor-pointer"
-                          >
-                            <Zap className="w-3.5 h-3.5" />
-                            <span>دخول لمحتوى المنصة ⚡</span>
-                          </button>
+                          <span className="absolute top-3 right-3 px-3 py-1 rounded-xl bg-emerald-950/90 text-emerald-300 border border-emerald-500/40 text-xs font-black backdrop-blur-sm shadow-md">
+                            مفعل لديك ✓
+                          </span>
                         </div>
-                      );
-                    })}
-                  </div>
-                )
-              )}
 
-              {/* ================= 2. الخانة الثانية: الكورسات المتاحة ================= */}
-              {activeListView === 'available' && (
-                sortedCourses.length === 0 ? (
+                        {/* Title & Info */}
+                        <div className="space-y-2 min-w-0 flex-1">
+                          <h4 className={`text-base sm:text-lg md:text-xl font-black line-clamp-1 ${isDarkMode ? 'text-white' : 'text-slate-950'}`}>
+                            {course.title}
+                          </h4>
+                          {course.description && (
+                            <p className="text-xs sm:text-sm text-slate-400 line-clamp-2 leading-relaxed">
+                              {course.description}
+                            </p>
+                          )}
+                        </div>
+
+                        {/* زر دخول لمحتوى المنصة */}
+                        <button
+                          type="button"
+                          onClick={() => onSelectCourse(course)}
+                          className="w-full py-3.5 sm:py-4 px-4 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs sm:text-sm shadow-lg shadow-emerald-600/25 transition flex items-center justify-center gap-2 cursor-pointer"
+                        >
+                          <Zap className="w-4 h-4" />
+                          <span>دخول لمحتوى المنصة ⚡</span>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ================= 2. محتوى: الكورسات المتاحة (مستطيلات كبيرة وأنيقة بجانب بعضهما) ================= */}
+            {activeListView === 'available' && (
+              <div className="space-y-4">
+                {/* Title Bar */}
+                <div className={`p-4 rounded-2xl border flex items-center justify-between gap-3 ${
+                  isDarkMode ? 'bg-slate-900/90 border-slate-800' : 'bg-white border-slate-200 shadow-sm'
+                }`}>
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 rounded-xl bg-blue-500/20 text-blue-400">
+                      <BookOpen className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className={`text-sm sm:text-base font-black ${isDarkMode ? 'text-white' : 'text-slate-950'}`}>
+                        الكورسات المتاحة بالمنصة ({sortedCourses.length})
+                      </h3>
+                      <p className={`text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-600 font-bold'}`}>
+                        استعرض جميع الدورات المتاحة؛ يمكنك تفعيل الدورات المفتوحة فوراً أو تفعيل الدورات المدفوعة
+                      </p>
+                    </div>
+                  </div>
+                  <span className="text-xs px-3 py-1 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30 font-black">
+                    بوابة الكورسات 📚
+                  </span>
+                </div>
+
+                {sortedCourses.length === 0 ? (
                   <div
-                    className={`p-8 rounded-3xl border text-center space-y-2 ${
+                    className={`p-10 rounded-3xl border text-center space-y-2 ${
                       isDarkMode ? 'bg-slate-900/60 border-slate-800 text-slate-400' : 'bg-white border-slate-200 text-slate-600'
                     }`}
                   >
-                    <BookOpen className="w-10 h-10 mx-auto text-slate-500 mb-2 opacity-50" />
-                    <p className="font-bold text-sm">لا توجد كورسات متاحة حالياً</p>
+                    <BookOpen className="w-12 h-12 mx-auto text-slate-500 mb-2 opacity-50" />
+                    <p className="font-bold text-sm">لا توجد كورسات مضافة حالياً</p>
                     <p className="text-xs">سيقوم المشرف بإضافة وتحديث الدورات التعليمية قريباً.</p>
                   </div>
                 ) : (
-                  /* الكورسات المتاحة عبارة عن مستطيلات صغيرة أيضا بالصورة بجانب بعضهما */
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  /* مستطيلات دورات عريضة وأنيقة بالصورة بنسبة العرض الصحيحة بجانب بعضهما */
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 sm:gap-7">
                     {sortedCourses.map((course, idx) => {
-                      const isSelected = selectedCourse?.id === course.id;
                       const isEnrolled = (currentUser.enrolledCourseIds || []).includes(course.id);
 
                       return (
                         <div
                           key={course.id}
                           onClick={() => setSelectedCourseId(course.id)}
-                          className={`group relative rounded-2xl p-3 border-2 cursor-pointer transition-all duration-200 flex flex-col justify-between gap-2.5 ${
-                            isSelected
+                          className={`rounded-3xl p-5 sm:p-6 border-2 transition-all duration-200 flex flex-col justify-between gap-5 shadow-lg hover:shadow-2xl hover:-translate-y-1 ${
+                            isEnrolled
                               ? isDarkMode
-                                ? 'bg-slate-800/95 border-blue-500 shadow-xl shadow-blue-500/15 ring-2 ring-blue-500/30'
-                                : 'bg-white border-blue-500 shadow-xl shadow-blue-500/15 ring-2 ring-blue-400/30'
+                                ? 'bg-slate-900/90 border-emerald-500/50 hover:border-emerald-400'
+                                : 'bg-white border-emerald-500/50 hover:border-emerald-600'
+                              : course.isLocked
+                              ? isDarkMode
+                                ? 'bg-slate-900/90 border-slate-800 hover:border-amber-500/50'
+                                : 'bg-white border-slate-200 hover:border-amber-400 shadow-sm'
                               : isDarkMode
-                              ? 'bg-slate-900/80 hover:bg-slate-800/80 border-slate-800 hover:border-slate-700'
-                              : 'bg-white hover:bg-slate-50 border-slate-200 hover:border-slate-300'
+                              ? 'bg-slate-900/90 border-slate-800 hover:border-blue-500/50'
+                              : 'bg-white border-slate-200 hover:border-blue-400 shadow-sm'
                           }`}
                         >
-                          {/* Course Thumbnail Image */}
-                          <div className="w-full h-24 sm:h-28 rounded-xl overflow-hidden bg-slate-800 border border-slate-700 shrink-0 relative">
+                          {/* Course Thumbnail Image - Wide & Properly Proportioned 16:9 Aspect Ratio */}
+                          <div className="w-full aspect-video rounded-2xl overflow-hidden bg-slate-800 border border-slate-700/80 shrink-0 relative group shadow-inner">
                             {course.imageUrl ? (
                               <img
                                 src={course.imageUrl}
@@ -572,13 +745,13 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
                               />
                             ) : (
                               <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-indigo-950 via-slate-900 to-slate-950 text-indigo-400">
-                                <BookOpen className="w-8 h-8" />
+                                <BookOpen className="w-16 h-16" />
                               </div>
                             )}
 
                             {/* Lock / Unlock Price Badge */}
                             <div
-                              className={`absolute top-1.5 right-1.5 px-2 py-0.5 rounded-lg backdrop-blur-md text-[9px] font-black flex items-center gap-1 ${
+                              className={`absolute top-3 right-3 px-3 py-1 rounded-xl backdrop-blur-md text-xs font-black flex items-center gap-1.5 shadow-md ${
                                 course.isLocked
                                   ? 'bg-amber-950/85 text-amber-300 border border-amber-500/40'
                                   : 'bg-emerald-950/85 text-emerald-300 border border-emerald-500/40'
@@ -586,30 +759,35 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
                             >
                               {course.isLocked ? (
                                 <>
-                                  <Lock className="w-2.5 h-2.5" />
+                                  <Lock className="w-3.5 h-3.5" />
                                   <span>{course.price || 'مدفوع'}</span>
                                 </>
                               ) : (
                                 <>
-                                  <Sparkles className="w-2.5 h-2.5" />
+                                  <Sparkles className="w-3.5 h-3.5" />
                                   <span>مجاني</span>
                                 </>
                               )}
                             </div>
 
                             {isEnrolled && (
-                              <span className="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 rounded-md bg-emerald-600 text-white text-[8px] font-black">
+                              <span className="absolute bottom-3 right-3 px-2.5 py-0.5 rounded-lg bg-emerald-600 text-white text-[10px] font-black shadow-md">
                                 مفعل لديك ✓
                               </span>
                             )}
                           </div>
 
                           {/* Course Info */}
-                          <div className="space-y-0.5 min-w-0">
-                            <span className="text-[9px] font-black text-blue-400 block">دورة #{idx + 1}</span>
-                            <h4 className={`text-xs font-black line-clamp-1 ${isDarkMode ? 'text-white' : 'text-slate-950'}`}>
+                          <div className="space-y-2 min-w-0 flex-1">
+                            <span className="text-xs font-black text-blue-400 block">دورة #{idx + 1}</span>
+                            <h4 className={`text-base sm:text-lg md:text-xl font-black line-clamp-1 ${isDarkMode ? 'text-white' : 'text-slate-950'}`}>
                               {course.title}
                             </h4>
+                            {course.description && (
+                              <p className="text-xs sm:text-sm text-slate-400 line-clamp-2 leading-relaxed">
+                                {course.description}
+                              </p>
+                            )}
                           </div>
 
                           {/* Action Button */}
@@ -619,27 +797,27 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
                               e.stopPropagation();
                               handleActivateClick(course);
                             }}
-                            className={`w-full py-2 px-3 rounded-xl text-white font-black text-xs shadow-md transition flex items-center justify-center gap-1 cursor-pointer ${
+                            className={`w-full py-3.5 sm:py-4 px-4 rounded-2xl text-white font-black text-xs sm:text-sm shadow-md transition flex items-center justify-center gap-2 cursor-pointer ${
                               isEnrolled
                                 ? 'bg-emerald-600 hover:bg-emerald-500'
                                 : course.isLocked
-                                ? 'bg-amber-600 hover:bg-amber-500'
-                                : 'bg-blue-600 hover:bg-blue-500'
+                                ? 'bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 shadow-amber-600/25'
+                                : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 shadow-blue-600/25'
                             }`}
                           >
                             {isEnrolled ? (
                               <>
-                                <Zap className="w-3.5 h-3.5" />
+                                <Zap className="w-4 h-4" />
                                 <span>دخول للمنصة 🚀</span>
                               </>
                             ) : course.isLocked ? (
                               <>
-                                <Lock className="w-3.5 h-3.5" />
+                                <Lock className="w-4 h-4" />
                                 <span>تفعيل والدفع 💳</span>
                               </>
                             ) : (
                               <>
-                                <Sparkles className="w-3.5 h-3.5" />
+                                <Sparkles className="w-4 h-4" />
                                 <span>تفعيل مجاني ✨</span>
                               </>
                             )}
@@ -648,427 +826,346 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
                       );
                     })}
                   </div>
-                )
-              )}
+                )}
+              </div>
+            )}
 
-              {/* ================= 3. الخانة الثالثة: خطوات التسجيل ================= */}
-              {activeListView === 'steps' && (
-                <div className="space-y-3.5">
+            {/* ================= 3. محتوى: خطوات التسجيل والتفعيل على اليسار ================= */}
+            {activeListView === 'steps' && (
+              <div className="space-y-5">
+                {/* Title Bar */}
+                <div className={`p-4 rounded-2xl border flex items-center justify-between gap-3 ${
+                  isDarkMode ? 'bg-slate-900/90 border-slate-800' : 'bg-white border-slate-200 shadow-sm'
+                }`}>
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 rounded-xl bg-purple-500/20 text-purple-400">
+                      <Sparkles className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className={`text-sm sm:text-base font-black ${isDarkMode ? 'text-white' : 'text-slate-950'}`}>
+                        خطوات التسجيل والتفعيل داخل منصة أقسام رعد 📝
+                      </h3>
+                      <p className={`text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-600 font-bold'}`}>
+                        دليل توضيحي شامل لطريقة تفعيل الكورس المجاني والكورس المدفوع
+                      </p>
+                    </div>
+                  </div>
+                  <span className="text-xs px-3 py-1 rounded-full bg-purple-500/20 text-purple-400 border border-purple-500/30 font-black">
+                    دليل الطالب 🎯
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                   {/* طريقة تفعيل الكورس المجاني */}
-                  <div className="p-4 rounded-3xl border-2 border-emerald-500/30 bg-slate-900/95 space-y-3">
-                    <div className="flex items-center gap-2.5 pb-2 border-b border-emerald-500/20">
-                      <div className="p-2 rounded-xl bg-emerald-500/20 text-emerald-400">
-                        <Sparkles className="w-5 h-5" />
+                  <div className={`p-5 sm:p-6 rounded-3xl border-2 space-y-4 shadow-xl ${
+                    isDarkMode ? 'bg-slate-900/95 border-emerald-500/40 text-slate-100' : 'bg-white border-emerald-400 shadow-sm text-slate-900'
+                  }`}>
+                    <div className="flex items-center gap-3 pb-3 border-b border-emerald-500/20">
+                      <div className="p-3 rounded-2xl bg-emerald-500/20 text-emerald-400">
+                        <Sparkles className="w-6 h-6" />
                       </div>
                       <div>
-                        <h4 className="text-xs sm:text-sm font-black text-emerald-400">
+                        <h4 className="text-sm sm:text-base font-black text-emerald-400">
                           1. طريقة تفعيل الكورس المجاني (المفتوح) ✨
                         </h4>
-                        <p className="text-[10px] text-slate-400">بدء فوري بدون أي رسوم مالية</p>
+                        <p className="text-xs text-slate-400">بدء فوري وبدون أي رسوم مالية</p>
                       </div>
                     </div>
 
-                    <div className="space-y-2 text-xs font-bold leading-relaxed">
-                      <div className="flex items-start gap-2">
-                        <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-[10px] shrink-0 font-black mt-0.5">
+                    <div className="space-y-3 text-xs sm:text-sm font-bold leading-relaxed">
+                      <div className="flex items-start gap-2.5">
+                        <span className="w-6 h-6 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-xs shrink-0 font-black mt-0.5">
                           1
                         </span>
-                        <p className="text-slate-300">
-                          اختر الكورس المجاني من خانة <strong>"الكورسات المتاحة"</strong>.
+                        <p className={isDarkMode ? 'text-slate-300' : 'text-slate-700'}>
+                          اختر الكورس المجاني من قائمة <strong>"الكورسات المتاحة"</strong> على اليمين.
                         </p>
                       </div>
 
-                      <div className="flex items-start gap-2">
-                        <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-[10px] shrink-0 font-black mt-0.5">
+                      <div className="flex items-start gap-2.5">
+                        <span className="w-6 h-6 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-xs shrink-0 font-black mt-0.5">
                           2
                         </span>
-                        <p className="text-slate-300">
-                          اضغط على زر <strong>"تفعيل الآن للبدء الفوري (مفتوح مجاناً ✨)"</strong>.
+                        <p className={isDarkMode ? 'text-slate-300' : 'text-slate-700'}>
+                          اضغط على زر <strong>"تفعيل مجاني ✨"</strong> في بطاقة الكورس.
                         </p>
                       </div>
 
-                      <div className="flex items-start gap-2">
-                        <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-[10px] shrink-0 font-black mt-0.5">
+                      <div className="flex items-start gap-2.5">
+                        <span className="w-6 h-6 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-xs shrink-0 font-black mt-0.5">
                           3
                         </span>
-                        <p className="text-slate-300">
-                          يتم فتح محتوى الكورس بالكامل فوراً والبدء بمشاهدة الدروس والاختبارات.
+                        <p className={isDarkMode ? 'text-slate-300' : 'text-slate-700'}>
+                          يتم فتح محتوى الكورس بالكامل فوراً والبدء بمشاهدة الدروس والاختبارات التفاعلية بنظام نمر.
                         </p>
                       </div>
 
-                      <div className="flex items-start gap-2">
-                        <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-[10px] shrink-0 font-black mt-0.5">
+                      <div className="flex items-start gap-2.5">
+                        <span className="w-6 h-6 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-xs shrink-0 font-black mt-0.5">
                           4
                         </span>
-                        <p className="text-slate-300">
-                          ستجد الكورس دائماً في خانة <strong>"الكورسات المتفعلة"</strong> للدخول المباشر.
+                        <p className={isDarkMode ? 'text-slate-300' : 'text-slate-700'}>
+                          ستجد الكورس دائماً في خانة <strong>"الكورسات المتفعلة"</strong> لتتمكن من الدخول إليه في أي وقت.
                         </p>
                       </div>
+                    </div>
+
+                    <div className="pt-2">
+                      <button
+                        type="button"
+                        onClick={() => setActiveListView('available')}
+                        className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs transition cursor-pointer shadow-md"
+                      >
+                        تصفح الكورسات المتاحة الآن 📚
+                      </button>
                     </div>
                   </div>
 
                   {/* طريقة تفعيل الكورس المدفوع */}
-                  <div className="p-4 rounded-3xl border-2 border-amber-500/30 bg-slate-900/95 space-y-3">
-                    <div className="flex items-center gap-2.5 pb-2 border-b border-amber-500/20">
-                      <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400">
-                        <CreditCard className="w-5 h-5" />
+                  <div className={`p-5 sm:p-6 rounded-3xl border-2 space-y-4 shadow-xl ${
+                    isDarkMode ? 'bg-slate-900/95 border-amber-500/40 text-slate-100' : 'bg-white border-amber-400 shadow-sm text-slate-900'
+                  }`}>
+                    <div className="flex items-center gap-3 pb-3 border-b border-amber-500/20">
+                      <div className="p-3 rounded-2xl bg-amber-500/20 text-amber-400">
+                        <CreditCard className="w-6 h-6" />
                       </div>
                       <div>
-                        <h4 className="text-xs sm:text-sm font-black text-amber-400">
-                          2. طريقة تفعيل الكورس المدفوع (VIP) داخل منصة رعد 💳
+                        <h4 className="text-sm sm:text-base font-black text-amber-400">
+                          2. طريقة تفعيل الكورس المدفوع (VIP) 💳
                         </h4>
-                        <p className="text-[10px] text-slate-400">خطوات التحويل وتأكيد التفعيل مع المشرف</p>
+                        <p className="text-xs text-slate-400">خطوات التحويل وتأكيد التفعيل مع المشرف</p>
                       </div>
                     </div>
 
-                    <div className="space-y-2 text-xs font-bold leading-relaxed">
-                      <div className="flex items-start gap-2">
-                        <span className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center text-[10px] shrink-0 font-black mt-0.5">
+                    <div className="space-y-3 text-xs sm:text-sm font-bold leading-relaxed">
+                      <div className="flex items-start gap-2.5">
+                        <span className="w-6 h-6 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center text-xs shrink-0 font-black mt-0.5">
                           1
                         </span>
-                        <p className="text-slate-300">
-                          اختر الكورس المطلوب واضغط على <strong>"تفعيل الآن"</strong> لعرض تفاصيل الرسوم.
+                        <p className={isDarkMode ? 'text-slate-300' : 'text-slate-700'}>
+                          اختر الكورس المطلوب واضغط على <strong>"تفعيل والدفع 💳"</strong> لعرض تفاصيل الرسوم.
                         </p>
                       </div>
 
-                      <div className="flex items-start gap-2">
-                        <span className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center text-[10px] shrink-0 font-black mt-0.5">
+                      <div className="flex items-start gap-2.5">
+                        <span className="w-6 h-6 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center text-xs shrink-0 font-black mt-0.5">
                           2
                         </span>
-                        <p className="text-slate-300">
+                        <p className={isDarkMode ? 'text-slate-300' : 'text-slate-700'}>
                           اضغط على <strong>"الدفع الآن 💳"</strong> لمعاينة وتكبير صور الحساب البنكي والآيبان.
                         </p>
                       </div>
 
-                      <div className="flex items-start gap-2">
-                        <span className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center text-[10px] shrink-0 font-black mt-0.5">
+                      <div className="flex items-start gap-2.5">
+                        <span className="w-6 h-6 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center text-xs shrink-0 font-black mt-0.5">
                           3
                         </span>
-                        <p className="text-slate-300">
-                          قم بالتحويل عبر تطبيق البنك واحفظ صورة إشعار التحويل البنكي.
+                        <p className={isDarkMode ? 'text-slate-300' : 'text-slate-700'}>
+                          قم بالتحويل عبر تطبيق البنك واحفظ صورة إشعار التحويل البنكي على جهازك.
                         </p>
                       </div>
 
-                      <div className="flex items-start gap-2">
-                        <span className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center text-[10px] shrink-0 font-black mt-0.5">
+                      <div className="flex items-start gap-2.5">
+                        <span className="w-6 h-6 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center text-xs shrink-0 font-black mt-0.5">
                           4
                         </span>
-                        <p className="text-slate-300">
+                        <p className={isDarkMode ? 'text-slate-300' : 'text-slate-700'}>
                           اضغط على زر <strong>"إرسال إشعار التحويل عبر الواتساب"</strong> أو <strong>"عبر التليجرام"</strong> لإرسال الإشعار للمشرف فوراً.
                         </p>
                       </div>
 
-                      <div className="flex items-start gap-2">
-                        <span className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center text-[10px] shrink-0 font-black mt-0.5">
+                      <div className="flex items-start gap-2.5">
+                        <span className="w-6 h-6 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center text-xs shrink-0 font-black mt-0.5">
                           5
                         </span>
-                        <p className="text-slate-300">
+                        <p className={isDarkMode ? 'text-slate-300' : 'text-slate-700'}>
                           يقوم المشرف بمراجعة التحويل وتفعيل الكورس لحسابك فوراً لتجده في قائمة <strong>"الكورسات المتفعلة"</strong>.
                         </p>
                       </div>
                     </div>
-                  </div>
-                </div>
-              )}
 
-              {/* ================= 4. الخانة الرابعة: تواصل معنا ================= */}
-              {activeListView === 'contact' && (
-                <div className="space-y-3.5">
-                  <div className="p-3 rounded-2xl bg-blue-500/10 border border-blue-500/20 text-center">
-                    <h4 className="text-xs font-black text-blue-400">
-                      📞 قنوات التواصل المباشرة مع المشرف
-                    </h4>
-                    <p className="text-[10px] text-slate-400 mt-0.5">
-                      للاستفسار، المساعدة، وتأكيد تفعيل اشتراكات المنصة
-                    </p>
-                  </div>
-
-                  {/* مستطيل الواتساب */}
-                  <div className="p-4 rounded-3xl border-2 border-emerald-500/40 bg-slate-900/95 space-y-3 shadow-md">
-                    <div className="flex items-center gap-3">
-                      <div className="p-3 rounded-2xl bg-emerald-500/20 text-emerald-400 shrink-0">
-                        <MessageCircle className="w-6 h-6" />
-                      </div>
-                      <div className="min-w-0">
-                        <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400">
-                          واتساب المشرف الرسمي
-                        </span>
-                        <h4 className="text-xs sm:text-sm font-black truncate mt-0.5 text-white">
-                          تواصل عبر تطبيق الواتساب
-                        </h4>
-                        <p className="text-xs text-slate-400 font-mono mt-0.5" dir="ltr">
-                          +{whatsappNum}
-                        </p>
-                      </div>
-                    </div>
-
-                    <p className="text-xs text-slate-300 leading-relaxed">
-                      للمساعدة الفورية، الاستفسار عن المناهج، وتأكيد تفعيل الكورسات بعد التحويل.
-                    </p>
-
-                    <a
-                      href={whatsappInquiryUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="w-full py-2.5 px-3 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs shadow-lg shadow-emerald-600/25 transition flex items-center justify-center gap-2 cursor-pointer"
-                    >
-                      <MessageCircle className="w-4 h-4" />
-                      <span>فتح محادثة الواتساب الآن 📱</span>
-                    </a>
-                  </div>
-
-                  {/* مستطيل التليجرام */}
-                  <div className="p-4 rounded-3xl border-2 border-sky-500/40 bg-slate-900/95 space-y-3 shadow-md">
-                    <div className="flex items-center gap-3">
-                      <div className="p-3 rounded-2xl bg-sky-500/20 text-sky-400 shrink-0">
-                        <Send className="w-6 h-6" />
-                      </div>
-                      <div className="min-w-0">
-                        <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-400">
-                          تليجرام المشرف الرسمي
-                        </span>
-                        <h4 className="text-xs sm:text-sm font-black truncate mt-0.5 text-white">
-                          تواصل عبر تطبيق التليجرام
-                        </h4>
-                        <p className="text-xs text-slate-400 font-mono mt-0.5" dir="ltr">
-                          @{cleanTelegram}
-                        </p>
-                      </div>
-                    </div>
-
-                    <p className="text-xs text-slate-300 leading-relaxed">
-                      للاستفسارات السريعة، إرسال إشعارات التحويل، ومتابعة المستجدات.
-                    </p>
-
-                    <a
-                      href={telegramInquiryUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="w-full py-2.5 px-3 rounded-2xl bg-gradient-to-r from-sky-600 to-blue-600 hover:from-sky-500 hover:to-blue-500 text-white font-black text-xs shadow-lg shadow-sky-600/25 transition flex items-center justify-center gap-2 cursor-pointer"
-                    >
-                      <Send className="w-4 h-4" />
-                      <span>فتح محادثة التليجرام الآن ✈️</span>
-                    </a>
-                  </div>
-
-                  <div className="p-2.5 rounded-xl bg-slate-800/80 border border-slate-700/80 text-center">
-                    <span className="text-[10px] text-slate-400">
-                      ⚙️ يمكن للمدير تعديل رقم الواتساب ورابط التليجرام من قسم التحكم في أي وقت.
-                    </span>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* ================= LEFT COLUMN (in RTL): SELECTED COURSE DETAILED DISPLAY & ACTIONS ================= */}
-          <div className="lg:col-span-7 xl:col-span-8 order-1 lg:order-2">
-            {selectedCourse ? (
-              <div
-                className={`rounded-3xl border-2 shadow-2xl overflow-hidden transition-all duration-200 ${
-                  isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
-                }`}
-              >
-                {/* Hero Cover Image */}
-                <div className="relative w-full h-56 sm:h-72 md:h-80 bg-slate-800 overflow-hidden group">
-                  {selectedCourse.imageUrl ? (
-                    <img
-                      src={selectedCourse.imageUrl}
-                      alt={selectedCourse.title}
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                      loading="eager"
-                      decoding="sync"
-                    />
-                  ) : (
-                    <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-indigo-950 via-slate-900 to-slate-950 text-indigo-400">
-                      <BookOpen className="w-16 h-16 stroke-1 mb-2" />
-                      <span className="text-sm font-black">غلاف الكورس التعليمي</span>
-                    </div>
-                  )}
-
-                  {/* Gradient Overlay */}
-                  <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/40 to-transparent" />
-
-                  {/* Top Badges over image */}
-                  <div className="absolute top-4 inset-x-4 flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`px-3 py-1 rounded-xl text-xs font-black backdrop-blur-md flex items-center gap-1.5 shadow-lg ${
-                          selectedCourse.isLocked
-                            ? 'bg-amber-950/80 text-amber-300 border border-amber-500/40'
-                            : 'bg-emerald-950/80 text-emerald-300 border border-emerald-500/40'
-                        }`}
-                      >
-                        {selectedCourse.isLocked ? (
-                          <>
-                            <Lock className="w-3.5 h-3.5" />
-                            <span>كورس مقفول 🔒</span>
-                          </>
-                        ) : (
-                          <>
-                            <Sparkles className="w-3.5 h-3.5" />
-                            <span>كورس مفتوح مجاناً ✨</span>
-                          </>
-                        )}
-                      </span>
-
-                      {selectedCourse.price && selectedCourse.isLocked && (
-                        <span className="px-3 py-1 rounded-xl text-xs font-black bg-blue-950/80 text-blue-300 border border-blue-500/40 backdrop-blur-md shadow-lg">
-                          السعر: {selectedCourse.price}
-                        </span>
-                      )}
-                    </div>
-
-                    {isSelectedEnrolled && (
-                      <span className="px-3 py-1 rounded-xl text-xs font-black bg-emerald-600 text-white shadow-lg flex items-center gap-1">
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                        <span>مفعل لديك</span>
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Bottom title over image */}
-                  <div className="absolute bottom-4 inset-x-4 sm:inset-x-6 space-y-1">
-                    <h2 className="text-xl sm:text-2xl md:text-3xl font-black text-white drop-shadow-md">
-                      {selectedCourse.title}
-                    </h2>
-                  </div>
-                </div>
-
-                {/* Course Details Body */}
-                <div className="p-5 sm:p-7 md:p-8 space-y-6">
-                  {/* Description */}
-                  <div className="space-y-2">
-                    <h4 className="text-xs font-black uppercase text-slate-400">وصف ومحتوى الدورة:</h4>
-                    <p
-                      className={`text-sm sm:text-base leading-relaxed ${
-                        isDarkMode ? 'text-slate-300' : 'text-slate-700'
-                      }`}
-                    >
-                      {selectedCourse.description ||
-                        'كورس شامل يضم محاضرات تأسيسية مصورة، تدريبات مكثفة على نماذج قياس، وبنوك أسئلة واختبارات تفاعلية محاكية لنظام نمر.'}
-                    </p>
-                  </div>
-
-                  {/* Status Indicator Callout */}
-                  <div
-                    className={`p-4 sm:p-5 rounded-2xl border flex items-start gap-3.5 ${
-                      selectedCourse.isLocked
-                        ? isDarkMode
-                          ? 'bg-amber-950/30 border-amber-500/30 text-amber-200'
-                          : 'bg-amber-50 border-amber-300 text-amber-900'
-                        : isDarkMode
-                        ? 'bg-emerald-950/30 border-emerald-500/30 text-emerald-200'
-                        : 'bg-emerald-50 border-emerald-300 text-emerald-900'
-                    }`}
-                  >
-                    <div
-                      className={`p-2.5 rounded-xl shrink-0 ${
-                        selectedCourse.isLocked
-                          ? 'bg-amber-500/20 text-amber-400'
-                          : 'bg-emerald-500/20 text-emerald-400'
-                      }`}
-                    >
-                      {selectedCourse.isLocked ? <Lock className="w-5 h-5" /> : <Sparkles className="w-5 h-5" />}
-                    </div>
-
-                    <div className="space-y-1">
-                      <h4 className="font-black text-sm">
-                        {selectedCourse.isLocked
-                          ? 'هذا الكورس مميز ومقفول (VIP)'
-                          : 'هذا الكورس متاح ومفتوح لجميع الطلاب'}
-                      </h4>
-                      <p className="text-xs leading-relaxed opacity-90 font-medium">
-                        {selectedCourse.isLocked
-                          ? `عند الضغط على "تفعيل الآن"، ستظهر لك تفاصيل السعر (${selectedCourse.price || 'المحدد'})، وعند الضغط على "الدفع الآن" ستظهر لك صور الحساب البنكي لتحويل الرسوم وتفعيل الكورس فوراً.`
-                          : 'يمكنك البدء مباشرة بالنقر على "تفعيل الآن للبدء الفوري" للانتقال إلى محتوى الكورس والأقسام والمصادر الخاصة به.'}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Big Action Buttons */}
-                  <div className="pt-2 flex flex-col sm:flex-row items-center gap-3">
-                    {isSelectedEnrolled ? (
-                      /* Enrolled: Direct Enter */
+                    <div className="pt-2">
                       <button
                         type="button"
-                        onClick={() => onSelectCourse(selectedCourse)}
-                        className="w-full sm:flex-1 py-4 px-6 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-sm sm:text-base shadow-xl shadow-emerald-600/30 transition flex items-center justify-center gap-2.5 cursor-pointer"
+                        onClick={() => setActiveListView('available')}
+                        className="w-full py-3 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-black text-xs transition cursor-pointer shadow-md"
                       >
-                        <Zap className="w-5 h-5" />
-                        <span>الدخول إلى محتوى الكورس الآن 🚀</span>
+                        تصفح الكورسات والتفعيل الآن 💳
                       </button>
-                    ) : (
-                      /* Not Enrolled: Activate Now */
-                      <button
-                        type="button"
-                        disabled={isActivating}
-                        onClick={() => handleActivateClick(selectedCourse)}
-                        className={`w-full sm:flex-1 py-4 px-6 rounded-2xl text-white font-black text-sm sm:text-base shadow-xl transition flex items-center justify-center gap-2.5 cursor-pointer disabled:opacity-50 ${
-                          selectedCourse.isLocked
-                            ? 'bg-gradient-to-r from-amber-600 via-orange-600 to-amber-500 hover:from-amber-500 hover:to-orange-500 shadow-amber-600/30'
-                            : 'bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-500 hover:from-blue-500 hover:to-indigo-500 shadow-blue-600/30'
-                        }`}
-                      >
-                        {selectedCourse.isLocked ? (
-                          <>
-                            <Lock className="w-5 h-5" />
-                            <span>تفعيل الآن (عرض تفاصيل السعر والدفع 🔒)</span>
-                          </>
-                        ) : (
-                          <>
-                            <Sparkles className="w-5 h-5" />
-                            <span>{isActivating ? 'جاري التفعيل...' : 'تفعيل الآن للبدء الفوري (مفتوح مجاناً ✨)'}</span>
-                          </>
-                        )}
-                      </button>
-                    )}
-
-                    <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
-                      <a
-                        href={whatsappUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className={`py-3.5 px-4 rounded-2xl border text-xs sm:text-sm font-black transition flex items-center justify-center gap-2 cursor-pointer ${
-                          isDarkMode
-                            ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
-                            : 'bg-slate-100 hover:bg-slate-200 text-slate-800 border-slate-300'
-                        }`}
-                      >
-                        <MessageCircle className="w-4 h-4 text-emerald-500" />
-                        <span>استفسار واتساب</span>
-                      </a>
-
-                      <a
-                        href={telegramInquiryUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className={`py-3.5 px-4 rounded-2xl border text-xs sm:text-sm font-black transition flex items-center justify-center gap-2 cursor-pointer ${
-                          isDarkMode
-                            ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
-                            : 'bg-slate-100 hover:bg-slate-200 text-slate-800 border-slate-300'
-                        }`}
-                      >
-                        <Send className="w-4 h-4 text-sky-400" />
-                        <span>استفسار تليجرام</span>
-                      </a>
                     </div>
                   </div>
                 </div>
               </div>
-            ) : (
-              <div
-                className={`p-12 rounded-3xl border text-center space-y-3 ${
-                  isDarkMode ? 'bg-slate-900 border-slate-800 text-slate-400' : 'bg-white border-slate-200 text-slate-600'
-                }`}
-              >
-                <BookOpen className="w-12 h-12 mx-auto text-slate-500 opacity-50" />
-                <p className="font-bold text-base">الرجاء اختيار كورس من القائمة لعرض تفاصيله وتفعيله</p>
+            )}
+
+            {/* ================= 4. محتوى: تواصل معنا على اليسار (مستطيلين الواتساب والتليجرام) ================= */}
+            {activeListView === 'contact' && (
+              <div className="space-y-5">
+                {/* Title Bar */}
+                <div className={`p-4 rounded-2xl border flex items-center justify-between gap-3 ${
+                  isDarkMode ? 'bg-slate-900/90 border-slate-800' : 'bg-white border-slate-200 shadow-sm'
+                }`}>
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400">
+                      <Phone className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className={`text-sm sm:text-base font-black ${isDarkMode ? 'text-white' : 'text-slate-950'}`}>
+                        قنوات التواصل المباشرة مع المشرف 📞
+                      </h3>
+                      <p className={`text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-600 font-bold'}`}>
+                        للاستفسار، المساعدة، وتأكيد تفعيل اشتراكات المنصة
+                      </p>
+                    </div>
+                  </div>
+                  <span className="text-xs px-3 py-1 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30 font-black">
+                    دعم سريع ⚡
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  {/* مستطيل الواتساب */}
+                  <div className={`p-5 sm:p-6 rounded-3xl border-2 space-y-4 shadow-xl flex flex-col justify-between ${
+                    isDarkMode ? 'bg-slate-900/95 border-emerald-500/40 text-slate-100' : 'bg-white border-emerald-400 shadow-sm text-slate-900'
+                  }`}>
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-3">
+                        <div className="p-3.5 rounded-2xl bg-emerald-500/20 text-emerald-400 shrink-0">
+                          <MessageCircle className="w-7 h-7" />
+                        </div>
+                        <div className="min-w-0">
+                          <span className="text-[10px] font-black px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400">
+                            واتساب المشرف الرسمي
+                          </span>
+                          <h4 className="text-sm sm:text-base font-black truncate mt-1">
+                            تواصل عبر تطبيق الواتساب
+                          </h4>
+                          <p className="text-xs text-slate-400 font-mono mt-0.5" dir="ltr">
+                            +{whatsappNum}
+                          </p>
+                        </div>
+                      </div>
+
+                      <p className={`text-xs sm:text-sm leading-relaxed ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
+                        للمساعدة الفورية، الاستفسار عن المناهج، وتأكيد تفعيل الكورسات بعد التحويل البنكي.
+                      </p>
+                    </div>
+
+                    <div className="space-y-2 pt-2">
+                      <a
+                        href={whatsappInquiryUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs sm:text-sm shadow-lg shadow-emerald-600/25 transition flex items-center justify-center gap-2 cursor-pointer"
+                      >
+                        <MessageCircle className="w-4 h-4" />
+                        <span>فتح محادثة الواتساب الآن 📱</span>
+                      </a>
+
+                      <a
+                        href={whatsappUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={`w-full py-2.5 px-3 rounded-xl border text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                          isDarkMode
+                            ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
+                            : 'bg-slate-100 hover:bg-slate-200 text-slate-800 border-slate-300'
+                        }`}
+                      >
+                        <Zap className="w-3.5 h-3.5 text-emerald-500" />
+                        <span>إرسال إشعار تحويل عبر الواتساب</span>
+                      </a>
+                    </div>
+                  </div>
+
+                  {/* مستطيل التليجرام */}
+                  <div className={`p-5 sm:p-6 rounded-3xl border-2 space-y-4 shadow-xl flex flex-col justify-between ${
+                    isDarkMode ? 'bg-slate-900/95 border-sky-500/40 text-slate-100' : 'bg-white border-sky-400 shadow-sm text-slate-900'
+                  }`}>
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-3">
+                        <div className="p-3.5 rounded-2xl bg-sky-500/20 text-sky-400 shrink-0">
+                          <Send className="w-7 h-7" />
+                        </div>
+                        <div className="min-w-0">
+                          <span className="text-[10px] font-black px-2.5 py-0.5 rounded-full bg-sky-500/20 text-sky-400">
+                            تليجرام المشرف الرسمي
+                          </span>
+                          <h4 className="text-sm sm:text-base font-black truncate mt-1">
+                            تواصل عبر تطبيق التليجرام
+                          </h4>
+                          <p className="text-xs text-slate-400 font-mono mt-0.5" dir="ltr">
+                            @{cleanTelegram}
+                          </p>
+                        </div>
+                      </div>
+
+                      <p className={`text-xs sm:text-sm leading-relaxed ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
+                        للاستفسارات السريعة، إرسال إشعارات التحويل، ومتابعة آخر مستجدات وتحديثات المنصة.
+                      </p>
+                    </div>
+
+                    <div className="space-y-2 pt-2">
+                      <a
+                        href={telegramInquiryUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-sky-600 to-blue-600 hover:from-sky-500 hover:to-blue-500 text-white font-black text-xs sm:text-sm shadow-lg shadow-sky-600/25 transition flex items-center justify-center gap-2 cursor-pointer"
+                      >
+                        <Send className="w-4 h-4" />
+                        <span>فتح محادثة التليجرام الآن ✈️</span>
+                      </a>
+
+                      <a
+                        href={telegramUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={`w-full py-2.5 px-3 rounded-xl border text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                          isDarkMode
+                            ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
+                            : 'bg-slate-100 hover:bg-slate-200 text-slate-800 border-slate-300'
+                        }`}
+                      >
+                        <Zap className="w-3.5 h-3.5 text-sky-400" />
+                        <span>إرسال إشعار تحويل عبر التليجرام</span>
+                      </a>
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
           </div>
         </div>
       </main>
+
+      {/* ================= FOOTER WITH THE 3 EXACT SENTENCES ================= */}
+      {/* "واجعل لما الماوس يجي على الجملة اللي بتدخل قسم التحكم يكون عادي وطبيعي ولا يتحول كأنه زر واجعل الجملة اللتي تدخل لقسم التحكم يلزم الضغط على كلمة محفوظة 20 مرة" */}
+      <footer
+        className={`mt-auto py-6 px-6 md:px-12 border-t select-none transition-colors ${
+          isDarkMode ? 'bg-slate-950 border-slate-800/80 text-slate-400' : 'bg-white border-slate-200 text-slate-800'
+        }`}
+      >
+        <div className="max-w-[1700px] mx-auto flex flex-col md:flex-row items-center justify-between gap-4 text-xs md:text-sm font-bold">
+          {/* Sentence 1: ON THE RIGHT (عاليمين) */}
+          <div className={`text-right w-full md:w-1/3 ${isDarkMode ? 'text-slate-300' : 'text-slate-800 font-bold'}`}>
+            المصمم مازن محمد محروس
+          </div>
+
+          {/* Sentence 2: IN THE CENTER (فالنص - 20 clicks strictly on 'محفوظة' without pointer or hover effect) */}
+          <div
+            className={`text-center w-full md:w-1/3 cursor-default select-none py-1 ${
+              isDarkMode ? 'text-slate-300' : 'text-slate-900 font-black'
+            }`}
+          >
+            جميع محتويات المنصة <span onClick={handleSecretWordClick} className="cursor-default select-none">محفوظة</span> لمنصة أقسام رعد
+          </div>
+
+          {/* Sentence 3: ON THE LEFT (عاليسار) */}
+          <div className="text-left w-full md:w-1/3 text-amber-500 font-black">
+            منصة أقسام رعد تضمن لك المئوية بإذن الله
+          </div>
+        </div>
+      </footer>
 
       {/* ================= MODAL: تفاصيل سعر الكورس (STEP 1) & الدفع الآن (STEP 2) ================= */}
       {isPriceModalOpen && selectedCourse && (

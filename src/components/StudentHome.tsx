@@ -321,9 +321,20 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
     }
   }, [selectedResourceId]);
 
-  // Secret 7 clicks tracker on footer center sentence
+  // Secret 20 clicks tracker on footer center sentence strictly on the word "محفوظة"
   const [secretClickCount, setSecretClickCount] = useState(0);
   const [lastClickTime, setLastClickTime] = useState(0);
+
+  // Optimistic watched video IDs for instantaneous (0ms) feedback
+  const [optimisticWatchedVideoIds, setOptimisticWatchedVideoIds] = useState<string[]>(
+    () => currentUser.watchedVideoIds || []
+  );
+
+  useEffect(() => {
+    if (currentUser.watchedVideoIds) {
+      setOptimisticWatchedVideoIds(currentUser.watchedVideoIds);
+    }
+  }, [currentUser.watchedVideoIds]);
 
   // Real-time listener for sections, resources, items with background cache sync
   useEffect(() => {
@@ -474,18 +485,19 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
     }
   }
 
-  // Handle secret 7 clicks on center footer sentence
-  const handleFooterSentenceClick = () => {
+  // Handle secret 20 clicks strictly on the word "محفوظة"
+  const handleSecretWordClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
     const now = Date.now();
-    if (now - lastClickTime > 2500) {
-      setSecretClickCount(1);
-    } else {
+    if (now - lastClickTime < 4000) {
       const nextCount = secretClickCount + 1;
       setSecretClickCount(nextCount);
-      if (nextCount >= 7) {
+      if (nextCount >= 20) {
         setSecretClickCount(0);
         onSecretTriggerAdmin();
       }
+    } else {
+      setSecretClickCount(1);
     }
     setLastClickTime(now);
   };
@@ -497,9 +509,17 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
     setActiveVideo(vid);
   };
 
-  // Toggle watch confirmation manually (or cancel progress: "ويمكنه الضغط عليه لالغاء التقدم")
+  // Toggle watch confirmation manually with optimistic 0ms latency
   const handleToggleWatchVideo = async (videoId: string) => {
-    const isCurrentlyWatched = currentUser.watchedVideoIds?.includes(videoId);
+    const isCurrentlyWatched = optimisticWatchedVideoIds.includes(videoId);
+    const updated = isCurrentlyWatched
+      ? optimisticWatchedVideoIds.filter((id) => id !== videoId)
+      : [...optimisticWatchedVideoIds, videoId];
+
+    // 1. Instant local optimistic update
+    setOptimisticWatchedVideoIds(updated);
+
+    // 2. Persist to Firestore asynchronously
     try {
       const userRef = doc(db, 'users', currentUser.id);
       if (isCurrentlyWatched) {
@@ -513,12 +533,15 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
       }
     } catch (err) {
       console.error('Error toggling watched video status:', err);
+      // Revert if error
+      setOptimisticWatchedVideoIds(currentUser.watchedVideoIds || []);
     }
   };
 
-  // Automatically activate when video finishes to the end: "اذا تم مشاهدة الفيديو للاخير يتفعل تلقائيا"
+  // Automatically activate when video finishes to the end
   const handleVideoEnded = async (videoId: string) => {
-    if (currentUser.watchedVideoIds?.includes(videoId)) return;
+    if (optimisticWatchedVideoIds.includes(videoId)) return;
+    setOptimisticWatchedVideoIds((prev) => [...prev, videoId]);
     try {
       const userRef = doc(db, 'users', currentUser.id);
       await updateDoc(userRef, {
@@ -846,11 +869,8 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
         <footer className="w-full py-4 border-t border-slate-900 select-none">
           <div className="max-w-[1700px] mx-auto flex flex-col md:flex-row items-center justify-between gap-3 text-xs text-slate-500 font-semibold px-4">
             <div className="text-right w-full md:w-1/3">المصمم مازن محمد محروس</div>
-            <div
-              onClick={handleFooterSentenceClick}
-              className="text-center w-full md:w-1/3 cursor-pointer hover:text-amber-400 transition"
-            >
-              جميع محتويات المنصة محفوظة لمنصة اقسام رعد
+            <div className="text-center w-full md:w-1/3 cursor-default select-none py-1">
+              جميع محتويات المنصة <span onClick={handleSecretWordClick} className="cursor-default select-none">محفوظة</span> لمنصة اقسام رعد
             </div>
             <div className="text-left w-full md:w-1/3 text-amber-500/80">
               منصة اقسام رعد تضمن لك المئوية باذن الله
@@ -939,11 +959,8 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
         <footer className="w-full py-4 border-t border-slate-900 select-none">
           <div className="max-w-[1700px] mx-auto flex flex-col md:flex-row items-center justify-between gap-3 text-xs text-slate-500 font-semibold px-4">
             <div className="text-right w-full md:w-1/3">المصمم مازن محمد محروس</div>
-            <div
-              onClick={handleFooterSentenceClick}
-              className="text-center w-full md:w-1/3 cursor-pointer hover:text-amber-400 transition"
-            >
-              جميع محتويات المنصة محفوظة لمنصة اقسام رعد
+            <div className="text-center w-full md:w-1/3 cursor-default select-none py-1">
+              جميع محتويات المنصة <span onClick={handleSecretWordClick} className="cursor-default select-none">محفوظة</span> لمنصة اقسام رعد
             </div>
             <div className="text-left w-full md:w-1/3 text-amber-500/80">
               منصة اقسام رعد تضمن لك المئوية باذن الله
@@ -991,11 +1008,8 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
         <footer className="w-full py-4 border-t border-slate-900 select-none">
           <div className="max-w-[1700px] mx-auto flex flex-col md:flex-row items-center justify-between gap-3 text-xs text-slate-500 font-semibold px-4">
             <div className="text-right w-full md:w-1/3">المصمم مازن محمد محروس</div>
-            <div
-              onClick={handleFooterSentenceClick}
-              className="text-center w-full md:w-1/3 cursor-pointer hover:text-amber-400 transition"
-            >
-              جميع محتويات المنصة محفوظة لمنصة اقسام رعد
+            <div className="text-center w-full md:w-1/3 cursor-default select-none py-1">
+              جميع محتويات المنصة <span onClick={handleSecretWordClick} className="cursor-default select-none">محفوظة</span> لمنصة اقسام رعد
             </div>
             <div className="text-left w-full md:w-1/3 text-amber-500/80">
               منصة اقسام رعد تضمن لك المئوية باذن الله
@@ -1602,7 +1616,7 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                       <div className="py-8 text-center text-xs text-slate-500 font-bold">لا توجد فيديوهات في هذا المصدر</div>
                     ) : (
                       resourceVideos.map((v, vIdx) => {
-                        const isWatched = currentUser.watchedVideoIds?.includes(v.id);
+                        const isWatched = optimisticWatchedVideoIds.includes(v.id);
                         const isCurrent = activeVideo?.id === v.id;
 
                         return (
@@ -1845,7 +1859,7 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                       controls
                       controlsList="nodownload"
                       onContextMenu={(e) => e.preventDefault()}
-                      preload="metadata"
+                      preload="auto"
                       autoPlay={false}
                       playsInline
                       className="w-full h-full object-contain"
@@ -1887,7 +1901,7 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                 );
               }
 
-              const isWatched = currentUser.watchedVideoIds?.includes(activeVideoItem.id);
+              const isWatched = optimisticWatchedVideoIds.includes(activeVideoItem.id);
 
               return (
                 <div
@@ -1966,7 +1980,7 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                       controls
                       controlsList="nodownload"
                       onContextMenu={(e) => e.preventDefault()}
-                      preload="metadata"
+                      preload="auto"
                       autoPlay={false}
                       playsInline
                       onEnded={() => handleVideoEnded(activeVideoItem.id)}
@@ -2207,14 +2221,13 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
             المصمم مازن محمد محروس
           </div>
 
-          {/* Sentence 2: IN THE CENTER (فالنص - 7 clicks triggers admin password!) */}
+          {/* Sentence 2: IN THE CENTER (فالنص - 20 clicks strictly on 'محفوظة' without pointer or hover effect) */}
           <div
-            onClick={handleFooterSentenceClick}
-            className={`text-center w-full md:w-1/3 cursor-pointer hover:text-amber-500 transition-colors py-1 ${
+            className={`text-center w-full md:w-1/3 cursor-default select-none py-1 ${
               isDarkMode ? 'text-slate-300' : 'text-slate-900 font-black'
             }`}
           >
-            جميع محتويات المنصة محفوظة لمنصة اقسام رعد
+            جميع محتويات المنصة <span onClick={handleSecretWordClick} className="cursor-default select-none">محفوظة</span> لمنصة اقسام رعد
           </div>
 
           {/* Sentence 3: ON THE LEFT (عاليسار) */}
@@ -2841,7 +2854,7 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                       controls
                       controlsList="nodownload"
                       onContextMenu={(e) => e.preventDefault()}
-                      preload="metadata"
+                      preload="auto"
                       autoPlay={false}
                       playsInline
                       className="w-full h-full object-contain"

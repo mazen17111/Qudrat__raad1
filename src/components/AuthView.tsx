@@ -47,21 +47,22 @@ export const AuthView: React.FC<AuthViewProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // 7 clicks on footer sentence 2
+  // 20 clicks on the word "محفوظة" in footer sentence 2
   const [secretClickCount, setSecretClickCount] = useState(0);
   const [lastClickTime, setLastClickTime] = useState(0);
 
-  const handleFooterSentenceClick = () => {
+  const handleSecretWordClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
     const now = Date.now();
-    if (now - lastClickTime > 2500) {
-      setSecretClickCount(1);
-    } else {
+    if (now - lastClickTime < 4000) {
       const nextCount = secretClickCount + 1;
       setSecretClickCount(nextCount);
-      if (nextCount >= 7) {
+      if (nextCount >= 20) {
         setSecretClickCount(0);
         onSecretTriggerAdmin();
       }
+    } else {
+      setSecretClickCount(1);
     }
     setLastClickTime(now);
   };
@@ -357,14 +358,13 @@ export const AuthView: React.FC<AuthViewProps> = ({
             المصمم مازن محمد محروس
           </div>
 
-          {/* Sentence 2: IN THE CENTER (فالنص - 7 clicks triggers admin password!) */}
+          {/* Sentence 2: IN THE CENTER (فالنص - 20 clicks strictly on 'محفوظة' without pointer or hover effect) */}
           <div
-            onClick={handleFooterSentenceClick}
-            className={`text-center w-full md:w-1/3 cursor-pointer hover:text-amber-500 transition-colors py-1 ${
+            className={`text-center w-full md:w-1/3 cursor-default select-none py-1 ${
               isDarkMode ? 'text-slate-300' : 'text-slate-900 font-bold'
             }`}
           >
-            جميع محتويات المنصة محفوظة لمنصة اقسام رعد
+            جميع محتويات المنصة <span onClick={handleSecretWordClick} className="cursor-default select-none">محفوظة</span> لمنصة اقسام رعد
           </div>
 
           {/* Sentence 3: ON THE LEFT (عاليسار) */}
