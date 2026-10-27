@@ -68,6 +68,8 @@ import { FoldersModal } from './FoldersModal';
 import { FeaturesModal } from './FeaturesModal';
 import { ExamRunner } from './ExamRunner';
 import { ErrorBoundary } from './ErrorBoundary';
+import { CertificateModal } from './CertificateModal';
+import { SmartVideoPlayer } from './SmartVideoPlayer';
 
 interface StudentHomeProps {
   currentUser: StudentUser;
@@ -141,6 +143,7 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
   const [showStatsModal, setShowStatsModal] = useState(false);
   const [showFoldersModal, setShowFoldersModal] = useState(false);
   const [showFeaturesModal, setShowFeaturesModal] = useState(false);
+  const [showCertificateModal, setShowCertificateModal] = useState(false);
 
   // Active exam state
   const [activeExam, setActiveExam] = useState<{
@@ -292,17 +295,13 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
     });
   }, []);
 
-  // Explicitly pause video whenever student navigates between sections, resources, tabs (files/exams), or starts an exam
+  // Explicitly pause video only when student switches sections or starts an exam
   useEffect(() => {
-    pauseAllVideos();
-  }, [selectedSectionId, selectedResourceId, activeTab, activeExam, examToStart]);
-
-  // Whenever active video changes, ensure the new video is strictly PAUSED and never auto-plays
-  useEffect(() => {
-    if (mainVideoRef.current) {
-      mainVideoRef.current.pause();
+    if (activeExam || examToStart) {
+      pauseAllVideos();
     }
-  }, [activeVideo?.id]);
+  }, [activeExam, examToStart]);
+
 
   // Cache selected IDs whenever they change
   useEffect(() => {
@@ -1122,6 +1121,17 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
             <span className={isDarkMode ? 'text-white' : 'text-slate-900 font-bold'}>احصائياتي</span>
           </button>
 
+          {currentUser.certificateIssued && (
+            <button
+              onClick={() => setShowCertificateModal(true)}
+              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl text-[11px] sm:text-xs font-black border transition shadow-md bg-gradient-to-r from-amber-500/20 to-yellow-500/20 border-amber-400 text-amber-300 hover:scale-105 cursor-pointer"
+              title="عرض وطباعة شهادتي المعتمدة"
+            >
+              <Award className="w-3.5 h-3.5 text-amber-400" />
+              <span>شهادتي 🎓</span>
+            </button>
+          )}
+
           <button
             onClick={() => setShowFoldersModal(true)}
             className="flex items-center gap-1 px-2 sm:px-3 py-1.5 sm:py-2 rounded-xl text-[11px] sm:text-xs font-bold border transition shadow-sm hover:scale-105"
@@ -1156,6 +1166,70 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
           </button>
         </div>
       </header>
+
+      {/* ================= CUSTOM RED MESSAGE FOR THIS STUDENT ================= */}
+      {/* "ويمكنني كتابة رسالة مخصصة لكل طالب تظهر له باللون الاحمر" */}
+      {currentUser.customRedMessage && (
+        <div className="w-full max-w-[1700px] mx-auto px-2.5 sm:px-4 md:px-8 pt-3">
+          <div className="p-3.5 sm:p-4 rounded-2xl bg-gradient-to-r from-red-600 via-rose-600 to-red-700 text-white shadow-xl shadow-red-600/30 border-2 border-red-400/80 flex items-start sm:items-center justify-between gap-3 animate-in fade-in duration-200">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-white/20 backdrop-blur-sm flex items-center justify-center text-white shrink-0 shadow-inner">
+                <AlertTriangle className="w-5 h-5 animate-pulse" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="font-black text-xs sm:text-sm tracking-wide">
+                    🚨 تنبيه مخصص من إدارة المنصة:
+                  </span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-black/25 font-bold">
+                    رسالة هامة لك
+                  </span>
+                </div>
+                <p className="text-xs sm:text-sm font-bold text-red-50 mt-1 leading-relaxed">
+                  {currentUser.customRedMessage}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= OFFICIAL CERTIFICATE ANNOUNCEMENT BANNER ================= */}
+      {/* "ويمكنني اصدار شهادة لكل طالب بالاسم المسجل في المنصة ويكون تصميم الشهادة شيك جدا وفيه شعاري المرفوع وتوقيه باسمي وباسم المنصة" */}
+      {currentUser.certificateIssued && (
+        <div className="w-full max-w-[1700px] mx-auto px-2.5 sm:px-4 md:px-8 pt-3">
+          <div className="p-3.5 sm:p-4 rounded-2xl bg-gradient-to-r from-amber-600 via-yellow-600 to-amber-700 text-white shadow-xl shadow-amber-600/25 border-2 border-yellow-300/80 flex flex-wrap items-center justify-between gap-3 animate-in fade-in duration-200">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-black/25 backdrop-blur-sm flex items-center justify-center text-amber-200 shrink-0 text-xl shadow-inner">
+                🎓
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h4 className="font-black text-xs sm:text-sm">
+                    تهانينا يا {currentUser.name}! تم إصدار شهادة تفوق معتمدة لك 📜
+                  </h4>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-black/30 text-amber-200 font-mono font-bold">
+                    رقم: {currentUser.certificateIssued.serialNumber}
+                  </span>
+                </div>
+                <p className="text-[11px] sm:text-xs text-amber-100 font-medium mt-0.5">
+                  دورة: {currentUser.certificateIssued.courseTitle} | التقدير: {currentUser.certificateIssued.gradeText}
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowCertificateModal(true)}
+              className="px-4 py-2 rounded-xl bg-slate-950 hover:bg-slate-900 text-amber-300 hover:text-amber-200 font-black text-xs border border-amber-400/60 shadow-lg shadow-black/40 transition flex items-center gap-2 cursor-pointer transform hover:scale-105"
+            >
+              <Award className="w-4 h-4 text-amber-400" />
+              <span>عرض وطباعة شهادتي 🖨️</span>
+            </button>
+          </div>
+        </div>
+      )}
+
 
       {/* Global Announcement Alert Banner (if enabled) */}
       {systemSettings.announcement?.isActive && (
@@ -1843,26 +1917,18 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                   </button>
                 </div>
 
-                {/* Video Container (No download option on 3 dots) with Platform Logo */}
-                <div className="aspect-video w-full rounded-2xl overflow-hidden bg-black relative shadow-inner border border-slate-800 group">
-                  {/* Platform Logo Watermark on Video */}
-                  <div className="absolute top-3 left-3 z-10 pointer-events-none flex items-center gap-2 px-2.5 py-1 rounded-xl bg-black/60 backdrop-blur-md border border-white/20 shadow-lg select-none opacity-85 group-hover:opacity-100 transition-opacity">
-                    <BrandLogo customLogoUrl={systemSettings.logoUrl} size="sm" primaryColor={activeTheme?.primary} />
-                    <span className="text-[11px] font-black text-white tracking-wide">أقسام رعد ⚡</span>
-                  </div>
-
+                {/* Video Container with Smart Smooth Player and Platform Logo */}
+                <div className="aspect-video w-full rounded-2xl overflow-hidden bg-black relative shadow-inner border border-slate-800">
                   {effectiveIntroLesson.videoUrl ? (
-                    <video
-                      ref={introVideoRef}
-                      key={`intro-left-${effectiveIntroLesson.videoUrl}`}
-                      src={effectiveIntroLesson.videoUrl}
-                      controls
-                      controlsList="nodownload"
-                      onContextMenu={(e) => e.preventDefault()}
-                      preload="auto"
-                      autoPlay={false}
-                      playsInline
-                      className="w-full h-full object-contain"
+                    <SmartVideoPlayer
+                      url={effectiveIntroLesson.videoUrl}
+                      title={effectiveIntroLesson.title || 'الحصة التعريفية'}
+                      watermarkContent={
+                        <div className="absolute top-3 left-3 z-10 pointer-events-none flex items-center gap-2 px-2.5 py-1 rounded-xl bg-black/60 backdrop-blur-md border border-white/20 shadow-lg select-none opacity-85 group-hover:opacity-100 transition-opacity">
+                          <BrandLogo customLogoUrl={systemSettings.logoUrl} size="sm" primaryColor={activeTheme?.primary} />
+                          <span className="text-[11px] font-black text-white tracking-wide">أقسام رعد ⚡</span>
+                        </div>
+                      }
                     />
                   ) : (
                     <div className="w-full h-full flex flex-col items-center justify-center p-8 text-center text-slate-500 space-y-2">
@@ -1965,26 +2031,18 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                     </div>
                   </div>
 
-                  {/* Video Container with Platform Logo Watermark */}
-                  <div className="aspect-video w-full rounded-2xl overflow-hidden bg-black relative shadow-inner group">
-                    {/* Platform Logo Watermark on Video */}
-                    <div className="absolute top-3 left-3 z-10 pointer-events-none flex items-center gap-2 px-2.5 py-1 rounded-xl bg-black/60 backdrop-blur-md border border-white/20 shadow-lg select-none opacity-85 group-hover:opacity-100 transition-opacity">
-                      <BrandLogo customLogoUrl={systemSettings.logoUrl} size="sm" primaryColor={activeTheme?.primary} />
-                      <span className="text-[11px] font-black text-white tracking-wide">أقسام رعد ⚡</span>
-                    </div>
-
-                    <video
-                      ref={mainVideoRef}
-                      key={activeVideoItem.id}
-                      src={activeVideoItem.url}
-                      controls
-                      controlsList="nodownload"
-                      onContextMenu={(e) => e.preventDefault()}
-                      preload="auto"
-                      autoPlay={false}
-                      playsInline
+                  {/* Video Container with Smart Smooth Player and Platform Logo Watermark */}
+                  <div className="aspect-video w-full rounded-2xl overflow-hidden bg-black relative shadow-inner">
+                    <SmartVideoPlayer
+                      url={activeVideoItem.url || ''}
+                      title={activeVideoItem.title}
                       onEnded={() => handleVideoEnded(activeVideoItem.id)}
-                      className="w-full h-full object-contain"
+                      watermarkContent={
+                        <div className="absolute top-3 left-3 z-10 pointer-events-none flex items-center gap-2 px-2.5 py-1 rounded-xl bg-black/60 backdrop-blur-md border border-white/20 shadow-lg select-none opacity-85 group-hover:opacity-100 transition-opacity">
+                          <BrandLogo customLogoUrl={systemSettings.logoUrl} size="sm" primaryColor={activeTheme?.primary} />
+                          <span className="text-[11px] font-black text-white tracking-wide">أقسام رعد ⚡</span>
+                        </div>
+                      }
                     />
                   </div>
 
@@ -2973,6 +3031,17 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
             />
           </div>
         </div>
+      )}
+
+      {/* ================= MODAL: VIEW & PRINT OFFICIAL CERTIFICATE ================= */}
+      {currentUser.certificateIssued && (
+        <CertificateModal
+          isOpen={showCertificateModal}
+          onClose={() => setShowCertificateModal(false)}
+          certificate={currentUser.certificateIssued}
+          logoUrl={systemSettings.logoUrl}
+          primaryColor={activeTheme?.primary || '#2563eb'}
+        />
       )}
     </div>
   );

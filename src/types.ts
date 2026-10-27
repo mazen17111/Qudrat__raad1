@@ -1,3 +1,21 @@
+export interface CertificateData {
+  id?: string;
+  certificateId?: string;
+  studentName: string;
+  courseTitle: string;
+  issuedAt?: string;
+  issueDate?: string;
+  certificateNumber?: string;
+  serialNumber?: string;
+  directorName?: string;
+  platformName?: string;
+  scoreAverage?: number;
+  gradeText?: string;
+  customNote?: string;
+  notes?: string;
+  logoUrl?: string;
+}
+
 export interface StudentUser {
   id: string;
   name: string;
@@ -19,6 +37,10 @@ export interface StudentUser {
   createdAt: string;
   lastLoginAt?: string;
   enrolledCourseIds?: string[]; // معرّفات الكورسات المفعلة والمدفوعة لهذا الطالب
+  customRedMessage?: string; // رسالة مخصصة لكل طالب تظهر له باللون الأحمر
+  certificateIssued?: CertificateData; // شهادة الطالب المعتمدة والمصدرة من الإدارة
+  isDeleted?: boolean; // علامة الحذف لتسجيل الخروج الفوري للطالب في وقتها
+  deletedAt?: string;
 }
 
 export interface CourseItem {
@@ -124,6 +146,7 @@ export interface ExamAttempt {
   percentage: number;
   isTimed: boolean;
   durationSeconds: number;
+  targetPercentage?: number;
   createdAt: string;
 }
 

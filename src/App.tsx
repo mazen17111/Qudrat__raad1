@@ -168,16 +168,23 @@ export default function App() {
     const unsubUser = onSnapshot(
       doc(db, 'users', currentUser.id),
       (docSnap) => {
-        if (docSnap.exists()) {
-          const updated = { id: docSnap.id, ...docSnap.data() } as StudentUser;
-          setCurrentUser(updated);
+        if (!docSnap.exists() || (docSnap.data() as any)?.isDeleted) {
+          // Account was deleted by admin (normal or permanent delete) -> Log out immediately so the platform is closed in real-time!
+          setCurrentUser(null);
           try {
-            localStorage.setItem(STUDENT_SESSION_KEY, JSON.stringify(updated));
+            localStorage.removeItem(STUDENT_SESSION_KEY);
           } catch (e) {}
+          return;
         }
+
+        const updated = { id: docSnap.id, ...docSnap.data() } as StudentUser;
+        setCurrentUser(updated);
+        try {
+          localStorage.setItem(STUDENT_SESSION_KEY, JSON.stringify(updated));
+        } catch (e) {}
       },
       (error) => {
-        console.warn('Realtime user sync notice (student session preserved):', error);
+        console.warn('Realtime user sync notice:', error);
       }
     );
 

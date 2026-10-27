@@ -48,6 +48,9 @@ import {
   Image as ImageIcon,
   Eye,
   EyeOff,
+  ChevronDown,
+  ChevronUp,
+  Printer,
 } from 'lucide-react';
 import {
   StudentUser,
@@ -60,8 +63,11 @@ import {
   IntroLessonConfig,
   FeaturesConfig,
   CourseItem,
+  CertificateData,
+  ExamAttempt,
 } from '../types';
 import { BrandLogo } from './BrandLogo';
+import { CertificateModal } from './CertificateModal';
 import { db, THEME_PRESETS, DEFAULT_SETTINGS, INITIAL_COURSES, restoreDefaultCoursesAndContent } from '../firebase';
 import {
   collection,
@@ -131,6 +137,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
 
   // Deletion modal for students
   const [deletingStudent, setDeletingStudent] = useState<StudentUser | null>(null);
+
+  // Student Expanded Dossier (Watched videos, solved exams, red message, certificate issuance)
+  const [expandedStudentId, setExpandedStudentId] = useState<string | null>(null);
+  const [examAttempts, setExamAttempts] = useState<ExamAttempt[]>([]);
+  const [studentRedMessageInput, setStudentRedMessageInput] = useState<{ [id: string]: string }>({});
+  const [isSavingRedMessage, setIsSavingRedMessage] = useState<{ [id: string]: boolean }>({});
+  const [issuingCertStudent, setIssuingCertStudent] = useState<StudentUser | null>(null);
+  const [previewCertModalData, setPreviewCertModalData] = useState<CertificateData | null>(null);
+  const [certFormCourse, setCertFormCourse] = useState<string>('');
+  const [certFormGrade, setCertFormGrade] = useState<string>('ممتاز مرتفع بنسبة 100%');
+  const [certFormDirector, setCertFormDirector] = useState<string>('أ. رعد / المشرف العام');
+  const [certFormPlatform, setCertFormPlatform] = useState<string>('منصة أقسام رعد للقدرات والتحصيلي');
+  const [certFormNotes, setCertFormNotes] = useState<string>('تقديراً لاجتيازه كافة الاختبارات والمحاضرات بتفوق واقتدار نتمنى له دوام التوفيق والنجاح.');
+  const [isIssuingCert, setIsIssuingCert] = useState<boolean>(false);
 
   // Unified Delete Confirmation Modal State (Sections, Resources, Items)
   interface DeleteTarget {
@@ -274,6 +294,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       setStudents(list);
     });
     return () => unsub();
+  }, []);
+
+  // Listen to student exam attempts in real-time
+  useEffect(() => {
+    const unsubAttempts = onSnapshot(collection(db, 'exam_attempts'), (snapshot) => {
+      const list: ExamAttempt[] = [];
+      snapshot.forEach((d) => {
+        list.push({ id: d.id, ...d.data() } as ExamAttempt);
+      });
+      list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      setExamAttempts(list);
+    });
+    return () => unsubAttempts();
   }, []);
 
   // Listen to sections, resources, items in real-time
@@ -507,13 +540,97 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         });
       }
 
+      // 1. Immediately signal active student session to log out with 0ms delay
+      await updateDoc(doc(db, 'users', deletingStudent.id), {
+        isDeleted: true,
+        deletedAt: new Date().toISOString(),
+      }).catch(() => {});
+
+      // 2. Permanently remove the user document from Firestore
       await deleteDoc(doc(db, 'users', deletingStudent.id));
       setStudents((prev) => prev.filter((st) => st.id !== deletingStudent.id));
       setDeletingStudent(null);
-      notifySave(isPermanent ? 'تم الحذف الدائم وحظر البريد بنجاح 🗑️' : 'تم الحذف العادي للحساب بنجاح 🗑️');
+      notifySave(isPermanent ? 'تم الحذف الدائم وحظر البريد وإخراج الطالب فورياً 🗑️' : 'تم الحذف العادي للحساب وإخراج الطالب فورياً 🗑️');
     } catch (err) {
       console.error('Error deleting student:', err);
       notifySave('حدث خطأ أثناء حذف الحساب');
+    }
+  };
+
+  // 4.1. Save / Clear Custom Red Message for specific student
+  const handleSaveCustomRedMessage = async (studentId: string, message: string) => {
+    setIsSavingRedMessage((prev) => ({ ...prev, [studentId]: true }));
+    try {
+      await updateDoc(doc(db, 'users', studentId), {
+        customRedMessage: message.trim(),
+      });
+      setStudents((prev) =>
+        prev.map((s) => (s.id === studentId ? { ...s, customRedMessage: message.trim() } : s))
+      );
+      notifySave(message.trim() ? 'تم حفظ وإرسال التنبيه الأحمر للطالب بنجاح! 🚨' : 'تم مسح التنبيه بنجاح');
+    } catch (err) {
+      console.error('Error saving red message:', err);
+      notifySave('حدث خطأ أثناء حفظ التنبيه');
+    } finally {
+      setIsSavingRedMessage((prev) => ({ ...prev, [studentId]: false }));
+    }
+  };
+
+  // 4.2. Open Certificate issuance modal
+  const handleOpenIssueCertModal = (student: StudentUser) => {
+    setIssuingCertStudent(student);
+    const firstCourseTitle = courses[0]?.title || 'دورة القدرات العامة الشاملة';
+    setCertFormCourse(student.certificateIssued?.courseTitle || firstCourseTitle);
+    setCertFormGrade(student.certificateIssued?.gradeText || 'ممتاز مرتفع بنسبة 100%');
+    setCertFormDirector(student.certificateIssued?.directorName || 'أ. رعد / المشرف العام');
+    setCertFormPlatform(student.certificateIssued?.platformName || 'منصة أقسام رعد للقدرات والتحصيلي');
+    setCertFormNotes(
+      student.certificateIssued?.notes ||
+        'تقديراً لاجتيازه كافة الاختبارات والمحاضرات بتفوق واقتدار نتمنى له دوام التوفيق والنجاح.'
+    );
+  };
+
+  // 4.3. Confirm issuance of certificate
+  const handleConfirmIssueCertificate = async () => {
+    if (!issuingCertStudent) return;
+    setIsIssuingCert(true);
+    try {
+      const serialNum =
+        issuingCertStudent.certificateIssued?.serialNumber ||
+        `RAAD-CERT-${new Date().getFullYear()}-${Math.floor(100000 + Math.random() * 900000)}`;
+
+      const certData: CertificateData = {
+        certificateId: `cert_${issuingCertStudent.id}_${Date.now()}`,
+        studentName: issuingCertStudent.name,
+        courseTitle: certFormCourse.trim() || 'دورة القدرات العامة الشاملة',
+        issueDate: new Date().toLocaleDateString('ar-SA', {
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+        }),
+        gradeText: certFormGrade.trim() || 'ممتاز مرتفع بنسبة 100%',
+        directorName: certFormDirector.trim() || 'أ. رعد / المشرف العام',
+        platformName: certFormPlatform.trim() || 'منصة أقسام رعد للقدرات والتحصيلي',
+        serialNumber: serialNum,
+        logoUrl: systemSettings.logoUrl || '',
+        notes: certFormNotes.trim(),
+      };
+
+      await updateDoc(doc(db, 'users', issuingCertStudent.id), {
+        certificateIssued: certData,
+      });
+
+      setStudents((prev) =>
+        prev.map((s) => (s.id === issuingCertStudent.id ? { ...s, certificateIssued: certData } : s))
+      );
+
+      notifySave(`تم إصدار الشهادة الرسمية للطالب "${issuingCertStudent.name}" بنجاح! 🎓`);
+      setIssuingCertStudent(null);
+    } catch (err) {
+      console.error('Error issuing certificate:', err);
+      notifySave('حدث خطأ أثناء إصدار الشهادة');
+    } finally {
+      setIsIssuingCert(false);
     }
   };
 
@@ -2258,198 +2375,537 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                           elapsedDays = Math.max(0, (st.daysAllowed || 30) - daysLeft);
                         }
 
+                        const isExpanded = expandedStudentId === st.id;
+                        const studentWatchedIds = st.watchedVideoIds || [];
+                        const studentAttempts = examAttempts.filter((a) => a.userId === st.id);
+                        const currentRedInput =
+                          studentRedMessageInput[st.id] !== undefined
+                            ? studentRedMessageInput[st.id]
+                            : st.customRedMessage || '';
+
                         return (
-                          <tr key={st.id} className="hover:bg-slate-800/40 transition">
-                            {/* Name & status badges */}
-                            <td className="p-4">
-                              <div className="font-bold text-white flex items-center gap-2">
-                                <span>{st.name}</span>
-                                {st.isUnlimited && (
-                                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30 flex items-center gap-1">
-                                    <InfinityIcon className="w-3 h-3" />
-                                    مفتوح دائم
-                                  </span>
-                                )}
-                                {st.isIndividuallyWhitelisted && (
-                                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                                    مستثنى
-                                  </span>
-                                )}
-                                {st.isIndividuallyBlocked && (
-                                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30">
-                                    محظور ({st.blockedReason === 'maintenance' ? 'صيانة' : st.blockedReason === 'subscription' ? 'اشتراك' : 'مشرف'})
-                                  </span>
-                                )}
-                              </div>
-                              <span className="text-[11px] text-slate-400">
-                                انضم: {new Date(st.createdAt).toLocaleDateString('ar-SA')}
-                              </span>
-                            </td>
-
-                            {/* Email */}
-                            <td className="p-4 text-slate-300 font-mono text-xs">{st.email}</td>
-
-                            {/* Password with View Toggle: "مشاهدة كلمة مرور حساب كل طالب" */}
-                            <td className="p-4">
-                              <div className="flex items-center gap-1.5 font-mono text-xs font-bold text-amber-300 bg-slate-800/80 px-2.5 py-1 rounded-xl border border-slate-700/60 w-fit">
-                                <span>
-                                  {visiblePasswords[st.id] || showAllPasswords
-                                    ? st.password || 'لا توجد'
-                                    : '••••••••'}
+                          <React.Fragment key={st.id}>
+                            <tr className={`hover:bg-slate-800/40 transition ${isExpanded ? 'bg-slate-800/60 border-l-4 border-amber-500' : ''}`}>
+                              {/* Name & status badges with Expand Arrow ("سهم بجانب اسم كل طالب") */}
+                              <td className="p-4">
+                                <div className="font-bold text-white flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setExpandedStudentId(isExpanded ? null : st.id);
+                                      if (studentRedMessageInput[st.id] === undefined && st.customRedMessage) {
+                                        setStudentRedMessageInput((prev) => ({
+                                          ...prev,
+                                          [st.id]: st.customRedMessage || '',
+                                        }));
+                                      }
+                                    }}
+                                    className={`p-1.5 rounded-xl border transition cursor-pointer flex items-center justify-center shrink-0 ${
+                                      isExpanded
+                                        ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-md shadow-amber-500/30'
+                                        : 'bg-slate-800 text-slate-300 border-slate-700 hover:text-amber-400 hover:border-amber-500/50'
+                                    }`}
+                                    title={isExpanded ? 'إغلاق ملف الطالب' : 'فتح ملف إنجازات الطالب (الفيديوهات المشاهدة، الاختبارات والدرجات، التنبيه الأحمر، الشهادة)'}
+                                  >
+                                    {isExpanded ? (
+                                      <ChevronUp className="w-4 h-4 stroke-[2.5]" />
+                                    ) : (
+                                      <ChevronDown className="w-4 h-4 stroke-[2.5]" />
+                                    )}
+                                  </button>
+                                  <span className="text-sm">{st.name}</span>
+                                  {st.customRedMessage && (
+                                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 font-bold flex items-center gap-1">
+                                      <AlertTriangle className="w-3 h-3 text-rose-400" />
+                                      تنبيه أحمر
+                                    </span>
+                                  )}
+                                  {st.certificateIssued && (
+                                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold flex items-center gap-1">
+                                      <Award className="w-3 h-3 text-amber-400" />
+                                      شهادة صادرة
+                                    </span>
+                                  )}
+                                  {st.isUnlimited && (
+                                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30 flex items-center gap-1">
+                                      <InfinityIcon className="w-3 h-3" />
+                                      مفتوح دائم
+                                    </span>
+                                  )}
+                                  {st.isIndividuallyWhitelisted && (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                                      مستثنى
+                                    </span>
+                                  )}
+                                  {st.isIndividuallyBlocked && (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                                      محظور ({st.blockedReason === 'maintenance' ? 'صيانة' : st.blockedReason === 'subscription' ? 'اشتراك' : 'مشرف'})
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="text-[11px] text-slate-400 block mt-0.5 mr-7">
+                                  انضم: {new Date(st.createdAt).toLocaleDateString('ar-SA')}
                                 </span>
+                              </td>
+
+                              {/* Email */}
+                              <td className="p-4 text-slate-300 font-mono text-xs">{st.email}</td>
+
+                              {/* Password with View Toggle: "مشاهدة كلمة مرور حساب كل طالب" */}
+                              <td className="p-4">
+                                <div className="flex items-center gap-1.5 font-mono text-xs font-bold text-amber-300 bg-slate-800/80 px-2.5 py-1 rounded-xl border border-slate-700/60 w-fit">
+                                  <span>
+                                    {visiblePasswords[st.id] || showAllPasswords
+                                      ? st.password || 'لا توجد'
+                                      : '••••••••'}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setVisiblePasswords((prev) => ({
+                                        ...prev,
+                                        [st.id]: !prev[st.id],
+                                      }))
+                                    }
+                                    className="p-1 hover:text-white text-slate-400 transition cursor-pointer"
+                                    title="إظهار / إخفاء كلمة المرور"
+                                  >
+                                    {visiblePasswords[st.id] || showAllPasswords ? (
+                                      <EyeOff className="w-3.5 h-3.5" />
+                                    ) : (
+                                      <Eye className="w-3.5 h-3.5" />
+                                    )}
+                                  </button>
+                                </div>
+                              </td>
+
+                              {/* Enrolled Courses Badges */}
+                              <td className="p-4">
+                                <div className="flex flex-wrap gap-1 max-w-[180px]">
+                                  {st.enrolledCourseIds && st.enrolledCourseIds.length > 0 ? (
+                                    st.enrolledCourseIds.map((cId) => {
+                                      const cObj = courses.find((c) => c.id === cId);
+                                      return (
+                                        <span
+                                          key={cId}
+                                          className="text-[10px] font-black px-2 py-0.5 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-300"
+                                        >
+                                          {cObj ? cObj.title : cId}
+                                        </span>
+                                      );
+                                    })
+                                  ) : (
+                                    <span className="text-[11px] text-slate-500 font-bold">لا يوجد</span>
+                                  )}
+                                </div>
+                              </td>
+
+                              {/* Course Activation Button */}
+                              <td className="p-4 text-center">
                                 <button
                                   type="button"
-                                  onClick={() =>
-                                    setVisiblePasswords((prev) => ({
-                                      ...prev,
-                                      [st.id]: !prev[st.id],
-                                    }))
-                                  }
-                                  className="p-1 hover:text-white text-slate-400 transition cursor-pointer"
-                                  title="إظهار / إخفاء كلمة المرور"
+                                  onClick={() => handleOpenCourseActivationModal(st)}
+                                  className="px-3.5 py-1.5 text-xs font-black rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-md shadow-emerald-600/30 transition flex items-center justify-center gap-1.5 cursor-pointer transform hover:scale-105 mx-auto"
+                                  title="تفعيل كورس لهذا الطالب وفتح المنصة له"
                                 >
-                                  {visiblePasswords[st.id] || showAllPasswords ? (
-                                    <EyeOff className="w-3.5 h-3.5" />
-                                  ) : (
-                                    <Eye className="w-3.5 h-3.5" />
-                                  )}
+                                  <CheckCircle2 className="w-3.5 h-3.5" />
+                                  <span>تفعيل</span>
                                 </button>
-                              </div>
-                            </td>
+                              </td>
 
-                            {/* Enrolled Courses Badges */}
-                            <td className="p-4">
-                              <div className="flex flex-wrap gap-1 max-w-[180px]">
-                                {st.enrolledCourseIds && st.enrolledCourseIds.length > 0 ? (
-                                  st.enrolledCourseIds.map((cId) => {
-                                    const cObj = courses.find((c) => c.id === cId);
-                                    return (
-                                      <span
-                                        key={cId}
-                                        className="text-[10px] font-black px-2 py-0.5 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-300"
-                                      >
-                                        {cObj ? cObj.title : cId}
-                                      </span>
-                                    );
-                                  })
-                                ) : (
-                                  <span className="text-[11px] text-slate-500 font-bold">لا يوجد</span>
-                                )}
-                              </div>
-                            </td>
-
-                            {/* Course Activation Button: "وبجانب حساب كل طالب كلمة اسمها تفعيل اضغط تفعيل واختار له كورس" */}
-                            <td className="p-4 text-center">
-                              <button
-                                type="button"
-                                onClick={() => handleOpenCourseActivationModal(st)}
-                                className="px-3.5 py-1.5 text-xs font-black rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-md shadow-emerald-600/30 transition flex items-center justify-center gap-1.5 cursor-pointer transform hover:scale-105 mx-auto"
-                                title="تفعيل كورس لهذا الطالب وفتح المنصة له"
-                              >
-                                <CheckCircle2 className="w-3.5 h-3.5" />
-                                <span>تفعيل</span>
-                              </button>
-                            </td>
-
-                            {/* Subscription Days Status */}
-                            <td className="p-4">
-                              {st.isUnlimited ? (
-                                <span className="text-emerald-400 font-bold text-xs flex items-center gap-1">
-                                  <Sparkles className="w-3.5 h-3.5" />
-                                  المنصة مفتوحة بدون قيود (إلغاء اشتراك)
-                                </span>
-                              ) : st.daysAllowed ? (
-                                <div className="space-y-1 max-w-xs">
-                                  <div className="flex items-center justify-between text-[11px]">
-                                    <span className="font-bold text-white">اليوم {elapsedDays} من {st.daysAllowed} يوم</span>
-                                    <span className="text-slate-400">{daysLeft} يوم متبقي</span>
+                              {/* Subscription Days Status */}
+                              <td className="p-4">
+                                {st.isUnlimited ? (
+                                  <span className="text-emerald-400 font-bold text-xs flex items-center gap-1">
+                                    <Sparkles className="w-3.5 h-3.5" />
+                                    المنصة مفتوحة بدون قيود (إلغاء اشتراك)
+                                  </span>
+                                ) : st.daysAllowed ? (
+                                  <div className="space-y-1 max-w-xs">
+                                    <div className="flex items-center justify-between text-[11px]">
+                                      <span className="font-bold text-white">اليوم {elapsedDays} من {st.daysAllowed} يوم</span>
+                                      <span className="text-slate-400">{daysLeft} يوم متبقي</span>
+                                    </div>
+                                    <div className="w-full bg-slate-800 h-2.5 rounded-full overflow-hidden">
+                                      <div
+                                        className={`h-full rounded-full transition-all ${
+                                          elapsedDays / st.daysAllowed < 0.35
+                                            ? 'bg-blue-500 shadow-sm shadow-blue-500/50'
+                                            : elapsedDays / st.daysAllowed < 0.65
+                                            ? 'bg-indigo-500'
+                                            : elapsedDays / st.daysAllowed < 0.85
+                                            ? 'bg-amber-500'
+                                            : 'bg-rose-500 animate-pulse'
+                                        }`}
+                                        style={{ width: `${Math.min(100, Math.max(5, (elapsedDays / st.daysAllowed) * 100))}%` }}
+                                      />
+                                    </div>
                                   </div>
-                                  <div className="w-full bg-slate-800 h-2.5 rounded-full overflow-hidden">
-                                    <div
-                                      className={`h-full rounded-full transition-all ${
-                                        elapsedDays / st.daysAllowed < 0.35
-                                          ? 'bg-blue-500 shadow-sm shadow-blue-500/50'
-                                          : elapsedDays / st.daysAllowed < 0.65
-                                          ? 'bg-indigo-500'
-                                          : elapsedDays / st.daysAllowed < 0.85
-                                          ? 'bg-amber-500'
-                                          : 'bg-rose-500 animate-pulse'
-                                      }`}
-                                      style={{ width: `${Math.min(100, Math.max(5, (elapsedDays / st.daysAllowed) * 100))}%` }}
-                                    />
-                                  </div>
-                                </div>
-                              ) : (
-                                <span className="text-amber-400/90 text-xs font-bold bg-amber-500/10 px-2 py-1 rounded-lg border border-amber-500/20">
-                                  غير محدد (العداد لا يظهر حتى التحديد)
-                                </span>
-                              )}
-                            </td>
-
-                            {/* Open Days Picker Modal */}
-                            <td className="p-4">
-                              <button
-                                onClick={() => {
-                                  setStudentForDaysModal(st);
-                                  setSelectedDaysAmount(st.daysAllowed || 30);
-                                }}
-                                className="px-3.5 py-1.5 text-xs font-bold rounded-xl bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/30 transition flex items-center gap-1 cursor-pointer"
-                              >
-                                <Calendar className="w-3.5 h-3.5" />
-                                <span>تحديد الأيام</span>
-                              </button>
-                            </td>
-
-                            {/* Selective Individual Lock Button */}
-                            <td className="p-4">
-                              <div className="flex items-center gap-2">
-                                {st.isIndividuallyBlocked ? (
-                                  <button
-                                    onClick={() => handleUnblockStudent(st.id)}
-                                    className="px-3 py-1 text-xs font-bold rounded-xl bg-rose-600 hover:bg-rose-500 text-white shadow-sm transition flex items-center gap-1"
-                                  >
-                                    <Unlock className="w-3 h-3" />
-                                    <span>فك القفل</span>
-                                  </button>
                                 ) : (
-                                  <button
-                                    onClick={() => {
-                                      setStudentForBlockModal(st);
-                                      setBlockReasonType(st.blockedReason || 'supervisor');
-                                      setBlockCustomMessage(st.blockedCustomMessage || '');
-                                    }}
-                                    className="px-3 py-1 text-xs font-bold rounded-xl bg-slate-800 hover:bg-rose-500/20 text-slate-300 hover:text-rose-400 border border-slate-700 hover:border-rose-500/40 transition flex items-center gap-1"
-                                  >
-                                    <Lock className="w-3 h-3" />
-                                    <span>قفل المنصة عليه</span>
-                                  </button>
+                                  <span className="text-amber-400/90 text-xs font-bold bg-amber-500/10 px-2 py-1 rounded-lg border border-amber-500/20">
+                                    غير محدد (العداد لا يظهر حتى التحديد)
+                                  </span>
                                 )}
+                              </td>
 
+                              {/* Open Days Picker Modal */}
+                              <td className="p-4">
                                 <button
-                                  onClick={() => handleToggleStudentWhitelist(st)}
-                                  className={`px-2 py-1 text-[11px] font-bold rounded-lg border transition ${
-                                    st.isIndividuallyWhitelisted
-                                      ? 'bg-emerald-600 text-white border-emerald-500'
-                                      : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-emerald-400'
-                                  }`}
-                                  title="فتح المنصة لهذا الطالب أثناء القفل العام"
+                                  onClick={() => {
+                                    setStudentForDaysModal(st);
+                                    setSelectedDaysAmount(st.daysAllowed || 30);
+                                  }}
+                                  className="px-3.5 py-1.5 text-xs font-bold rounded-xl bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/30 transition flex items-center gap-1 cursor-pointer"
                                 >
-                                  استثناء
+                                  <Calendar className="w-3.5 h-3.5" />
+                                  <span>تحديد الأيام</span>
                                 </button>
-                              </div>
-                            </td>
+                              </td>
 
-                            {/* Deletion */}
-                            <td className="p-4 text-center">
-                              <button
-                                onClick={() => setDeletingStudent(st)}
-                                className="p-2 rounded-xl text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 transition"
-                                title="حذف حساب الطالب"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            </td>
-                          </tr>
+                              {/* Selective Individual Lock Button */}
+                              <td className="p-4">
+                                <div className="flex items-center gap-2">
+                                  {st.isIndividuallyBlocked ? (
+                                    <button
+                                      onClick={() => handleUnblockStudent(st.id)}
+                                      className="px-3 py-1 text-xs font-bold rounded-xl bg-rose-600 hover:bg-rose-500 text-white shadow-sm transition flex items-center gap-1"
+                                    >
+                                      <Unlock className="w-3 h-3" />
+                                      <span>فك القفل</span>
+                                    </button>
+                                  ) : (
+                                    <button
+                                      onClick={() => {
+                                        setStudentForBlockModal(st);
+                                        setBlockReasonType(st.blockedReason || 'supervisor');
+                                        setBlockCustomMessage(st.blockedCustomMessage || '');
+                                      }}
+                                      className="px-3 py-1 text-xs font-bold rounded-xl bg-slate-800 hover:bg-rose-500/20 text-slate-300 hover:text-rose-400 border border-slate-700 hover:border-rose-500/40 transition flex items-center gap-1"
+                                    >
+                                      <Lock className="w-3 h-3" />
+                                      <span>قفل المنصة عليه</span>
+                                    </button>
+                                  )}
+
+                                  <button
+                                    onClick={() => handleToggleStudentWhitelist(st)}
+                                    className={`px-2 py-1 text-[11px] font-bold rounded-lg border transition ${
+                                      st.isIndividuallyWhitelisted
+                                        ? 'bg-emerald-600 text-white border-emerald-500'
+                                        : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-emerald-400'
+                                    }`}
+                                    title="فتح المنصة لهذا الطالب أثناء القفل العام"
+                                  >
+                                    استثناء
+                                  </button>
+                                </div>
+                              </td>
+
+                              {/* Deletion */}
+                              <td className="p-4 text-center">
+                                <button
+                                  onClick={() => setDeletingStudent(st)}
+                                  className="p-2 rounded-xl text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 transition cursor-pointer"
+                                  title="حذف حساب الطالب"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </td>
+                            </tr>
+
+                            {/* ================= EXPANDED STUDENT DOSSIER ================= */}
+                            {isExpanded && (
+                              <tr className="bg-slate-950/90 border-b-2 border-amber-500/40 animate-in fade-in duration-150">
+                                <td colSpan={9} className="p-4 sm:p-6 md:p-8">
+                                  <div className="space-y-6">
+                                    {/* Dossier Header */}
+                                    <div className="flex flex-wrap items-center justify-between gap-4 p-4 rounded-2xl bg-slate-900 border border-slate-800">
+                                      <div className="flex items-center gap-3">
+                                        <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 font-black text-xl">
+                                          🎓
+                                        </div>
+                                        <div>
+                                          <h4 className="text-base sm:text-lg font-black text-white flex items-center gap-2">
+                                            <span>ملف إنجازات وتفاصيل الطالب:</span>
+                                            <span className="text-amber-400">{st.name}</span>
+                                          </h4>
+                                          <p className="text-xs text-slate-400 mt-0.5">
+                                            البريد: {st.email} | الفيديوهات المشاهدة: ({studentWatchedIds.length}) | الاختبارات المحلولة: ({studentAttempts.length})
+                                          </p>
+                                        </div>
+                                      </div>
+
+                                      <button
+                                        type="button"
+                                        onClick={() => setExpandedStudentId(null)}
+                                        className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-bold transition cursor-pointer"
+                                      >
+                                        <span>إغلاق الملف</span>
+                                        <X className="w-4 h-4" />
+                                      </button>
+                                    </div>
+
+                                    {/* 4 Cards Grid */}
+                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                                      {/* Panel 1: Watched Videos */}
+                                      <div className="p-5 rounded-3xl bg-slate-900/90 border border-slate-800 space-y-4">
+                                        <div className="flex items-center justify-between">
+                                          <div className="flex items-center gap-2 text-white font-black text-sm">
+                                            <Video className="w-4 h-4 text-blue-400" />
+                                            <span>الفيديوهات التي شاهدها الطالب</span>
+                                          </div>
+                                          <span className="text-xs font-black px-2.5 py-1 rounded-xl bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                                            {studentWatchedIds.length} فيديو مؤكد
+                                          </span>
+                                        </div>
+
+                                        <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                                          {studentWatchedIds.length === 0 ? (
+                                            <div className="p-6 text-center text-xs text-slate-500 bg-slate-950/50 rounded-2xl border border-slate-800">
+                                              لم يقم الطالب بتأكيد مشاهدة أي فيديو حتى الآن.
+                                            </div>
+                                          ) : (
+                                            studentWatchedIds.map((vId, idx) => {
+                                              const itemObj = items.find((i) => i.id === vId);
+                                              const vidTitle = itemObj?.title || `فيديو تعليمي #${vId.slice(0, 8)}`;
+                                              return (
+                                                <div
+                                                  key={`${vId}-${idx}`}
+                                                  className="p-3 rounded-2xl bg-slate-950/60 border border-slate-800/80 flex items-center justify-between gap-3 text-xs"
+                                                >
+                                                  <div className="flex items-center gap-2.5 truncate">
+                                                    <span className="w-6 h-6 rounded-lg bg-blue-500/20 text-blue-300 text-[11px] font-mono font-bold flex items-center justify-center shrink-0">
+                                                      {idx + 1}
+                                                    </span>
+                                                    <span className="font-bold text-white truncate">{vidTitle}</span>
+                                                  </div>
+                                                  <span className="px-2.5 py-0.5 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-[10px] font-black shrink-0 flex items-center gap-1">
+                                                    <CheckCircle2 className="w-3 h-3" />
+                                                    تمت المشاهدة
+                                                  </span>
+                                                </div>
+                                              );
+                                            })
+                                          )}
+                                        </div>
+                                      </div>
+
+                                      {/* Panel 2: Solved Exams & Scores & Correct/Wrong Counts */}
+                                      <div className="p-5 rounded-3xl bg-slate-900/90 border border-slate-800 space-y-4">
+                                        <div className="flex items-center justify-between">
+                                          <div className="flex items-center gap-2 text-white font-black text-sm">
+                                            <Award className="w-4 h-4 text-amber-400" />
+                                            <span>الاختبارات التي حلها ودرجاته والأسئلة</span>
+                                          </div>
+                                          <span className="text-xs font-black px-2.5 py-1 rounded-xl bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                            {studentAttempts.length} اختبار محلول
+                                          </span>
+                                        </div>
+
+                                        <div className="space-y-2.5 max-h-64 overflow-y-auto pr-1">
+                                          {studentAttempts.length === 0 ? (
+                                            <div className="p-6 text-center text-xs text-slate-500 bg-slate-950/50 rounded-2xl border border-slate-800">
+                                              لم يقم هذا الطالب بحل أي اختبار حتى الآن.
+                                            </div>
+                                          ) : (
+                                            studentAttempts.map((attempt, aIdx) => {
+                                              const wrongCount = Math.max(0, attempt.totalQuestions - attempt.score);
+                                              const isPass = attempt.percentage >= (attempt.targetPercentage || 80);
+
+                                              return (
+                                                <div
+                                                  key={attempt.id || `att-${aIdx}`}
+                                                  className="p-3.5 rounded-2xl bg-slate-950/60 border border-slate-800/80 space-y-2 text-xs"
+                                                >
+                                                  <div className="flex items-center justify-between gap-2">
+                                                    <div className="font-bold text-white text-xs truncate">
+                                                      {attempt.examTitle || 'اختبار تقييمي'}
+                                                    </div>
+                                                    <div
+                                                      className={`px-2.5 py-0.5 rounded-lg font-black text-xs shrink-0 ${
+                                                        isPass
+                                                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                                          : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                                                      }`}
+                                                    >
+                                                      %{attempt.percentage}
+                                                    </div>
+                                                  </div>
+
+                                                  <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] pt-1 border-t border-slate-800/60">
+                                                    <div className="flex items-center gap-3">
+                                                      <span className="text-emerald-400 font-bold flex items-center gap-1">
+                                                        <CheckCircle2 className="w-3 h-3" />
+                                                        صح: {attempt.score}
+                                                      </span>
+                                                      <span className="text-rose-400 font-bold flex items-center gap-1">
+                                                        <XCircle className="w-3 h-3" />
+                                                        خطأ: {wrongCount}
+                                                      </span>
+                                                      <span className="text-slate-400">
+                                                        الإجمالي: {attempt.totalQuestions}
+                                                      </span>
+                                                    </div>
+                                                    <span className="text-slate-500 text-[10px]">
+                                                      {attempt.createdAt ? new Date(attempt.createdAt).toLocaleDateString('ar-SA') : ''}
+                                                    </span>
+                                                  </div>
+                                                </div>
+                                              );
+                                            })
+                                          )}
+                                        </div>
+                                      </div>
+
+                                      {/* Panel 3: Custom Red Message for this Student */}
+                                      <div className="p-5 rounded-3xl bg-slate-900/90 border border-rose-500/30 space-y-4">
+                                        <div className="flex items-center justify-between">
+                                          <div className="flex items-center gap-2 text-rose-400 font-black text-sm">
+                                            <AlertTriangle className="w-4 h-4" />
+                                            <span>رسالة مخصصة تظهر للطالب باللون الأحمر 🚨</span>
+                                          </div>
+                                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 font-bold">
+                                            تنبيه فردي للطالب
+                                          </span>
+                                        </div>
+
+                                        <p className="text-xs text-slate-400 leading-relaxed">
+                                          اكتب تنبيهاً مخصصاً لهذا الطالب وسيظهر له فورياً بشريط أحمر بارز وتحذيري أعلى منصته وبداية حسابه:
+                                        </p>
+
+                                        <textarea
+                                          rows={3}
+                                          value={currentRedInput}
+                                          onChange={(e) => {
+                                            const val = e.target.value;
+                                            setStudentRedMessageInput((prev) => ({
+                                              ...prev,
+                                              [st.id]: val,
+                                            }));
+                                          }}
+                                          placeholder="مثال: عزيزي الطالب، يرجى استكمال حل اختبار قسم التناظر قبل نهاية الأسبوع للاستمرار بالدورة..."
+                                          className="w-full p-3.5 rounded-2xl bg-slate-950 border border-slate-700 text-white text-xs focus:outline-none focus:border-rose-500 focus:ring-1 focus:ring-rose-500"
+                                        />
+
+                                        {/* Live Preview Box if message exists */}
+                                        {currentRedInput.trim() && (
+                                          <div className="p-3 rounded-2xl bg-rose-950/60 border border-rose-500/40 text-rose-200 text-xs flex items-start gap-2.5">
+                                            <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                                            <div>
+                                              <span className="font-black text-rose-300 block mb-0.5">معاينة الرسالة كما ستظهر للطالب باللون الأحمر:</span>
+                                              <p className="text-rose-100 font-semibold">{currentRedInput}</p>
+                                            </div>
+                                          </div>
+                                        )}
+
+                                        <div className="flex items-center gap-2 pt-1">
+                                          <button
+                                            type="button"
+                                            disabled={isSavingRedMessage[st.id]}
+                                            onClick={() => handleSaveCustomRedMessage(st.id, currentRedInput)}
+                                            className="flex-1 py-2.5 px-4 rounded-xl bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 text-white font-black text-xs shadow-lg shadow-rose-600/30 transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                                          >
+                                            {isSavingRedMessage[st.id] ? (
+                                              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                            ) : (
+                                              <Send className="w-3.5 h-3.5" />
+                                            )}
+                                            <span>حفظ وإرسال التنبيه الأحمر 🚨</span>
+                                          </button>
+
+                                          {st.customRedMessage && (
+                                            <button
+                                              type="button"
+                                              disabled={isSavingRedMessage[st.id]}
+                                              onClick={() => {
+                                                setStudentRedMessageInput((prev) => ({ ...prev, [st.id]: '' }));
+                                                handleSaveCustomRedMessage(st.id, '');
+                                              }}
+                                              className="py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-bold transition cursor-pointer"
+                                              title="مسح التنبيه الأحمر من حساب الطالب"
+                                            >
+                                              مسح التنبيه
+                                            </button>
+                                          )}
+                                        </div>
+                                      </div>
+
+                                      {/* Panel 4: Certificate Issuance */}
+                                      <div className="p-5 rounded-3xl bg-slate-900/90 border border-amber-500/30 space-y-4">
+                                        <div className="flex items-center justify-between">
+                                          <div className="flex items-center gap-2 text-amber-400 font-black text-sm">
+                                            <Award className="w-4 h-4" />
+                                            <span>إصدار شهادة إتمام وتفوق رسمية 📜</span>
+                                          </div>
+                                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold">
+                                            تصميم ملكي شيك
+                                          </span>
+                                        </div>
+
+                                        <p className="text-xs text-slate-400 leading-relaxed">
+                                          يمكنك إصدار شهادة شيك وموثقة للطالب باسمه المسجل في المنصة (<strong className="text-white">{st.name}</strong>) متضمنة شعار المنصة وتوقيع المشرف مع إمكانية الطباعة والحفظ PDF.
+                                        </p>
+
+                                        {st.certificateIssued ? (
+                                          <div className="p-4 rounded-2xl bg-gradient-to-br from-amber-950/40 to-slate-950 border border-amber-500/40 space-y-3">
+                                            <div className="flex items-center justify-between">
+                                              <span className="text-xs font-black text-amber-300 flex items-center gap-1.5">
+                                                <Award className="w-4 h-4 text-amber-400" />
+                                                شهادة صادرة ومثبتة بحساب الطالب ✓
+                                              </span>
+                                              <span className="text-[10px] text-slate-400 font-mono">
+                                                {st.certificateIssued.serialNumber}
+                                              </span>
+                                            </div>
+
+                                            <div className="text-xs text-slate-300 space-y-1">
+                                              <div>الكورس: <strong className="text-white">{st.certificateIssued.courseTitle}</strong></div>
+                                              <div>التقدير: <span className="text-emerald-400 font-bold">{st.certificateIssued.gradeText}</span></div>
+                                              <div>تاريخ الإصدار: {st.certificateIssued.issueDate}</div>
+                                            </div>
+
+                                            <div className="flex items-center gap-2 pt-1">
+                                              <button
+                                                type="button"
+                                                onClick={() => setPreviewCertModalData(st.certificateIssued || null)}
+                                                className="flex-1 py-2.5 px-3 rounded-xl bg-gradient-to-r from-amber-500 via-yellow-500 to-amber-600 hover:from-amber-400 hover:to-yellow-400 text-slate-950 font-black text-xs shadow-md shadow-amber-500/20 transition flex items-center justify-center gap-1.5 cursor-pointer"
+                                              >
+                                                <Printer className="w-3.5 h-3.5" />
+                                                <span>معاينة وطباعة الشهادة 📜</span>
+                                              </button>
+
+                                              <button
+                                                type="button"
+                                                onClick={() => handleOpenIssueCertModal(st)}
+                                                className="py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-bold transition cursor-pointer"
+                                                title="تعديل بيانات الشهادة"
+                                              >
+                                                تعديل
+                                              </button>
+                                            </div>
+                                          </div>
+                                        ) : (
+                                          <div className="p-4 rounded-2xl bg-slate-950/60 border border-slate-800 space-y-3">
+                                            <p className="text-xs text-slate-400">
+                                              لم يتم إصدار شهادة لهذا الطالب بعد. اضغط الزر أدناه لتعبئة وإصدار الشهادة فوراً:
+                                            </p>
+                                            <button
+                                              type="button"
+                                              onClick={() => handleOpenIssueCertModal(st)}
+                                              className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-amber-500 via-yellow-500 to-amber-600 hover:from-amber-400 hover:to-yellow-400 text-slate-950 font-black text-xs shadow-lg shadow-amber-500/25 transition flex items-center justify-center gap-2 cursor-pointer transform hover:scale-[1.02]"
+                                            >
+                                              <Award className="w-4 h-4" />
+                                              <span>إصدار شهادة تفوق معتمدة للطالب ({st.name}) 🎓</span>
+                                            </button>
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
                         );
                       })
                     )}
@@ -6647,6 +7103,173 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
           </div>
         </div>
       )}
+
+      {/* ================= MODAL: ISSUE OFFICIAL CERTIFICATE ================= */}
+      {issuingCertStudent && (
+        <div className="fixed inset-0 z-[99999] flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-amber-500/40 rounded-3xl p-6 md:p-8 max-w-xl w-full shadow-2xl text-right space-y-6">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-400">
+                  <Award className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-base md:text-lg font-black text-white flex items-center gap-2">
+                    <span>إصدار شهادة تفوق معتمدة 📜</span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                      تصميم شيك
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    تثبيت شهادة رسمية بالاسم المسجل في المنصة مع الشعار والتوقيع
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIssuingCertStudent(null)}
+                className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              {/* Registered Student Name (Strictly from the student account) */}
+              <div className="space-y-1.5 p-3.5 rounded-2xl bg-slate-950 border border-slate-800">
+                <span className="text-[11px] font-bold text-slate-400 block">
+                  اسم الطالب المسجل في المنصة (يصدر في الشهادة بهذا الاسم):
+                </span>
+                <div className="text-base font-black text-amber-400 flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                  <span>{issuingCertStudent.name}</span>
+                  <span className="text-xs text-slate-500 font-normal">({issuingCertStudent.email})</span>
+                </div>
+              </div>
+
+              {/* Course Title */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-300 block">
+                  اسم الدورة / الكورس الصادرة له الشهادة:
+                </label>
+                <input
+                  type="text"
+                  value={certFormCourse}
+                  onChange={(e) => setCertFormCourse(e.target.value)}
+                  placeholder="مثال: دورة القدرات العامة الشاملة (محوسب وورقي)"
+                  className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white text-xs md:text-sm focus:outline-none focus:border-amber-500"
+                />
+              </div>
+
+              {/* Grade / Appreciation */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-300 block">
+                  التقدير أو النسبة:
+                </label>
+                <input
+                  type="text"
+                  value={certFormGrade}
+                  onChange={(e) => setCertFormGrade(e.target.value)}
+                  placeholder="مثال: ممتاز مرتفع بنسبة 100%"
+                  className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white text-xs md:text-sm focus:outline-none focus:border-amber-500"
+                />
+              </div>
+
+              {/* Platform Supervisor / Director Name */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-300 block">
+                    توقيع باسم المشرف / المدير:
+                  </label>
+                  <input
+                    type="text"
+                    value={certFormDirector}
+                    onChange={(e) => setCertFormDirector(e.target.value)}
+                    placeholder="أ. رعد / المشرف العام"
+                    className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-xs focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-300 block">
+                    اسم المنصة:
+                  </label>
+                  <input
+                    type="text"
+                    value={certFormPlatform}
+                    onChange={(e) => setCertFormPlatform(e.target.value)}
+                    placeholder="منصة أقسام رعد للقدرات والتحصيلي"
+                    className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-xs focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+              </div>
+
+              {/* Certificate Statement / Notes */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-300 block">
+                  عبارة التقدير والتكريم في الشهادة:
+                </label>
+                <textarea
+                  rows={2}
+                  value={certFormNotes}
+                  onChange={(e) => setCertFormNotes(e.target.value)}
+                  placeholder="اكتب عبارة التقدير..."
+                  className="w-full p-3 rounded-xl bg-slate-950 border border-slate-700 text-white text-xs focus:outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs flex items-center gap-2">
+                <Sparkles className="w-5 h-5 shrink-0 text-amber-400" />
+                <span>
+                  الشهادة تشمل شعار المنصة المرفوع تلقائياً، والختم الملكي، وباركود التحقق وكود التسلسل الرسمي.
+                </span>
+              </div>
+            </div>
+
+            <div className="space-y-2 pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                disabled={isIssuingCert}
+                onClick={handleConfirmIssueCertificate}
+                className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-amber-500 via-yellow-500 to-amber-600 hover:from-amber-400 hover:to-yellow-400 disabled:opacity-50 text-slate-950 font-black text-xs md:text-sm transition flex items-center justify-center gap-2 shadow-lg shadow-amber-500/30 cursor-pointer"
+              >
+                {isIssuingCert ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>جارٍ إصدار وتثبيت الشهادة في حساب الطالب...</span>
+                  </>
+                ) : (
+                  <>
+                    <Award className="w-5 h-5" />
+                    <span>اعتماد وإصدار الشهادة فورياً 🎓</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                disabled={isIssuingCert}
+                onClick={() => setIssuingCertStudent(null)}
+                className="w-full py-2.5 rounded-xl text-xs font-bold text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 transition cursor-pointer"
+              >
+                إلغاء
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= MODAL: PREVIEW & PRINT OFFICIAL CERTIFICATE ================= */}
+      {previewCertModalData && (
+        <CertificateModal
+          isOpen={true}
+          onClose={() => setPreviewCertModalData(null)}
+          certificate={previewCertModalData}
+          logoUrl={systemSettings.logoUrl}
+          primaryColor={systemSettings.activeTheme?.primary || '#2563eb'}
+        />
+      )}
     </div>
   );
 };
+

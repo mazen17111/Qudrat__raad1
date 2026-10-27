@@ -21,10 +21,12 @@ import {
   Check,
   Award,
   Send,
-  Phone
+  Phone,
+  AlertTriangle,
 } from 'lucide-react';
 import { StudentUser, CourseItem, SystemSettings } from '../types';
 import { BrandLogo } from './BrandLogo';
+import { CertificateModal } from './CertificateModal';
 
 interface CoursesPortalProps {
   currentUser: StudentUser;
@@ -79,6 +81,7 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
   const [zoomedImage, setZoomedImage] = useState<string | null>(null);
   const [isActivating, setIsActivating] = useState(false);
   const [copiedAccount, setCopiedAccount] = useState(false);
+  const [showCertificateModal, setShowCertificateModal] = useState(false);
 
   // Secret Admin 20-clicks trigger strictly on the word "محفوظة" in the footer
   const [secretClicks, setSecretClicks] = useState(0);
@@ -223,6 +226,19 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
             <span>كورساتي المفعلة: {paidCourses.length}</span>
           </div>
 
+          {/* Certificate Header Button if issued */}
+          {currentUser.certificateIssued && (
+            <button
+              type="button"
+              onClick={() => setShowCertificateModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-amber-400 bg-gradient-to-r from-amber-500/20 to-yellow-500/20 text-amber-300 text-xs font-black shadow-md transition hover:scale-105 cursor-pointer"
+              title="عرض وطباعة شهادتي المعتمدة"
+            >
+              <Award className="w-3.5 h-3.5 text-amber-400" />
+              <span>شهادتي 🎓</span>
+            </button>
+          )}
+
           {/* Theme Toggle */}
           <button
             type="button"
@@ -252,6 +268,65 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
 
       {/* ================= MAIN VIEWPORT CONTAINER ================= */}
       <main className="flex-1 max-w-[1750px] w-full mx-auto p-3 sm:p-5 md:p-6 lg:p-8 flex flex-col gap-6">
+        {/* ================= CUSTOM RED MESSAGE FOR THIS STUDENT ================= */}
+        {/* "ويمكنني كتابة رسالة مخصصة لكل طالب تظهر له باللون الاحمر" */}
+        {currentUser.customRedMessage && (
+          <div className="p-3.5 sm:p-4 rounded-2xl bg-gradient-to-r from-red-600 via-rose-600 to-red-700 text-white shadow-xl shadow-red-600/30 border-2 border-red-400/80 flex items-start sm:items-center justify-between gap-3 animate-in fade-in duration-200">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-white/20 backdrop-blur-sm flex items-center justify-center text-white shrink-0 shadow-inner">
+                <AlertTriangle className="w-5 h-5 animate-pulse" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="font-black text-xs sm:text-sm tracking-wide">
+                    🚨 تنبيه مخصص من إدارة المنصة:
+                  </span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-black/25 font-bold">
+                    رسالة هامة لك
+                  </span>
+                </div>
+                <p className="text-xs sm:text-sm font-bold text-red-50 mt-1 leading-relaxed">
+                  {currentUser.customRedMessage}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ================= OFFICIAL CERTIFICATE ANNOUNCEMENT BANNER ================= */}
+        {/* "ويمكنني اصدار شهادة لكل طالب بالاسم المسجل في المنصة ويكون تصميم الشهادة شيك جدا وفيه شعاري المرفوع وتوقيه باسمي وباسم المنصة" */}
+        {currentUser.certificateIssued && (
+          <div className="p-3.5 sm:p-4 rounded-2xl bg-gradient-to-r from-amber-600 via-yellow-600 to-amber-700 text-white shadow-xl shadow-amber-600/25 border-2 border-yellow-300/80 flex flex-wrap items-center justify-between gap-3 animate-in fade-in duration-200">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-black/25 backdrop-blur-sm flex items-center justify-center text-amber-200 shrink-0 text-xl shadow-inner">
+                🎓
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h4 className="font-black text-xs sm:text-sm">
+                    تهانينا يا {currentUser.name}! تم إصدار شهادة تفوق معتمدة لك 📜
+                  </h4>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-black/30 text-amber-200 font-mono font-bold">
+                    رقم: {currentUser.certificateIssued.serialNumber}
+                  </span>
+                </div>
+                <p className="text-[11px] sm:text-xs text-amber-100 font-medium mt-0.5">
+                  دورة: {currentUser.certificateIssued.courseTitle} | التقدير: {currentUser.certificateIssued.gradeText}
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowCertificateModal(true)}
+              className="px-4 py-2 rounded-xl bg-slate-950 hover:bg-slate-900 text-amber-300 hover:text-amber-200 font-black text-xs border border-amber-400/60 shadow-lg shadow-black/40 transition flex items-center gap-2 cursor-pointer transform hover:scale-105"
+            >
+              <Award className="w-4 h-4 text-amber-400" />
+              <span>عرض وطباعة شهادتي 🖨️</span>
+            </button>
+          </div>
+        )}
+
         {/* Welcome & Quick Support Banner */}
         <div
           className={`p-4 sm:p-5 rounded-3xl border shadow-xl relative overflow-hidden flex flex-col md:flex-row items-start md:items-center justify-between gap-4 ${
@@ -1431,6 +1506,18 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
           </div>
         </div>
       )}
+
+      {/* ================= MODAL: VIEW & PRINT OFFICIAL CERTIFICATE ================= */}
+      {currentUser.certificateIssued && (
+        <CertificateModal
+          isOpen={showCertificateModal}
+          onClose={() => setShowCertificateModal(false)}
+          certificate={currentUser.certificateIssued}
+          logoUrl={systemSettings.logoUrl}
+          primaryColor={systemSettings.activeTheme?.primary || '#2563eb'}
+        />
+      )}
     </div>
   );
 };
+
