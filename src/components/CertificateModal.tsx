@@ -29,6 +29,18 @@ export const CertificateModal: React.FC<CertificateModalProps> = ({
     window.print();
   };
 
+  // Helper to load image for Canvas drawing
+  const loadLogoImage = (src?: string): Promise<HTMLImageElement | null> => {
+    return new Promise((resolve) => {
+      if (!src) return resolve(null);
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => resolve(img);
+      img.onerror = () => resolve(null);
+      img.src = src;
+    });
+  };
+
   // Direct High-Resolution Canvas Image Generator for Student Saving
   const handleSaveAsImage = async () => {
     setIsDownloadingImage(true);
@@ -46,6 +58,9 @@ export const CertificateModal: React.FC<CertificateModalProps> = ({
         return;
       }
 
+      // Preload platform logo image asynchronously
+      const loadedLogo = await loadLogoImage(effectiveLogoUrl);
+
       // Background Gradient
       const bgGrad = ctx.createRadialGradient(width / 2, height / 2, 100, width / 2, height / 2, width / 1.1);
       bgGrad.addColorStop(0, '#090d16');
@@ -53,6 +68,15 @@ export const CertificateModal: React.FC<CertificateModalProps> = ({
       bgGrad.addColorStop(1, '#020408');
       ctx.fillStyle = bgGrad;
       ctx.fillRect(0, 0, width, height);
+
+      // Draw subtle watermark logo in the exact center background if available
+      if (loadedLogo) {
+        ctx.save();
+        ctx.globalAlpha = 0.07;
+        const wmSize = 380;
+        ctx.drawImage(loadedLogo, width / 2 - wmSize / 2, height / 2 - wmSize / 2 - 20, wmSize, wmSize);
+        ctx.restore();
+      }
 
       // Gold Borders
       ctx.lineWidth = 14;
@@ -83,16 +107,43 @@ export const CertificateModal: React.FC<CertificateModalProps> = ({
       ctx.font = 'bold 24px Arial, sans-serif';
       ctx.fillText('بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ', width / 2, 115);
 
-      // Center Crest / Circular Emblem
+      // Center Crest / Circular Emblem with Platform Logo
       const logoRadius = 55;
       const logoCenterY = 195;
+      ctx.save();
       ctx.beginPath();
       ctx.arc(width / 2, logoCenterY, logoRadius, 0, Math.PI * 2);
-      ctx.fillStyle = '#1e293b';
+      ctx.fillStyle = '#0f172a';
       ctx.fill();
       ctx.lineWidth = 4;
       ctx.strokeStyle = '#fbbf24';
       ctx.stroke();
+
+      if (loadedLogo) {
+        ctx.beginPath();
+        ctx.arc(width / 2, logoCenterY, logoRadius - 4, 0, Math.PI * 2);
+        ctx.clip();
+        ctx.drawImage(
+          loadedLogo,
+          width / 2 - (logoRadius - 4),
+          logoCenterY - (logoRadius - 4),
+          (logoRadius - 4) * 2,
+          (logoRadius - 4) * 2
+        );
+      } else {
+        // Fallback golden lightning crest
+        ctx.fillStyle = '#fbbf24';
+        ctx.font = 'bold 44px Arial, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('⚡', width / 2, logoCenterY + 16);
+      }
+      ctx.restore();
+
+      // Laurel / Medallion bottom decoration
+      ctx.fillStyle = '#fbbf24';
+      ctx.font = 'bold 15px Arial, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('✦  أقسام رعد  ✦', width / 2, logoCenterY + logoRadius + 20);
 
       // Platform Name & Country
       ctx.fillStyle = '#cbd5e1';
@@ -250,6 +301,13 @@ export const CertificateModal: React.FC<CertificateModalProps> = ({
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
             page-break-inside: avoid !important;
+          }
+          #raad-printable-certificate img,
+          #raad-printable-certificate svg {
+            visibility: visible !important;
+            display: block !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
           }
           .no-print {
             display: none !important;

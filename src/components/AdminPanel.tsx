@@ -270,6 +270,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
   const [isExternalExam, setIsExternalExam] = useState(false);
   const [examDurationMinutes, setExamDurationMinutes] = useState<number>(15);
   const [examTargetPercentage, setExamTargetPercentage] = useState<number>(90);
+  const [isUploadingServerFile, setIsUploadingServerFile] = useState<boolean>(false);
+  const [serverUploadProgress, setServerUploadProgress] = useState<number>(0);
 
   // Interactive Question Builder for internal exam
   const [examQuestions, setExamQuestions] = useState<ExamQuestion[]>([
@@ -903,18 +905,38 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     const file = e.target.files?.[0];
     if (!file) return;
     setIsUploadingIntroVideo(true);
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      setIntroLessonState((prev) => ({ ...prev, videoUrl: result }));
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/upload');
+
+    xhr.onload = () => {
       setIsUploadingIntroVideo(false);
-      notifySave(`تم تحميل فيديو "${file.name}" بنجاح، لا تنس الضغط على حفظ!`);
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          const res = JSON.parse(xhr.responseText);
+          if (res.success && res.url) {
+            setIntroLessonState((prev) => ({ ...prev, videoUrl: res.url }));
+            notifySave(`تم رفع وحفظ فيديو الحصة التعريفية "${file.name}" على الخادم بنجاح! لا تنس الضغط على حفظ ⚡`);
+            return;
+          }
+        } catch (e) {}
+      }
+      const localUrl = URL.createObjectURL(file);
+      setIntroLessonState((prev) => ({ ...prev, videoUrl: localUrl }));
+      notifySave(`تم اختيار الفيديو "${file.name}"`);
     };
-    reader.onerror = () => {
+
+    xhr.onerror = () => {
       setIsUploadingIntroVideo(false);
-      notifySave('حدث خطأ أثناء قراءة ملف الفيديو');
+      const localUrl = URL.createObjectURL(file);
+      setIntroLessonState((prev) => ({ ...prev, videoUrl: localUrl }));
+      notifySave(`تم اختيار الفيديو "${file.name}" محلياً`);
     };
-    reader.readAsDataURL(file);
+
+    xhr.send(formData);
   };
 
   // ================= COURSES CRUD =================
@@ -1341,43 +1363,50 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     const sizeMb = (file.size / (1024 * 1024)).toFixed(2);
     setItemFileSize(`${sizeMb} MB`);
 
-    if (itemType === 'video') {
-      // Local Object URL for instant, smooth video playback preview without memory leaks
-      const localUrl = URL.createObjectURL(file);
-      if (!itemUrl || itemUrl.startsWith('blob:')) {
-        setItemUrl(localUrl);
+    // Immediate local preview URL for instant feedback
+    const localUrl = URL.createObjectURL(file);
+    setItemUrl(localUrl);
+
+    // Upload to server directly via /api/upload
+    const formData = new FormData();
+    formData.append('file', file);
+
+    setIsUploadingServerFile(true);
+    setServerUploadProgress(0);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/upload');
+
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) {
+        const percent = Math.round((event.loaded / event.total) * 100);
+        setServerUploadProgress(percent);
       }
-      if (file.size < 750000) {
-        const reader = new FileReader();
-        reader.onload = (event) => {
-          const dataUri = event.target?.result as string;
-          setItemFileData(dataUri);
-        };
-        reader.readAsDataURL(file);
-      } else {
-        setItemFileData(localUrl);
-      }
-      notifySave(`تم رفع واختيار ملف الفيديو (${file.name}) بنجاح ✓`);
-    } else {
-      if (file.size < 750000) {
-        const reader = new FileReader();
-        reader.onload = (event) => {
-          const dataUri = event.target?.result as string;
-          setItemFileData(dataUri);
-          if (!itemUrl || itemUrl.startsWith('blob:')) {
-            setItemUrl(dataUri);
+    };
+
+    xhr.onload = () => {
+      setIsUploadingServerFile(false);
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          const res = JSON.parse(xhr.responseText);
+          if (res.success && res.url) {
+            setItemUrl(res.url);
+            setItemFileName(res.fileName || file.name);
+            setItemFileSize(res.fileSize || `${sizeMb} MB`);
+            notifySave(`تم رفع وحفظ ملف ${itemType === 'video' ? 'الفيديو' : 'المستند'} (${file.name}) على خادم المنصة بنجاح ⚡`);
+            return;
           }
-        };
-        reader.readAsDataURL(file);
-      } else {
-        const localUrl = URL.createObjectURL(file);
-        setItemFileData(localUrl);
-        if (!itemUrl) {
-          setItemUrl(localUrl);
-        }
+        } catch (e) {}
       }
-      notifySave(`تم رفع واختيار الملف (${file.name}) بنجاح ✓`);
-    }
+      notifySave(`تم اختيار ملف ${itemType === 'video' ? 'الفيديو' : 'المستند'} (${file.name}) بنجاح ✓`);
+    };
+
+    xhr.onerror = () => {
+      setIsUploadingServerFile(false);
+      notifySave(`تم اختيار الملف (${file.name}) محلياً`);
+    };
+
+    xhr.send(formData);
   };
 
   // Dedicated Exam File Upload & Parser (JSON, CSV, Excel/Text)
@@ -5875,9 +5904,29 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                   </label>
                   <p className="text-[10px] text-slate-400 text-center">
                     {itemType === 'video'
-                      ? 'يدعم ملفات الفيديو المباشرة (MP4, WebM, MKV) مع إمكانية المعاينة الفورية.'
+                      ? 'يدعم ملفات الفيديو المباشرة (MP4, WebM, MKV) مع الحفظ الدائم على الخادم وتقديم وتأخير سلس 100%.'
                       : 'يدعم ملفات PDF، Word، مستندات، عروض وصور مع الحفظ الآمن في المنصة.'}
                   </p>
+
+                  {/* Server Upload Progress Bar */}
+                  {isUploadingServerFile && (
+                    <div className="space-y-1.5 p-3 rounded-xl bg-blue-950/70 border border-blue-500/40 animate-pulse">
+                      <div className="flex items-center justify-between text-xs text-blue-300 font-bold">
+                        <span className="flex items-center gap-1.5">
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-400" />
+                          <span>جاري رفع وحفظ الملف على خادم المنصة...</span>
+                        </span>
+                        <span className="font-mono">%{serverUploadProgress}</span>
+                      </div>
+                      <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
+                        <div
+                          className="h-full bg-gradient-to-r from-blue-500 via-indigo-400 to-emerald-400 transition-all duration-150 rounded-full"
+                          style={{ width: `${Math.max(5, serverUploadProgress)}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+
                   {itemFileName && (
                     <div className="flex items-center justify-between p-2.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-[11px] text-emerald-300">
                       <span className="flex items-center gap-1.5 font-bold">
