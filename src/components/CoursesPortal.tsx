@@ -270,7 +270,7 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
       <main className="flex-1 max-w-[1750px] w-full mx-auto p-3 sm:p-5 md:p-6 lg:p-8 flex flex-col gap-6">
         {/* ================= CUSTOM RED MESSAGE FOR THIS STUDENT ================= */}
         {/* "ويمكنني كتابة رسالة مخصصة لكل طالب تظهر له باللون الاحمر" */}
-        {currentUser.customRedMessage && (
+        {currentUser.customRedMessage && currentUser.customRedMessage.trim() !== '' && currentUser.isRedMessageActive !== false && (
           <div className="p-3.5 sm:p-4 rounded-2xl bg-gradient-to-r from-red-600 via-rose-600 to-red-700 text-white shadow-xl shadow-red-600/30 border-2 border-red-400/80 flex items-start sm:items-center justify-between gap-3 animate-in fade-in duration-200">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-white/20 backdrop-blur-sm flex items-center justify-center text-white shrink-0 shadow-inner">

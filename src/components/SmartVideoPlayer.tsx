@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { AlertCircle, RefreshCw, Play, Volume2 } from 'lucide-react';
+import { AlertCircle, RefreshCw, Play } from 'lucide-react';
 
 interface SmartVideoPlayerProps {
   url: string;
@@ -18,13 +18,11 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [hasError, setHasError] = useState(false);
-  const [isBuffering, setIsBuffering] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
 
   // Reset error when URL changes
   useEffect(() => {
     setHasError(false);
-    setIsBuffering(false);
   }, [url, reloadKey]);
 
   if (!url || !url.trim()) {
@@ -38,8 +36,8 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
 
   const cleanUrl = url.trim();
 
-  // 1. YouTube Detection
-  const ytMatch = cleanUrl.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/i);
+  // 1. YouTube Detection (including youtu.be, watch?v=, embed/, shorts/, m.youtube.com)
+  const ytMatch = cleanUrl.match(/(?:youtu\.be\/|(?:www\.|m\.)?youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|shorts\/))([\w-]{11})/i);
   if (ytMatch && ytMatch[1]) {
     const videoId = ytMatch[1];
     return (
@@ -95,26 +93,15 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
     );
   }
 
-  // 4. Native HTML5 Video for direct URLs (mp4, webm, blob, etc.)
+  // 4. Native HTML5 Video for direct URLs (mp4, webm, blob, file)
   const handleReload = () => {
     setHasError(false);
-    setIsBuffering(false);
     setReloadKey((prev) => prev + 1);
   };
 
   return (
     <div className="relative w-full h-full bg-black overflow-hidden flex items-center justify-center group">
       {watermarkContent}
-
-      {/* Buffering Indicator */}
-      {isBuffering && !hasError && (
-        <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/40 pointer-events-none backdrop-blur-xs">
-          <div className="flex items-center gap-2 px-4 py-2 rounded-2xl bg-black/80 text-white text-xs font-bold border border-white/10 shadow-2xl animate-pulse">
-            <RefreshCw className="w-4 h-4 animate-spin text-amber-400" />
-            <span>جاري التحميل بسلاسة...</span>
-          </div>
-        </div>
-      )}
 
       {hasError ? (
         <div className="flex flex-col items-center justify-center p-6 text-center space-y-3 z-20 max-w-sm">
@@ -143,11 +130,7 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
           playsInline
           autoPlay={false}
           onEnded={onEnded}
-          onWaiting={() => setIsBuffering(true)}
-          onPlaying={() => setIsBuffering(false)}
-          onCanPlay={() => setIsBuffering(false)}
           onError={() => {
-            setIsBuffering(false);
             setHasError(true);
           }}
           className={className}

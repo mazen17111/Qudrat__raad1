@@ -1169,7 +1169,7 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
 
       {/* ================= CUSTOM RED MESSAGE FOR THIS STUDENT ================= */}
       {/* "ويمكنني كتابة رسالة مخصصة لكل طالب تظهر له باللون الاحمر" */}
-      {currentUser.customRedMessage && (
+      {currentUser.customRedMessage && currentUser.customRedMessage.trim() !== '' && currentUser.isRedMessageActive !== false && (
         <div className="w-full max-w-[1700px] mx-auto px-2.5 sm:px-4 md:px-8 pt-3">
           <div className="p-3.5 sm:p-4 rounded-2xl bg-gradient-to-r from-red-600 via-rose-600 to-red-700 text-white shadow-xl shadow-red-600/30 border-2 border-red-400/80 flex items-start sm:items-center justify-between gap-3 animate-in fade-in duration-200">
             <div className="flex items-center gap-3">

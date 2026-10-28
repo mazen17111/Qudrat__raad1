@@ -51,6 +51,8 @@ import {
   ChevronDown,
   ChevronUp,
   Printer,
+  Pause,
+  Play,
 } from 'lucide-react';
 import {
   StudentUser,
@@ -557,22 +559,84 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     }
   };
 
-  // 4.1. Save / Clear Custom Red Message for specific student
+  // 4.1. Save / Update Custom Red Message for specific student
   const handleSaveCustomRedMessage = async (studentId: string, message: string) => {
     setIsSavingRedMessage((prev) => ({ ...prev, [studentId]: true }));
     try {
+      const cleanMsg = message.trim();
       await updateDoc(doc(db, 'users', studentId), {
-        customRedMessage: message.trim(),
+        customRedMessage: cleanMsg,
+        isRedMessageActive: cleanMsg ? true : false,
       });
       setStudents((prev) =>
-        prev.map((s) => (s.id === studentId ? { ...s, customRedMessage: message.trim() } : s))
+        prev.map((s) =>
+          s.id === studentId
+            ? { ...s, customRedMessage: cleanMsg, isRedMessageActive: cleanMsg ? true : false }
+            : s
+        )
       );
-      notifySave(message.trim() ? 'تم حفظ وإرسال التنبيه الأحمر للطالب بنجاح! 🚨' : 'تم مسح التنبيه بنجاح');
+      notifySave(cleanMsg ? 'تم حفظ وإرسال التنبيه الأحمر للطالب وتشغيله بنجاح! 🚨' : 'تم مسح التنبيه بنجاح');
     } catch (err) {
       console.error('Error saving red message:', err);
       notifySave('حدث خطأ أثناء حفظ التنبيه');
     } finally {
       setIsSavingRedMessage((prev) => ({ ...prev, [studentId]: false }));
+    }
+  };
+
+  // 4.1.1. Toggle pause / play of custom red message
+  const handleToggleRedMessageActive = async (studentId: string, currentActive?: boolean) => {
+    const nextStatus = currentActive === false ? true : false;
+    try {
+      await updateDoc(doc(db, 'users', studentId), {
+        isRedMessageActive: nextStatus,
+      });
+      setStudents((prev) =>
+        prev.map((s) => (s.id === studentId ? { ...s, isRedMessageActive: nextStatus } : s))
+      );
+      notifySave(nextStatus ? 'تم تشغيل وتفعيل التنبيه للطالب 🟢' : 'تم إيقاف التنبيه مؤقتاً ⏸️');
+    } catch (err) {
+      console.error('Error toggling red message active state:', err);
+      notifySave('حدث خطأ أثناء تعديل حالة التنبيه');
+    }
+  };
+
+  // 4.1.2. Delete custom red message permanently
+  const handleDeleteCustomRedMessage = async (studentId: string) => {
+    setIsSavingRedMessage((prev) => ({ ...prev, [studentId]: true }));
+    try {
+      await updateDoc(doc(db, 'users', studentId), {
+        customRedMessage: '',
+        isRedMessageActive: false,
+      });
+      setStudents((prev) =>
+        prev.map((s) =>
+          s.id === studentId ? { ...s, customRedMessage: '', isRedMessageActive: false } : s
+        )
+      );
+      setStudentRedMessageInput((prev) => ({ ...prev, [studentId]: '' }));
+      notifySave('تم حذف التنبيه الأحمر نهائياً من حساب الطالب 🗑️');
+    } catch (err) {
+      console.error('Error deleting red message:', err);
+      notifySave('حدث خطأ أثناء حذف التنبيه');
+    } finally {
+      setIsSavingRedMessage((prev) => ({ ...prev, [studentId]: false }));
+    }
+  };
+
+  // 4.1.3. Delete / Revoke student certificate permanently
+  const handleDeleteStudentCertificate = async (student: StudentUser) => {
+    try {
+      await updateDoc(doc(db, 'users', student.id), {
+        certificateIssued: null,
+      });
+      setStudents((prev) =>
+        prev.map((s) => (s.id === student.id ? { ...s, certificateIssued: null } : s))
+      );
+      notifySave(`تم حذف وإلغاء الشهادة من حساب الطالب "${student.name}" بنجاح 🗑️`);
+    } catch (err) {
+      console.error('Error deleting student certificate:', err);
+      notifySave('حدث خطأ أثناء حذف الشهادة');
     }
   };
 
@@ -2415,9 +2479,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                                   </button>
                                   <span className="text-sm">{st.name}</span>
                                   {st.customRedMessage && (
-                                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 font-bold flex items-center gap-1">
-                                      <AlertTriangle className="w-3 h-3 text-rose-400" />
-                                      تنبيه أحمر
+                                    <span className={`text-[10px] px-2 py-0.5 rounded-full border font-bold flex items-center gap-1 ${
+                                      st.isRedMessageActive !== false
+                                        ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                                        : 'bg-slate-800 text-slate-400 border-slate-700'
+                                    }`}>
+                                      <AlertTriangle className={`w-3 h-3 ${st.isRedMessageActive !== false ? 'text-rose-400' : 'text-slate-400'}`} />
+                                      <span>{st.isRedMessageActive !== false ? 'تنبيه أحمر (شغال 🟢)' : 'تنبيه أحمر (موقوف ⏸️)'}</span>
                                     </span>
                                   )}
                                   {st.certificateIssued && (
@@ -2798,34 +2866,82 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                                           </div>
                                         )}
 
-                                        <div className="flex items-center gap-2 pt-1">
+                                        {/* Status Badge & Indicator */}
+                                        {st.customRedMessage && (
+                                          <div className="flex items-center justify-between text-xs p-2.5 rounded-xl bg-slate-950/80 border border-slate-800">
+                                            <span className="text-slate-400 font-bold">حالة التنبيه في حساب الطالب:</span>
+                                            {st.isRedMessageActive !== false ? (
+                                              <span className="px-2.5 py-1 rounded-xl bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold flex items-center gap-1.5">
+                                                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                                                <span>شغال ونشط حالياً في حسابه 🟢</span>
+                                              </span>
+                                            ) : (
+                                              <span className="px-2.5 py-1 rounded-xl bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold flex items-center gap-1.5">
+                                                <span className="w-2 h-2 rounded-full bg-amber-400"></span>
+                                                <span>موقوف مؤقتاً ومخفي عن الطالب ⏸️</span>
+                                              </span>
+                                            )}
+                                          </div>
+                                        )}
+
+                                        <div className="flex flex-wrap items-center gap-2 pt-1">
                                           <button
                                             type="button"
                                             disabled={isSavingRedMessage[st.id]}
                                             onClick={() => handleSaveCustomRedMessage(st.id, currentRedInput)}
-                                            className="flex-1 py-2.5 px-4 rounded-xl bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 text-white font-black text-xs shadow-lg shadow-rose-600/30 transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                                            className="flex-1 min-w-[160px] py-2.5 px-4 rounded-xl bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 text-white font-black text-xs shadow-lg shadow-rose-600/30 transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
                                           >
                                             {isSavingRedMessage[st.id] ? (
                                               <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                                             ) : (
                                               <Send className="w-3.5 h-3.5" />
                                             )}
-                                            <span>حفظ وإرسال التنبيه الأحمر 🚨</span>
+                                            <span>حفظ وتفعيل التنبيه الأحمر 🚨</span>
                                           </button>
 
                                           {st.customRedMessage && (
-                                            <button
-                                              type="button"
-                                              disabled={isSavingRedMessage[st.id]}
-                                              onClick={() => {
-                                                setStudentRedMessageInput((prev) => ({ ...prev, [st.id]: '' }));
-                                                handleSaveCustomRedMessage(st.id, '');
-                                              }}
-                                              className="py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-bold transition cursor-pointer"
-                                              title="مسح التنبيه الأحمر من حساب الطالب"
-                                            >
-                                              مسح التنبيه
-                                            </button>
+                                            <>
+                                              {/* Pause or Resume Toggle */}
+                                              <button
+                                                type="button"
+                                                disabled={isSavingRedMessage[st.id]}
+                                                onClick={() => handleToggleRedMessageActive(st.id, st.isRedMessageActive !== false)}
+                                                className={`py-2.5 px-3 rounded-xl border text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                                                  st.isRedMessageActive !== false
+                                                    ? 'bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border-amber-500/40'
+                                                    : 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border-emerald-500/40'
+                                                }`}
+                                                title={st.isRedMessageActive !== false ? 'إيقاف عرض التنبيه مؤقتاً عند الطالب' : 'إعادة تشغيل وعرض التنبيه عند الطالب'}
+                                              >
+                                                {st.isRedMessageActive !== false ? (
+                                                  <>
+                                                   <Pause className="w-3.5 h-3.5 text-amber-400" />
+                                                   <span>إيقاف التنبيه ⏸️</span>
+                                                  </>
+                                                ) : (
+                                                  <>
+                                                   <Play className="w-3.5 h-3.5 text-emerald-400 fill-current" />
+                                                   <span>تشغيل التنبيه 🟢</span>
+                                                  </>
+                                                )}
+                                              </button>
+
+                                              {/* Delete Red Message Permanently */}
+                                              <button
+                                                type="button"
+                                                disabled={isSavingRedMessage[st.id]}
+                                                onClick={() => {
+                                                  if (window.confirm(`هل أنت متأكد من حذف التنبيه الأحمر نهائياً للطالب (${st.name})؟`)) {
+                                                    handleDeleteCustomRedMessage(st.id);
+                                                  }
+                                                }}
+                                                className="py-2.5 px-3 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-bold transition cursor-pointer flex items-center gap-1.5"
+                                                title="حذف التنبيه نهائياً من حساب الطالب"
+                                              >
+                                                <Trash2 className="w-3.5 h-3.5" />
+                                                <span>حذف الرسالة 🗑️</span>
+                                              </button>
+                                            </>
                                           )}
                                         </div>
                                       </div>
@@ -2864,11 +2980,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                                               <div>تاريخ الإصدار: {st.certificateIssued.issueDate}</div>
                                             </div>
 
-                                            <div className="flex items-center gap-2 pt-1">
+                                            <div className="flex flex-wrap items-center gap-2 pt-1">
                                               <button
                                                 type="button"
                                                 onClick={() => setPreviewCertModalData(st.certificateIssued || null)}
-                                                className="flex-1 py-2.5 px-3 rounded-xl bg-gradient-to-r from-amber-500 via-yellow-500 to-amber-600 hover:from-amber-400 hover:to-yellow-400 text-slate-950 font-black text-xs shadow-md shadow-amber-500/20 transition flex items-center justify-center gap-1.5 cursor-pointer"
+                                                className="flex-1 min-w-[150px] py-2.5 px-3 rounded-xl bg-gradient-to-r from-amber-500 via-yellow-500 to-amber-600 hover:from-amber-400 hover:to-yellow-400 text-slate-950 font-black text-xs shadow-md shadow-amber-500/20 transition flex items-center justify-center gap-1.5 cursor-pointer"
                                               >
                                                 <Printer className="w-3.5 h-3.5" />
                                                 <span>معاينة وطباعة الشهادة 📜</span>
@@ -2881,6 +2997,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                                                 title="تعديل بيانات الشهادة"
                                               >
                                                 تعديل
+                                              </button>
+
+                                              <button
+                                                type="button"
+                                                onClick={() => {
+                                                  if (window.confirm(`هل أنت متأكد من حذف وإلغاء شهادة الطالب (${st.name}) نهائياً؟ ستختفي الشهادة من حسابه فوراً.`)) {
+                                                    handleDeleteStudentCertificate(st);
+                                                  }
+                                                }}
+                                                className="py-2.5 px-3 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-bold transition cursor-pointer flex items-center gap-1.5"
+                                                title="حذف وإلغاء الشهادة من عند الطالب"
+                                              >
+                                                <Trash2 className="w-3.5 h-3.5" />
+                                                <span>حذف الشهادة 🗑️</span>
                                               </button>
                                             </div>
                                           </div>
