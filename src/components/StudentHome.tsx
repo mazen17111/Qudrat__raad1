@@ -2813,6 +2813,19 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
         onClose={() => setShowStatsModal(false)}
         currentUser={currentUser}
         isDarkMode={isDarkMode}
+        items={contentItems}
+        sections={sections}
+        resources={resources}
+        watchedVideoIds={optimisticWatchedVideoIds}
+        onSelectVideo={(videoItem) => {
+          const res = resources.find((r) => r.id === videoItem.resourceId);
+          if (res) {
+            setSelectedSectionId(res.sectionId);
+            setSelectedResourceId(res.id);
+          }
+          handleSelectVideo(videoItem);
+          setShowStatsModal(false);
+        }}
       />
 
       {/* مجلداتي Modal */}
