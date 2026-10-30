@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
-import { AlertCircle, RefreshCw, Play } from 'lucide-react';
+import { AlertCircle, RefreshCw, Play, PictureInPicture2 } from 'lucide-react';
 
 interface SmartVideoPlayerProps {
   url: string;
@@ -22,11 +22,54 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
   const [hasError, setHasError] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const [useProxyFallback, setUseProxyFallback] = useState(false);
+  const [isPiPActive, setIsPiPActive] = useState(false);
+  const [isPiPSupported, setIsPiPSupported] = useState(false);
+
+  useEffect(() => {
+    setIsPiPSupported(
+      typeof document !== 'undefined' && 'pictureInPictureEnabled' in document && Boolean(document.pictureInPictureEnabled)
+    );
+  }, []);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const handleEnterPiP = () => setIsPiPActive(true);
+    const handleLeavePiP = () => setIsPiPActive(false);
+
+    video.addEventListener('enterpictureinpicture', handleEnterPiP);
+    video.addEventListener('leavepictureinpicture', handleLeavePiP);
+
+    return () => {
+      video.removeEventListener('enterpictureinpicture', handleEnterPiP);
+      video.removeEventListener('leavepictureinpicture', handleLeavePiP);
+    };
+  }, [reloadKey, url, useProxyFallback]);
+
+  const handleTogglePiP = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      const video = videoRef.current;
+      if (!video) return;
+
+      if (document.pictureInPictureElement) {
+        await document.exitPictureInPicture();
+        setIsPiPActive(false);
+      } else if (video.requestPictureInPicture) {
+        await video.requestPictureInPicture();
+        setIsPiPActive(true);
+      }
+    } catch (err) {
+      console.warn('PiP error:', err);
+    }
+  };
 
   // Reset states when URL changes
   useEffect(() => {
     setHasError(false);
     setUseProxyFallback(false);
+    setIsPiPActive(false);
   }, [url, reloadKey]);
 
   const handleReload = () => {
@@ -178,6 +221,23 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
       className="relative w-full h-full bg-black overflow-hidden flex items-center justify-center select-none"
     >
       {watermarkContent}
+
+      {/* Floating Simple PiP Button ("ضيف زر pip فوق كل فيديو كده حاجة بسيطة يعني") */}
+      {isPiPSupported && !hasError && (
+        <button
+          type="button"
+          onClick={handleTogglePiP}
+          className={`absolute top-3 right-3 z-20 flex items-center gap-1.5 px-3 py-1.5 rounded-xl backdrop-blur-md border shadow-lg transition-all duration-200 active:scale-95 cursor-pointer select-none ${
+            isPiPActive
+              ? 'bg-amber-500 text-slate-950 border-amber-300 font-black shadow-amber-500/30 ring-2 ring-amber-400/40'
+              : 'bg-black/75 hover:bg-black/90 text-white border-white/20 hover:border-white/40'
+          }`}
+          title={isPiPActive ? 'الخروج من النافذة العائمة (PiP)' : 'تشغيل الفيديو في نافذة عائمة مصغرة (PiP)'}
+        >
+          <PictureInPicture2 className={`w-3.5 h-3.5 ${isPiPActive ? 'text-slate-950' : 'text-amber-400'}`} />
+          <span className="text-[11px] font-black">PiP</span>
+        </button>
+      )}
 
       {hasError ? (
         <div className="flex flex-col items-center justify-center p-6 text-center space-y-3 z-20 max-w-sm">

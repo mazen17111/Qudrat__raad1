@@ -327,47 +327,39 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
           </div>
         )}
 
-        {/* Welcome & Quick Support Banner */}
+        {/* Quick Inquiries via WhatsApp & Telegram only ("شيل الرسالة الكبيرة دي وخلي بس الاستفسارات عبر الواتس والتليجرام") */}
         <div
-          className={`p-4 sm:p-5 rounded-3xl border shadow-xl relative overflow-hidden flex flex-col md:flex-row items-start md:items-center justify-between gap-4 ${
+          className={`px-4 sm:px-6 py-3.5 rounded-2xl border shadow-md flex flex-wrap items-center justify-between gap-3 ${
             isDarkMode
-              ? 'bg-gradient-to-r from-slate-900 via-indigo-950/40 to-slate-900 border-slate-800'
-              : 'bg-gradient-to-r from-blue-50/70 via-white to-indigo-50/50 border-slate-200'
+              ? 'bg-slate-900/90 border-slate-800 backdrop-blur-md'
+              : 'bg-white border-slate-200 shadow-sm'
           }`}
         >
-          <div className="space-y-1 max-w-2xl">
-            <div className="flex items-center gap-2">
-              <span className="px-2.5 py-0.5 rounded-full bg-blue-500/20 text-blue-400 text-xs font-black">
-                ✨ خطوتك الأولى للتميز
-              </span>
-              <span className="text-xs text-slate-400 font-bold">منصة أقسام رعد للقدرات</span>
-            </div>
-            <h2 className={`text-base sm:text-xl md:text-2xl font-black ${isDarkMode ? 'text-white' : 'text-slate-950'}`}>
-              اختر الدورة التعليمية المناسبة لك وابدأ دراستك وتدريبك الآن
-            </h2>
-            <p className={`text-xs sm:text-sm leading-relaxed ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
-              اختر من القائمة في اليمين لعرض الكورسات المتفعلة أو الكورسات المتاحة بمستطيلات منظمة على اليسار، بالإضافة إلى خطوات التسجيل وقنوات التواصل.
-            </p>
+          <div className="flex items-center gap-2.5">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span className={`text-xs sm:text-sm font-black ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>
+              الاستفسارات والمساعدة السريعة:
+            </span>
           </div>
 
-          <div className="flex flex-col sm:flex-row gap-2 shrink-0 w-full md:w-auto">
+          <div className="flex items-center gap-2.5 sm:gap-3 flex-wrap mr-auto sm:mr-0">
             <a
               href={whatsappInquiryUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs sm:text-sm shadow-md transition cursor-pointer"
+              className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs sm:text-sm shadow-md transition cursor-pointer hover:scale-[1.02] active:scale-95"
             >
               <MessageCircle className="w-4 h-4" />
-              <span>مساعدة المشرف واتساب 📱</span>
+              <span>الاستفسارات عبر الواتس 📱</span>
             </a>
             <a
               href={telegramInquiryUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-2xl bg-sky-600 hover:bg-sky-500 text-white font-black text-xs sm:text-sm shadow-md transition cursor-pointer"
+              className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-black text-xs sm:text-sm shadow-md transition cursor-pointer hover:scale-[1.02] active:scale-95"
             >
               <Send className="w-4 h-4" />
-              <span>استفسار تليجرام ✈️</span>
+              <span>الاستفسارات عبر التليجرام ✈️</span>
             </a>
           </div>
         </div>
@@ -384,6 +376,37 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
               : 'bg-white border-slate-200 text-slate-900 shadow-xl'
           }`}>
             <div className="space-y-4">
+              {/* الشعار المرفوع بشكل كبير وواضح فوق قائمة المنصة الرئيسية ("وحط فوق قائمة المنصة الرئيسية الشعار اللي انا رافعه حطه بشكل كبير وواضح") */}
+              <div className={`p-5 rounded-3xl border-2 flex flex-col items-center justify-center text-center transition-all shadow-xl ${
+                isDarkMode
+                  ? 'bg-gradient-to-b from-slate-900 via-slate-950 to-slate-900 border-blue-500/30 shadow-blue-950/40'
+                  : 'bg-gradient-to-b from-blue-50/50 via-white to-blue-50/30 border-blue-400/30 shadow-slate-200'
+              }`}>
+                {systemSettings.logoUrl ? (
+                  <img
+                    src={systemSettings.logoUrl}
+                    alt="شعار منصة أقسام رعد"
+                    className="w-32 h-32 sm:w-40 sm:h-40 md:w-44 md:h-44 object-contain drop-shadow-[0_12px_28px_rgba(37,99,235,0.45)] transition-transform duration-300 hover:scale-105"
+                    loading="eager"
+                    decoding="sync"
+                  />
+                ) : (
+                  <BrandLogo
+                    customLogoUrl={systemSettings.logoUrl}
+                    size="xl"
+                    primaryColor={activeTheme?.primary || '#2563eb'}
+                  />
+                )}
+                <div className="mt-3 space-y-0.5">
+                  <h3 className={`text-base sm:text-lg font-black tracking-wide ${isDarkMode ? 'text-white' : 'text-slate-950'}`}>
+                    منصة أقسام رعد ⚡
+                  </h3>
+                  <p className="text-[11px] text-slate-400 font-bold">
+                    طريقك الأمثل لتحقيق الـ 100% في القدرات
+                  </p>
+                </div>
+              </div>
+
               {/* Header: عنوان القائمة اليمينية */}
               <div className={`pb-3 border-b flex items-center justify-between ${
                 isDarkMode ? 'border-slate-800/80 text-slate-300' : 'border-slate-200 text-slate-700'

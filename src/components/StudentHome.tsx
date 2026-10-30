@@ -39,6 +39,7 @@ import {
   Maximize2,
   Minimize2,
   BookOpen,
+  PictureInPicture2,
 } from 'lucide-react';
 import { BrandLogo } from './BrandLogo';
 import {
@@ -170,13 +171,20 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
     setSelectedExamSystem('nimr');
   };
 
-  // Educational Data with zero-latency instant loading from local cache or initial datasets
+  // Educational Data with fast authoritative loading and cache validation
   const [sections, setSections] = useState<SectionItem[]>(() => {
     try {
       const cached = localStorage.getItem('raad_cached_sections');
       if (cached) {
         const parsed = JSON.parse(cached);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          // Reject stale cache containing removed sections
+          if (parsed.some((s: SectionItem) => s.id === 'sec_hamada')) {
+            try { localStorage.removeItem('raad_cached_sections'); } catch (e) {}
+            return INITIAL_SECTIONS;
+          }
+          return parsed;
+        }
       }
     } catch (e) {}
     return INITIAL_SECTIONS;
@@ -187,7 +195,13 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
       const cached = localStorage.getItem('raad_cached_resources');
       if (cached) {
         const parsed = JSON.parse(cached);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          if (parsed.some((r: ResourceItem) => r.id === 'res_hamada_main')) {
+            try { localStorage.removeItem('raad_cached_resources'); } catch (e) {}
+            return INITIAL_RESOURCES;
+          }
+          return parsed;
+        }
       }
     } catch (e) {}
     return INITIAL_RESOURCES;
@@ -198,7 +212,14 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
       const cached = localStorage.getItem('raad_cached_content_items');
       if (cached) {
         const parsed = JSON.parse(cached);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          // Reject stale cache containing removed demo items
+          if (parsed.some((i: ContentItem) => i.id === 'item_video_1' || i.id === 'item_exam_1' || (i.url && i.url.includes('BigBuckBunny')))) {
+            try { localStorage.removeItem('raad_cached_content_items'); } catch (e) {}
+            return INITIAL_CONTENT_ITEMS;
+          }
+          return parsed;
+        }
       }
     } catch (e) {}
     return INITIAL_CONTENT_ITEMS;
@@ -210,27 +231,27 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
   const [selectedSectionId, setSelectedSectionId] = useState<string>(() => {
     try {
       const cachedId = localStorage.getItem('raad_cached_selected_section_id');
-      if (cachedId) return cachedId;
+      if (cachedId && cachedId !== 'sec_hamada') return cachedId;
       const cachedSecs = localStorage.getItem('raad_cached_sections');
       if (cachedSecs) {
         const parsed = JSON.parse(cachedSecs);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed[0].id;
+        if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].id !== 'sec_hamada') return parsed[0].id;
       }
     } catch (e) {}
-    return INITIAL_SECTIONS[0]?.id || 'sec_verbal';
+    return INITIAL_SECTIONS[0]?.id || '';
   });
 
   const [selectedResourceId, setSelectedResourceId] = useState<string>(() => {
     try {
       const cachedId = localStorage.getItem('raad_cached_selected_resource_id');
-      if (cachedId) return cachedId;
+      if (cachedId && cachedId !== 'res_hamada_main') return cachedId;
       const cachedRes = localStorage.getItem('raad_cached_resources');
       if (cachedRes) {
         const parsed = JSON.parse(cachedRes);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed[0].id;
+        if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].id !== 'res_hamada_main') return parsed[0].id;
       }
     } catch (e) {}
-    return INITIAL_RESOURCES[0]?.id || 'res_analogy';
+    return INITIAL_RESOURCES[0]?.id || '';
   });
 
   const [activeTab, setActiveTab] = useState<'videos' | 'exams' | 'files'>('videos');
@@ -241,7 +262,7 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
       if (cached) {
         const parsed = JSON.parse(cached);
         if (Array.isArray(parsed)) {
-          const firstVid = parsed.find((i: ContentItem) => i.type === 'video');
+          const firstVid = parsed.find((i: ContentItem) => i.type === 'video' && i.id !== 'item_video_1' && !i.url?.includes('BigBuckBunny'));
           if (firstVid) return firstVid;
         }
       }
@@ -341,16 +362,12 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
       const list: SectionItem[] = [];
       snap.forEach((d) => list.push({ id: d.id, ...d.data() } as SectionItem));
       list.sort((a, b) => (a.order || 0) - (b.order || 0));
-      if (list.length > 0) {
-        setSections(list);
-        setTimeout(() => {
-          try {
-            localStorage.setItem('raad_cached_sections', JSON.stringify(list));
-          } catch (e) {}
-        }, 0);
-        if (!selectedSectionId) {
-          setSelectedSectionId(list[0].id);
-        }
+      setSections(list);
+      try {
+        localStorage.setItem('raad_cached_sections', JSON.stringify(list));
+      } catch (e) {}
+      if (!selectedSectionId && list.length > 0) {
+        setSelectedSectionId(list[0].id);
       }
     });
 
@@ -358,14 +375,10 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
       const list: ResourceItem[] = [];
       snap.forEach((d) => list.push({ id: d.id, ...d.data() } as ResourceItem));
       list.sort((a, b) => (a.order || 0) - (b.order || 0));
-      if (list.length > 0) {
-        setResources(list);
-        setTimeout(() => {
-          try {
-            localStorage.setItem('raad_cached_resources', JSON.stringify(list));
-          } catch (e) {}
-        }, 0);
-      }
+      setResources(list);
+      try {
+        localStorage.setItem('raad_cached_resources', JSON.stringify(list));
+      } catch (e) {}
     });
 
     const unsubItems = onSnapshot(collection(db, 'content_items'), (snap) => {
@@ -378,14 +391,10 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
         if (tA !== tB) return tA - tB;
         return (a.id || '').localeCompare(b.id || '');
       });
-      if (list.length > 0) {
-        setContentItems(list);
-        setTimeout(() => {
-          try {
-            localStorage.setItem('raad_cached_content_items', JSON.stringify(list));
-          } catch (e) {}
-        }, 0);
-      }
+      setContentItems(list);
+      try {
+        localStorage.setItem('raad_cached_content_items', JSON.stringify(list));
+      } catch (e) {}
     });
 
     const qFolders = query(collection(db, 'folders'), where('userId', '==', currentUser.id));
@@ -1996,6 +2005,29 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                     </div>
 
                     <div className="flex items-center gap-2 flex-wrap">
+                      {/* Simple PiP button above the video ("ضيف زر pip فوق كل فيديو كده حاجة بسيطة يعني") */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const video = document.querySelector('video');
+                          if (!video) return;
+                          if (document.pictureInPictureElement) {
+                            document.exitPictureInPicture().catch(() => {});
+                          } else if (video.requestPictureInPicture) {
+                            video.requestPictureInPicture().catch(() => {});
+                          }
+                        }}
+                        className={`px-3 py-2 rounded-xl text-xs font-black transition flex items-center gap-1.5 shadow-sm cursor-pointer border ${
+                          isDarkMode
+                            ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border-slate-700'
+                            : 'bg-white hover:bg-slate-100 text-slate-800 border-slate-300'
+                        }`}
+                        title="تشغيل الفيديو في نافذة عائمة مصغرة (Picture-in-Picture)"
+                      >
+                        <PictureInPicture2 className="w-4 h-4 text-amber-400" />
+                        <span>نافذة عائمة (PiP)</span>
+                      </button>
+
                       <button
                         type="button"
                         onClick={() => handleToggleWatchVideo(activeVideoItem.id)}

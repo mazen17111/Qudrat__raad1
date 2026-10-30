@@ -63,6 +63,11 @@ export default function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
+          // If cached courses contains deleted dummy courses (e.g. course_default_2), discard immediately
+          if (parsed.some((c: CourseItem) => c.id === 'course_default_2')) {
+            try { localStorage.removeItem(CACHED_COURSES_KEY); } catch (e) {}
+            return INITIAL_COURSES;
+          }
           parsed.forEach((c: CourseItem) => {
             if (c.imageUrl) {
               const img = new Image();

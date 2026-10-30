@@ -157,201 +157,44 @@ export const DEFAULT_SETTINGS: SystemSettings = {
   }
 };
 
-// Default initial courses
+// Default initial courses matching the real active platform database
 export const INITIAL_COURSES: CourseItem[] = [
   {
     id: 'course_default_1',
-    title: 'كورس القدرات العامة الشامل (تأسيس وتدريب ومحاكيات)',
-    description: 'الكورس الشامل الأساسي: دورة متكاملة في التأسيس اللفظي والكمي، حل التجميعات الحديثة، واختبارات محاكية بنظام نمر ونظام المنصة.',
+    title: 'دورة أقسام رعد المجانية',
+    description: 'الدورة الأساسية لمنصة أقسام رعد: شروحات شاملة، حل التجميعات الحديثة، واختبارات محاكية.',
     imageUrl: 'https://images.unsplash.com/photo-1434030216411-0b793f4b4173?w=800&auto=format&fit=crop&q=80',
     isLocked: false,
     order: 1,
     createdAt: new Date().toISOString()
-  },
-  {
-    id: 'course_default_2',
-    title: 'كورس التسريبات والنماذج الذهبية المقفلة (VIP)',
-    description: 'كورس مكثف وخاص بالنماذج الحديثة المتوقعة وتجميعات الـ 120 نموذج المنقحة مع حصص سرية ومتابعة فردية.',
-    imageUrl: 'https://images.unsplash.com/photo-1456513080510-7bf3a84b82f8?w=800&auto=format&fit=crop&q=80',
-    isLocked: true,
-    price: '199 ريال سعودي',
-    bankAccountImage1: 'https://images.unsplash.com/photo-1559526324-4b87b5e36e44?w=800&auto=format&fit=crop&q=80',
-    bankAccountImage2: 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?w=800&auto=format&fit=crop&q=80',
-    paymentMessage: 'الرجاء التحويل إلى أحد الحسابين الموضحين في الصورتين أعلاه، ثم إرسال إشعار التحويل عبر الواتساب لتفعيل الكورس فوراً.',
-    order: 2,
-    createdAt: new Date().toISOString()
   }
 ];
 
-// Default initial datasets for instantaneous zero-latency display upon entry
+// Default initial datasets matching the real active platform database
 export const INITIAL_SECTIONS: SectionItem[] = [
-  {
-    id: 'sec_verbal',
-    courseId: 'course_default_1',
-    title: 'القسم اللفظي الشامل',
-    description: 'التناظر اللفظي، إكمال الجمل، الخطأ السياقي، واستيعاب المقروء',
-    order: 1,
-    createdAt: new Date().toISOString()
-  },
   {
     id: 'sec_quant',
     courseId: 'course_default_1',
-    title: 'القسم الكمي الشامل',
-    description: 'الحساب، الهندسة، الجبر، والإحصاء والاحتمالات',
-    order: 2,
-    createdAt: new Date().toISOString()
-  },
-  {
-    id: 'sec_hamada',
-    courseId: 'course_default_1',
-    title: 'حمادة',
-    description: 'قسم حمادة التعليمي الخاص',
-    order: 3,
+    title: 'القسم الكمي',
+    description: 'قسم الشروحات والتأسيس والتدريب للقدرات',
+    order: 1,
     createdAt: new Date().toISOString()
   }
 ];
 
 export const INITIAL_RESOURCES: ResourceItem[] = [
   {
-    id: 'res_analogy',
-    sectionId: 'sec_verbal',
-    title: 'التناظر اللفظي الذهبي',
-    description: 'علاقات التناظر اللفظي وكيفية حلها في ثوان معدودة',
-    order: 1,
-    createdAt: new Date().toISOString()
-  },
-  {
-    id: 'res_context_error',
-    sectionId: 'sec_verbal',
-    title: 'الخطأ السياقي وإكمال الجمل',
-    description: 'استراتيجيات اكتشاف الكلمة الشاذة وتكملة الفراغات',
-    order: 2,
-    createdAt: new Date().toISOString()
-  },
-  {
-    id: 'res_quant_geometry',
+    id: 'GzullBRhtnkiMKdwM9PB',
     sectionId: 'sec_quant',
-    title: 'الهندسة والزوايا والأشكال',
-    description: 'قوانين المثلثات، الدائرة، والمضلعات وحيل الحل السريع',
-    order: 1,
-    createdAt: new Date().toISOString()
-  },
-  {
-    id: 'res_hamada_main',
-    sectionId: 'sec_hamada',
-    title: 'المحاضرات والتدريبات الأساسية',
-    description: 'الملفات والفيديوهات والاختبارات التابعة لقسم حمادة',
+    title: 'أقسام رعد',
+    description: 'المحاضرات والشروحات والتدريبات والاختبارات التفاعلية',
     order: 1,
     createdAt: new Date().toISOString()
   }
 ];
 
-export const INITIAL_CONTENT_ITEMS: ContentItem[] = [
-  {
-    id: 'item_video_1',
-    resourceId: 'res_analogy',
-    type: 'video',
-    title: 'شرح أساسيات التناظر اللفظي مع مستر رعد',
-    description: 'الفيديو التأسيسي الأول لضبط جميع علاقات التناظر والوصول للـ 100%',
-    url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-    durationMinutes: 15,
-    createdAt: new Date(Date.now() - 3600000 * 24).toISOString()
-  },
-  {
-    id: 'item_exam_1',
-    resourceId: 'res_analogy',
-    type: 'exam',
-    title: 'اختبار التناظر اللفظي المحاكي (10 أسئلة)',
-    description: 'اختبار دقيق يقيس سرعتك ودقتك في علاقات التناظر اللفظي',
-    isExternal: false,
-    durationMinutes: 10,
-    questions: [
-      {
-        id: 'q1',
-        questionText: 'كتاب : ورقة',
-        options: ['شجرة : غصن', 'بحر : سفينة', 'بيت : شارع', 'سيارة : طريق'],
-        correctOptionIndex: 0,
-        explanation: 'العلاقة: كل وجزء (الكتاب يتكون من أوراق، والشجرة تتكون من أغصان).'
-      },
-      {
-        id: 'q2',
-        questionText: 'شمس : ضياء',
-        options: ['نار : دفء', 'قمر : ليل', 'ثلج : شتاء', 'مطر : سحاب'],
-        correctOptionIndex: 0,
-        explanation: 'العلاقة: مصدرية أو نتيجة، الشمس تمدنا بالضياء والنار تمدنا بالدفء.'
-      },
-      {
-        id: 'q3',
-        questionText: 'منشار : خشب',
-        options: ['مقص : قماش', 'سكين : يد', 'قلم : حبر', 'فرشاة : لوحة'],
-        correctOptionIndex: 0,
-        explanation: 'العلاقة: أداة واستخدامها في القطع والتفصيل.'
-      },
-      {
-        id: 'q4',
-        questionText: 'رئة : تنفس',
-        options: ['عين : بصر', 'قدم : حذاء', 'أذن : صوت', 'يد : خاتم'],
-        correctOptionIndex: 0,
-        explanation: 'العلاقة: عضو ووظيفته الأساسية.'
-      },
-      {
-        id: 'q5',
-        questionText: 'غمد : سيف',
-        options: ['عرين : أسد', 'ماء : كأس', 'قلم : مقلمة', 'ثوب : خزانة'],
-        correctOptionIndex: 0,
-        explanation: 'العلاقة: مكان الاستقرار والوعاء المخصص (السيف موضعه الغمد والأسد موضعه العرين).'
-      }
-    ],
-    createdAt: new Date(Date.now() - 3600000 * 24 + 600000).toISOString()
-  },
-  {
-    id: 'item_file_1',
-    resourceId: 'res_analogy',
-    type: 'file',
-    title: 'ملف بنك علاقات التناظر اللفظي الذهبية PDF',
-    description: 'ملخص شامل لجميع العلاقات المتكررة في الاختبارات المحوسبة والورقية',
-    url: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-    fileName: 'relations_guide_raad.pdf',
-    fileSize: '2.4 MB',
-    createdAt: new Date(Date.now() - 3600000 * 24 + 1200000).toISOString()
-  },
-  {
-    id: 'item_exam_2',
-    resourceId: 'res_quant_geometry',
-    type: 'exam',
-    title: 'اختبار الزوايا والمثلثات الحسابي',
-    description: 'اختبار هندسي يقيس قدراتك الرياضية مع السبورة للمسودات',
-    isExternal: false,
-    durationMinutes: 12,
-    questions: [
-      {
-        id: 'qg1',
-        questionText: 'مثلث قياس زاويتين فيه 50° و 60°، ما قياس الزاوية الثالثة؟',
-        options: ['70°', '60°', '80°', '90°'],
-        correctOptionIndex: 0,
-        explanation: 'مجموع زوايا المثلث = 180°، إذن الزاوية الثالثة = 180 - (50 + 60) = 70°'
-      },
-      {
-        id: 'qg2',
-        questionText: 'مستطيل طوله ضعف عرضه ومحيطه 36 سم، فما هي مساحته؟',
-        options: ['72 سم²', '36 سم²', '54 سم²', '64 سم²'],
-        correctOptionIndex: 0,
-        explanation: 'المحيط = 2 × (الطول + العرض) = 36، إذن الطول + العرض = 18. إذا كان العرض س والطول 2س => 3س = 18 => س = 6 (العرض)، والطول = 12. المساحة = 12 × 6 = 72 سم²'
-      }
-    ],
-    createdAt: new Date(Date.now() - 3600000 * 24 + 1800000).toISOString()
-  },
-  {
-    id: 'item_video_2',
-    resourceId: 'res_quant_geometry',
-    type: 'video',
-    title: 'أسرار المثلثات ومبرهنة فيثاغورس في خطوة واحدة',
-    description: 'شرح مبسط لقوانين الهندسة وحساب المساحات المعقدة',
-    url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
-    durationMinutes: 20,
-    createdAt: new Date(Date.now() - 3600000 * 24 + 2400000).toISOString()
-  }
-];
+export const INITIAL_CONTENT_ITEMS: ContentItem[] = [];
+
 
 // Test Firestore connection on boot as requested by skill
 export async function testConnection() {
@@ -571,43 +414,7 @@ export async function seedInitialPlatformData() {
       });
     }
 
-    // Ensure section "حمادة" is created as requested by the user
-    try {
-      const hamadaDocRef = doc(db, 'sections', 'sec_hamada');
-      const hamadaSnap = await getDoc(hamadaDocRef);
-      if (!hamadaSnap.exists()) {
-        const allSec = await getDocs(collection(db, 'sections'));
-        const nextOrder = allSec.size + 1;
-        await setDoc(hamadaDocRef, {
-          id: 'sec_hamada',
-          title: 'حمادة',
-          description: 'قسم حمادة التعليمي الخاص',
-          order: nextOrder,
-          createdAt: new Date().toISOString()
-        }, { merge: true });
-
-        // Add a default resource under "حمادة" so the user can immediately add content
-        const resHamadaRef = doc(db, 'resources', 'res_hamada_main');
-        const resHamadaSnap = await getDoc(resHamadaRef);
-        if (!resHamadaSnap.exists()) {
-          await setDoc(resHamadaRef, {
-            id: 'res_hamada_main',
-            sectionId: 'sec_hamada',
-            title: 'المحاضرات والتدريبات الأساسية',
-            description: 'الملفات والفيديوهات والاختبارات التابعة لقسم حمادة',
-            order: 1,
-            createdAt: new Date().toISOString()
-          }, { merge: true });
-        }
-      }
-    } catch (e) {
-      console.warn("Could not seed Hamada section:", e);
-    }
-
-    // Ensure both initial courses exist, restoring course_default_2 and its contents if missing
-    await restoreDefaultCoursesAndContent();
-
-    // Mark permanent seeder lock so deleted items/sections NEVER return
+    // Mark permanent seeder lock so deleted items/courses NEVER return
     await setDoc(lockRef, { isInitialized: true, initializedAt: new Date().toISOString() }, { merge: true });
     try {
       if (typeof window !== 'undefined') {
