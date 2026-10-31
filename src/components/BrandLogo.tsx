@@ -3,7 +3,7 @@ import { Zap } from 'lucide-react';
 
 interface BrandLogoProps {
   customLogoUrl?: string;
-  size?: 'sm' | 'md' | 'lg' | 'xl';
+  size?: 'sm' | 'md' | 'lg' | 'xl' | '2xl';
   primaryColor?: string;
 }
 
@@ -17,6 +17,7 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
     md: 'w-10 h-10 text-sm',
     lg: 'w-14 h-14 text-base',
     xl: 'w-20 h-20 text-xl',
+    '2xl': 'w-32 h-32 sm:w-44 sm:h-44 text-3xl',
   };
 
   const iconSizeMap = {
@@ -24,6 +25,7 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
     md: 'w-5 h-5',
     lg: 'w-7 h-7',
     xl: 'w-10 h-10',
+    '2xl': 'w-16 h-16 sm:w-20 sm:h-20',
   };
 
   if (customLogoUrl) {

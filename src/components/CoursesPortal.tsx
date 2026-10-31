@@ -267,7 +267,7 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
       </header>
 
       {/* ================= MAIN VIEWPORT CONTAINER ================= */}
-      <main className="flex-1 max-w-[1750px] w-full mx-auto p-3 sm:p-5 md:p-6 lg:p-8 flex flex-col gap-6">
+      <main className="flex-1 max-w-[1750px] w-full mx-auto p-3 sm:p-4 md:p-5 flex flex-col gap-3 sm:gap-4">
         {/* ================= CUSTOM RED MESSAGE FOR THIS STUDENT ================= */}
         {/* "ويمكنني كتابة رسالة مخصصة لكل طالب تظهر له باللون الاحمر" */}
         {currentUser.customRedMessage && currentUser.customRedMessage.trim() !== '' && currentUser.isRedMessageActive !== false && (
@@ -327,66 +327,47 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
           </div>
         )}
 
-        {/* Quick Inquiries via WhatsApp & Telegram only ("شيل الرسالة الكبيرة دي وخلي بس الاستفسارات عبر الواتس والتليجرام") */}
-        <div
-          className={`px-4 sm:px-6 py-3.5 rounded-2xl border shadow-md flex flex-wrap items-center justify-between gap-3 ${
-            isDarkMode
-              ? 'bg-slate-900/90 border-slate-800 backdrop-blur-md'
-              : 'bg-white border-slate-200 shadow-sm'
-          }`}
-        >
-          <div className="flex items-center gap-2.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span className={`text-xs sm:text-sm font-black ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>
-              الاستفسارات والمساعدة السريعة:
-            </span>
-          </div>
-
-          <div className="flex items-center gap-2.5 sm:gap-3 flex-wrap mr-auto sm:mr-0">
-            <a
-              href={whatsappInquiryUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs sm:text-sm shadow-md transition cursor-pointer hover:scale-[1.02] active:scale-95"
-            >
-              <MessageCircle className="w-4 h-4" />
-              <span>الاستفسارات عبر الواتس 📱</span>
-            </a>
-            <a
-              href={telegramInquiryUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-black text-xs sm:text-sm shadow-md transition cursor-pointer hover:scale-[1.02] active:scale-95"
-            >
-              <Send className="w-4 h-4" />
-              <span>الاستفسارات عبر التليجرام ✈️</span>
-            </a>
-          </div>
+        {/* WhatsApp & Telegram buttons on the left only ("شيل جملة الاستفسارات والمساعدة السريعة خلي المستطيلين الواتس والتليجرام بس عاليسار") */}
+        <div className="flex items-center justify-end gap-2.5 sm:gap-3 w-full -mb-1">
+          <a
+            href={whatsappInquiryUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center justify-center gap-2 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs shadow-md transition cursor-pointer hover:scale-[1.02] active:scale-95"
+          >
+            <MessageCircle className="w-4 h-4" />
+            <span>الاستفسارات عبر الواتس 📱</span>
+          </a>
+          <a
+            href={telegramInquiryUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center justify-center gap-2 px-3.5 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-black text-xs shadow-md transition cursor-pointer hover:scale-[1.02] active:scale-95"
+          >
+            <Send className="w-4 h-4" />
+            <span>الاستفسارات عبر التليجرام ✈️</span>
+          </a>
         </div>
 
         {/* ================= 2-COLUMN PORTAL LAYOUT =================
             - On the Right (in RTL): Menu buttons strictly stacked vertically inside a full-height black box.
             - On the Left (in RTL): The actual content (courses as small rectangles, registration steps, contact cards).
         */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 sm:gap-6 flex-1 items-start">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-5 flex-1 items-start">
           {/* ================= RIGHT COLUMN (in RTL): قائمة الخانات الـ 4 تحت بعض في مستطيل فخم بملء الشاشة بالعرض المريح ================= */}
-          <div className={`lg:col-span-5 xl:col-span-4 order-2 lg:order-1 border-2 rounded-3xl p-5 sm:p-6 flex flex-col justify-between gap-6 shadow-2xl min-h-[calc(100vh-220px)] transition-colors ${
+          <div className={`lg:col-span-5 xl:col-span-4 order-1 lg:order-1 border-2 rounded-3xl p-3.5 sm:p-4.5 flex flex-col justify-start gap-3.5 shadow-2xl transition-colors ${
             isDarkMode
               ? 'bg-slate-950 border-slate-800/90 text-white'
               : 'bg-white border-slate-200 text-slate-900 shadow-xl'
           }`}>
-            <div className="space-y-4">
-              {/* الشعار المرفوع بشكل كبير وواضح فوق قائمة المنصة الرئيسية ("وحط فوق قائمة المنصة الرئيسية الشعار اللي انا رافعه حطه بشكل كبير وواضح") */}
-              <div className={`p-5 rounded-3xl border-2 flex flex-col items-center justify-center text-center transition-all shadow-xl ${
-                isDarkMode
-                  ? 'bg-gradient-to-b from-slate-900 via-slate-950 to-slate-900 border-blue-500/30 shadow-blue-950/40'
-                  : 'bg-gradient-to-b from-blue-50/50 via-white to-blue-50/30 border-blue-400/30 shadow-slate-200'
-              }`}>
+            <div className="space-y-2.5">
+              {/* الشعار مرفوع للأعلى وظاهر بحجم كبير وواضح وبلا أي مربع أزرق ("ارفع الشعار فوق شوية كمان وارفع قائمة المنصة الرئيسية فوق شوية كمان خليها ظاهرة للطلاب") */}
+              <div className="flex flex-col items-center justify-center text-center -mt-1 sm:-mt-1.5 pb-0.5">
                 {systemSettings.logoUrl ? (
                   <img
                     src={systemSettings.logoUrl}
                     alt="شعار منصة أقسام رعد"
-                    className="w-32 h-32 sm:w-40 sm:h-40 md:w-44 md:h-44 object-contain drop-shadow-[0_12px_28px_rgba(37,99,235,0.45)] transition-transform duration-300 hover:scale-105"
+                    className="w-36 h-36 sm:w-44 sm:h-44 md:w-48 md:h-48 object-contain drop-shadow-[0_12px_24px_rgba(37,99,235,0.35)] transition-transform duration-300 hover:scale-105"
                     loading="eager"
                     decoding="sync"
                   />
@@ -397,7 +378,7 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
                     primaryColor={activeTheme?.primary || '#2563eb'}
                   />
                 )}
-                <div className="mt-3 space-y-0.5">
+                <div className="mt-1 space-y-0.5">
                   <h3 className={`text-base sm:text-lg font-black tracking-wide ${isDarkMode ? 'text-white' : 'text-slate-950'}`}>
                     منصة أقسام رعد ⚡
                   </h3>
@@ -408,7 +389,7 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
               </div>
 
               {/* Header: عنوان القائمة اليمينية */}
-              <div className={`pb-3 border-b flex items-center justify-between ${
+              <div className={`pb-2 border-b flex items-center justify-between ${
                 isDarkMode ? 'border-slate-800/80 text-slate-300' : 'border-slate-200 text-slate-700'
               }`}>
                 <span className="text-xs font-black flex items-center gap-2">
@@ -424,13 +405,13 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
                 </span>
               </div>
 
-              {/* القائمة الرأسية - الخانات الـ 4 تحت بعض بالترتيب المحدد من المستخدم وبشكل عريض ومريح */}
-              <div className="flex flex-col gap-3.5">
+              {/* القائمة الرأسية - الخانات الـ 4 تحت بعض بالترتيب المحدد من المستخدم وبشكل عريض ومريح ومرفوع للأعلى */}
+              <div className="flex flex-col gap-2.5">
                 {/* 1. الكورسات المتفعلة (تتصدر القائمة دائماً) */}
                 <button
                   type="button"
                   onClick={() => setActiveListView('paid')}
-                  className={`w-full p-4 sm:p-5 rounded-2xl font-black text-xs sm:text-sm flex items-center justify-between transition-all cursor-pointer border-2 ${
+                  className={`w-full p-3 sm:p-3.5 rounded-2xl font-black text-xs sm:text-sm flex items-center justify-between transition-all cursor-pointer border-2 ${
                     activeListView === 'paid'
                       ? 'bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-600 text-white border-emerald-400 shadow-xl shadow-emerald-600/30 ring-2 ring-emerald-500/30'
                       : isDarkMode
@@ -438,18 +419,18 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
                       : 'bg-slate-50 hover:bg-slate-100 text-slate-800 border-slate-200 hover:border-slate-300 shadow-xs'
                   }`}
                 >
-                  <div className="flex items-center gap-3.5 min-w-0">
-                    <div className={`p-3 rounded-2xl shrink-0 ${
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className={`p-2.5 rounded-xl shrink-0 ${
                       activeListView === 'paid'
                         ? 'bg-white/20 text-white'
                         : isDarkMode
                         ? 'bg-emerald-500/20 text-emerald-400'
                         : 'bg-emerald-100 text-emerald-700'
                     }`}>
-                      <Award className="w-5 h-5 sm:w-6 sm:h-6" />
+                      <Award className="w-5 h-5" />
                     </div>
                     <div className="text-right space-y-0.5 min-w-0">
-                      <span className={`block font-black text-sm sm:text-base ${
+                      <span className={`block font-black text-xs sm:text-sm ${
                         activeListView === 'paid'
                           ? 'text-white'
                           : isDarkMode
@@ -458,7 +439,7 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
                       }`}>
                         الكورسات المتفعلة
                       </span>
-                      <span className={`block text-xs font-medium leading-tight ${
+                      <span className={`block text-[11px] font-medium leading-tight ${
                         activeListView === 'paid'
                           ? 'text-white/85'
                           : isDarkMode
@@ -469,7 +450,7 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
                       </span>
                     </div>
                   </div>
-                  <span className={`px-3 py-1 rounded-full text-xs font-black shrink-0 mr-2 ${
+                  <span className={`px-2.5 py-0.5 rounded-full text-xs font-black shrink-0 mr-2 ${
                     activeListView === 'paid'
                       ? 'bg-white text-emerald-700 shadow-sm'
                       : isDarkMode
@@ -484,7 +465,7 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
                 <button
                   type="button"
                   onClick={() => setActiveListView('available')}
-                  className={`w-full p-4 sm:p-5 rounded-2xl font-black text-xs sm:text-sm flex items-center justify-between transition-all cursor-pointer border-2 ${
+                  className={`w-full p-3 sm:p-3.5 rounded-2xl font-black text-xs sm:text-sm flex items-center justify-between transition-all cursor-pointer border-2 ${
                     activeListView === 'available'
                       ? 'bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-600 text-white border-blue-400 shadow-xl shadow-blue-600/30 ring-2 ring-blue-500/30'
                       : isDarkMode
@@ -492,18 +473,18 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
                       : 'bg-slate-50 hover:bg-slate-100 text-slate-800 border-slate-200 hover:border-slate-300 shadow-xs'
                   }`}
                 >
-                  <div className="flex items-center gap-3.5 min-w-0">
-                    <div className={`p-3 rounded-2xl shrink-0 ${
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className={`p-2.5 rounded-xl shrink-0 ${
                       activeListView === 'available'
                         ? 'bg-white/20 text-white'
                         : isDarkMode
                         ? 'bg-blue-500/20 text-blue-400'
                         : 'bg-blue-100 text-blue-700'
                     }`}>
-                      <BookOpen className="w-5 h-5 sm:w-6 sm:h-6" />
+                      <BookOpen className="w-5 h-5" />
                     </div>
                     <div className="text-right space-y-0.5 min-w-0">
-                      <span className={`block font-black text-sm sm:text-base ${
+                      <span className={`block font-black text-xs sm:text-sm ${
                         activeListView === 'available'
                           ? 'text-white'
                           : isDarkMode
@@ -512,7 +493,7 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
                       }`}>
                         الكورسات المتاحة
                       </span>
-                      <span className={`block text-xs font-medium leading-tight ${
+                      <span className={`block text-[11px] font-medium leading-tight ${
                         activeListView === 'available'
                           ? 'text-white/85'
                           : isDarkMode
@@ -523,7 +504,7 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
                       </span>
                     </div>
                   </div>
-                  <span className={`px-3 py-1 rounded-full text-xs font-black shrink-0 mr-2 ${
+                  <span className={`px-2.5 py-0.5 rounded-full text-xs font-black shrink-0 mr-2 ${
                     activeListView === 'available'
                       ? 'bg-white text-blue-700 shadow-sm'
                       : isDarkMode
@@ -538,7 +519,7 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
                 <button
                   type="button"
                   onClick={() => setActiveListView('steps')}
-                  className={`w-full p-4 sm:p-5 rounded-2xl font-black text-xs sm:text-sm flex items-center justify-between transition-all cursor-pointer border-2 ${
+                  className={`w-full p-3 sm:p-3.5 rounded-2xl font-black text-xs sm:text-sm flex items-center justify-between transition-all cursor-pointer border-2 ${
                     activeListView === 'steps'
                       ? 'bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-600 text-white border-purple-400 shadow-xl shadow-purple-600/30 ring-2 ring-purple-500/30'
                       : isDarkMode
@@ -546,18 +527,18 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
                       : 'bg-slate-50 hover:bg-slate-100 text-slate-800 border-slate-200 hover:border-slate-300 shadow-xs'
                   }`}
                 >
-                  <div className="flex items-center gap-3.5 min-w-0">
-                    <div className={`p-3 rounded-2xl shrink-0 ${
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className={`p-2.5 rounded-xl shrink-0 ${
                       activeListView === 'steps'
                         ? 'bg-white/20 text-white'
                         : isDarkMode
                         ? 'bg-purple-500/20 text-purple-400'
                         : 'bg-purple-100 text-purple-700'
                     }`}>
-                      <Sparkles className="w-5 h-5 sm:w-6 sm:h-6" />
+                      <Sparkles className="w-5 h-5" />
                     </div>
                     <div className="text-right space-y-0.5 min-w-0">
-                      <span className={`block font-black text-sm sm:text-base ${
+                      <span className={`block font-black text-xs sm:text-sm ${
                         activeListView === 'steps'
                           ? 'text-white'
                           : isDarkMode
@@ -566,7 +547,7 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
                       }`}>
                         خطوات التسجيل والتفعيل
                       </span>
-                      <span className={`block text-xs font-medium leading-tight ${
+                      <span className={`block text-[11px] font-medium leading-tight ${
                         activeListView === 'steps'
                           ? 'text-white/85'
                           : isDarkMode
@@ -590,7 +571,7 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
                 <button
                   type="button"
                   onClick={() => setActiveListView('contact')}
-                  className={`w-full p-4 sm:p-5 rounded-2xl font-black text-xs sm:text-sm flex items-center justify-between transition-all cursor-pointer border-2 ${
+                  className={`w-full p-3 sm:p-3.5 rounded-2xl font-black text-xs sm:text-sm flex items-center justify-between transition-all cursor-pointer border-2 ${
                     activeListView === 'contact'
                       ? 'bg-gradient-to-r from-amber-600 via-orange-600 to-amber-600 text-white border-amber-400 shadow-xl shadow-amber-600/30 ring-2 ring-amber-500/30'
                       : isDarkMode
@@ -598,18 +579,18 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
                       : 'bg-slate-50 hover:bg-slate-100 text-slate-800 border-slate-200 hover:border-slate-300 shadow-xs'
                   }`}
                 >
-                  <div className="flex items-center gap-3.5 min-w-0">
-                    <div className={`p-3 rounded-2xl shrink-0 ${
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className={`p-2.5 rounded-xl shrink-0 ${
                       activeListView === 'contact'
                         ? 'bg-white/20 text-white'
                         : isDarkMode
                         ? 'bg-amber-500/20 text-amber-400'
                         : 'bg-amber-100 text-amber-700'
                     }`}>
-                      <Phone className="w-5 h-5 sm:w-6 sm:h-6" />
+                      <Phone className="w-5 h-5" />
                     </div>
                     <div className="text-right space-y-0.5 min-w-0">
-                      <span className={`block font-black text-sm sm:text-base ${
+                      <span className={`block font-black text-xs sm:text-sm ${
                         activeListView === 'contact'
                           ? 'text-white'
                           : isDarkMode
@@ -618,7 +599,7 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
                       }`}>
                         تواصل معنا
                       </span>
-                      <span className={`block text-xs font-medium leading-tight ${
+                      <span className={`block text-[11px] font-medium leading-tight ${
                         activeListView === 'contact'
                           ? 'text-white/85'
                           : isDarkMode
@@ -641,7 +622,7 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
             </div>
 
             {/* Bottom info callout inside right container */}
-            <div className={`p-3.5 rounded-2xl border text-center space-y-1 ${
+            <div className={`p-2.5 rounded-xl border text-center space-y-0.5 ${
               isDarkMode
                 ? 'bg-slate-900/90 border-slate-800 text-slate-300'
                 : 'bg-slate-50 border-slate-200 text-slate-700 shadow-xs'
@@ -660,7 +641,7 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
           </div>
 
           {/* ================= LEFT COLUMN (in RTL): محتوى الخانة المختارة يعرض بالكامل على اليسار ================= */}
-          <div className="lg:col-span-7 xl:col-span-8 order-1 lg:order-2 space-y-6">
+          <div className="lg:col-span-7 xl:col-span-8 order-2 lg:order-2 space-y-6">
             {/* ================= 1. محتوى: الكورسات المتفعلة (مستطيلات كبيرة وأنيقة بجانب بعضهما) ================= */}
             {activeListView === 'paid' && (
               <div className="space-y-4">
