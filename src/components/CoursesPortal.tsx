@@ -27,6 +27,7 @@ import {
 import { StudentUser, CourseItem, SystemSettings } from '../types';
 import { BrandLogo } from './BrandLogo';
 import { CertificateModal } from './CertificateModal';
+import { PlatformFooter } from './PlatformFooter';
 
 interface CoursesPortalProps {
   currentUser: StudentUser;
@@ -1217,34 +1218,11 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
         </div>
       </main>
 
-      {/* ================= FOOTER WITH THE 3 EXACT SENTENCES ================= */}
-      {/* "واجعل لما الماوس يجي على الجملة اللي بتدخل قسم التحكم يكون عادي وطبيعي ولا يتحول كأنه زر واجعل الجملة اللتي تدخل لقسم التحكم يلزم الضغط على كلمة محفوظة 20 مرة" */}
-      <footer
-        className={`mt-auto py-6 px-6 md:px-12 border-t select-none transition-colors ${
-          isDarkMode ? 'bg-slate-950 border-slate-800/80 text-slate-400' : 'bg-white border-slate-200 text-slate-800'
-        }`}
-      >
-        <div className="max-w-[1700px] mx-auto flex flex-col md:flex-row items-center justify-between gap-4 text-xs md:text-sm font-bold">
-          {/* Sentence 1: ON THE RIGHT (عاليمين) */}
-          <div className={`text-right w-full md:w-1/3 ${isDarkMode ? 'text-slate-300' : 'text-slate-800 font-bold'}`}>
-            المصمم مازن محمد محروس
-          </div>
-
-          {/* Sentence 2: IN THE CENTER (فالنص - 20 clicks strictly on 'محفوظة' without pointer or hover effect) */}
-          <div
-            className={`text-center w-full md:w-1/3 cursor-default select-none py-1 ${
-              isDarkMode ? 'text-slate-300' : 'text-slate-900 font-black'
-            }`}
-          >
-            جميع محتويات المنصة <span onClick={handleSecretWordClick} className="cursor-default select-none">محفوظة</span> لمنصة أقسام رعد
-          </div>
-
-          {/* Sentence 3: ON THE LEFT (عاليسار) */}
-          <div className="text-left w-full md:w-1/3 text-amber-500 font-black">
-            منصة أقسام رعد تضمن لك المئوية بإذن الله
-          </div>
-        </div>
-      </footer>
+      {/* ================= PLATFORM FOOTER AT THE VERY BOTTOM ================= */}
+      <PlatformFooter
+        isDarkMode={isDarkMode}
+        onSecretTriggerAdmin={onSecretTriggerAdmin}
+      />
 
       {/* ================= MODAL: تفاصيل سعر الكورس (STEP 1) & الدفع الآن (STEP 2) ================= */}
       {isPriceModalOpen && selectedCourse && (

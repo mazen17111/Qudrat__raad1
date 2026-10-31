@@ -24,6 +24,7 @@ import {
   setDoc,
   addDoc
 } from 'firebase/firestore';
+import { PlatformFooter } from './PlatformFooter';
 
 interface AuthViewProps {
   onSuccessAuth: (user: StudentUser) => void;
@@ -346,33 +347,11 @@ export const AuthView: React.FC<AuthViewProps> = ({
         </div>
       </main>
 
-      {/* FOOTER WITH THE 3 EXACT SENTENCES (RIGHT, CENTER, LEFT) */}
-      <footer
-        className={`py-6 px-6 md:px-12 border-t select-none transition-colors ${
-          isDarkMode ? 'bg-slate-950 border-slate-800/80 text-slate-400' : 'bg-white border-slate-200 text-slate-800'
-        }`}
-      >
-        <div className="max-w-[1700px] mx-auto flex flex-col md:flex-row items-center justify-between gap-4 text-xs md:text-sm font-bold">
-          {/* Sentence 1: ON THE RIGHT (عاليمين) */}
-          <div className={`text-right w-full md:w-1/3 ${isDarkMode ? 'text-slate-300' : 'text-slate-800'}`}>
-            المصمم مازن محمد محروس
-          </div>
-
-          {/* Sentence 2: IN THE CENTER (فالنص - 20 clicks strictly on 'محفوظة' without pointer or hover effect) */}
-          <div
-            className={`text-center w-full md:w-1/3 cursor-default select-none py-1 ${
-              isDarkMode ? 'text-slate-300' : 'text-slate-900 font-bold'
-            }`}
-          >
-            جميع محتويات المنصة <span onClick={handleSecretWordClick} className="cursor-default select-none">محفوظة</span> لمنصة اقسام رعد
-          </div>
-
-          {/* Sentence 3: ON THE LEFT (عاليسار) */}
-          <div className="text-left w-full md:w-1/3 text-amber-500 font-black">
-            منصة اقسام رعد تضمن لك المئوية باذن الله
-          </div>
-        </div>
-      </footer>
+      {/* PLATFORM FOOTER WITH THE 3 SENTENCES, FOUNDING DATE & RIGHTS */}
+      <PlatformFooter
+        isDarkMode={isDarkMode}
+        onSecretTriggerAdmin={onSecretTriggerAdmin}
+      />
     </div>
   );
 };
