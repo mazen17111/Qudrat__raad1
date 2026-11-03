@@ -70,11 +70,7 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
   });
 
   // Track active list filter view on mobile/desktop: 4 sections (الكورسات المتفعلة | الكورسات المتاحة | خطوات التسجيل | تواصل معنا)
-  // If student has 0 activated courses, start directly on "الكورسات المتاحة" to activate!
-  const [activeListView, setActiveListView] = useState<'paid' | 'available' | 'steps' | 'contact'>(() => {
-    const enrolledIds = currentUser.enrolledCourseIds || [];
-    return enrolledIds.length > 0 ? 'paid' : 'available';
-  });
+  const [activeListView, setActiveListView] = useState<'paid' | 'available' | 'steps' | 'contact'>('paid');
 
   const selectedCourse = useMemo(() => {
     return sortedCourses.find((c) => c.id === selectedCourseId) || sortedCourses[0] || null;
