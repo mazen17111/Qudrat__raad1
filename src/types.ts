@@ -40,6 +40,10 @@ export interface StudentUser {
   customRedMessage?: string; // رسالة مخصصة لكل طالب تظهر له باللون الأحمر
   isRedMessageActive?: boolean; // حالة تفعيل أو إيقاف التنبيه الأحمر (تشغيل / إيقاف)
   certificateIssued?: CertificateData | null; // شهادة الطالب المعتمدة والمصدرة من الإدارة
+  telegramId?: string | number;
+  telegramUsername?: string;
+  photoUrl?: string;
+  avatarUrl?: string;
   isDeleted?: boolean; // علامة الحذف لتسجيل الخروج الفوري للطالب في وقتها
   deletedAt?: string;
 }

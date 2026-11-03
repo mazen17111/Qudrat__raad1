@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Zap,
   Mail,
@@ -18,6 +18,7 @@ import {
   Trophy,
   BookOpen,
   Award,
+  Send,
 } from 'lucide-react';
 import { StudentUser, SystemSettings } from '../types';
 import { BrandLogo } from './BrandLogo';
@@ -29,7 +30,8 @@ import {
   getDocs,
   doc,
   setDoc,
-  addDoc
+  addDoc,
+  updateDoc
 } from 'firebase/firestore';
 import { PlatformFooter } from './PlatformFooter';
 
@@ -53,7 +55,134 @@ export const AuthView: React.FC<AuthViewProps> = ({
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [telegramLoading, setTelegramLoading] = useState(false);
   const [error, setError] = useState('');
+  const telegramContainerRef = useRef<HTMLDivElement>(null);
+
+  // Handle Telegram Authentication Callback
+  const handleTelegramAuthSuccess = async (tgUser: any) => {
+    if (!tgUser || !tgUser.id) return;
+    setTelegramLoading(true);
+    setError('');
+
+    try {
+      const telegramIdStr = String(tgUser.id);
+      const fullName = [tgUser.first_name, tgUser.last_name].filter(Boolean).join(' ') || tgUser.username || `طالب_${tgUser.id}`;
+
+      // 1. Check if Telegram ID already exists in users collection in Firestore
+      const usersRef = collection(db, 'users');
+      const q = query(usersRef, where('telegramId', '==', telegramIdStr));
+      let snap = await getDocs(q);
+
+      let authenticatedUser: StudentUser;
+
+      if (!snap.empty) {
+        // User already exists in Firestore!
+        const userDoc = snap.docs[0];
+        const existingData = { id: userDoc.id, ...userDoc.data() } as StudentUser;
+
+        if (existingData.isDeleted) {
+          setError('هذا الحساب تم حظره أو حذفه من قبل الإدارة.');
+          setTelegramLoading(false);
+          return;
+        }
+
+        const updates: Partial<StudentUser> = {
+          lastLoginAt: new Date().toISOString(),
+        };
+        if (tgUser.photo_url && tgUser.photo_url !== existingData.photoUrl) {
+          updates.photoUrl = tgUser.photo_url;
+        }
+        if (tgUser.username && tgUser.username !== existingData.telegramUsername) {
+          updates.telegramUsername = tgUser.username;
+        }
+
+        try {
+          await updateDoc(doc(db, 'users', userDoc.id), updates as any);
+        } catch (e) {
+          console.warn('Update user last login note:', e);
+        }
+
+        authenticatedUser = {
+          ...existingData,
+          ...updates,
+          id: userDoc.id,
+        };
+      } else {
+        // User does not exist -> Create brand new document!
+        const newUserRef = doc(collection(db, 'users'));
+        const newStudent: StudentUser = {
+          id: newUserRef.id,
+          name: fullName,
+          email: tgUser.username ? `${tgUser.username.toLowerCase()}@telegram.raad` : `tg_${tgUser.id}@telegram.raad`,
+          password: `tg_${tgUser.id}_pass`,
+          telegramId: telegramIdStr,
+          telegramUsername: tgUser.username || '',
+          photoUrl: tgUser.photo_url || '',
+          daysAllowed: 0,
+          isUnlimited: false,
+          subscriptionStartDate: '',
+          subscriptionEndDate: '',
+          isIndividuallyBlocked: false,
+          isIndividuallyWhitelisted: false,
+          watchedVideoIds: [],
+          totalExamsTaken: 0,
+          averageScore: 0,
+          enrolledCourseIds: ['course_default_1'],
+          createdAt: new Date().toISOString(),
+          lastLoginAt: new Date().toISOString(),
+        };
+
+        await setDoc(newUserRef, newStudent);
+
+        // Provision default mistakes folder for this student
+        await addDoc(collection(db, 'folders'), {
+          userId: newStudent.id,
+          courseId: 'course_default_1',
+          title: 'مجلد الاخطاء',
+          isDefaultMistakesFolder: true,
+          createdAt: new Date().toISOString(),
+        });
+
+        authenticatedUser = newStudent;
+      }
+
+      // 4. Save session in localStorage so student stays logged in
+      try {
+        localStorage.setItem('raad_student_session', JSON.stringify(authenticatedUser));
+      } catch (e) {}
+
+      // 5. Automatic redirect: immediately transfer student to Courses Portal!
+      onSuccessAuth(authenticatedUser);
+    } catch (err: any) {
+      console.error('Telegram Auth Error:', err);
+      setError('حدث خطأ أثناء ربط بيانات تيليجرام بقاعدة البيانات، يرجى المحاولة ثانية.');
+    } finally {
+      setTelegramLoading(false);
+    }
+  };
+
+  // Mount Telegram Login Widget
+  useEffect(() => {
+    // Global callback for Telegram Login Widget
+    (window as any).onTelegramAuth = (user: any) => {
+      handleTelegramAuthSuccess(user);
+    };
+
+    if (telegramContainerRef.current) {
+      telegramContainerRef.current.innerHTML = '';
+      const script = document.createElement('script');
+      script.src = 'https://telegram.org/js/telegram-widget.js?22';
+      script.setAttribute('data-telegram-login', 'Ra3d6_bot');
+      script.setAttribute('data-size', 'large');
+      script.setAttribute('data-radius', '14');
+      script.setAttribute('data-request-access', 'write');
+      script.setAttribute('data-userpic', 'true');
+      script.setAttribute('data-onauth', 'onTelegramAuth(user)');
+      script.async = true;
+      telegramContainerRef.current.appendChild(script);
+    }
+  }, [isSignUp]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -499,7 +628,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
 
                 <button
                   type="submit"
-                  disabled={loading}
+                  disabled={loading || telegramLoading}
                   className="w-full flex items-center justify-center gap-2 py-3 rounded-xl text-white font-black text-sm shadow-xl transition transform active:scale-95 disabled:opacity-50 cursor-pointer"
                   style={{ backgroundColor: activeTheme?.primary || '#2563eb' }}
                 >
@@ -509,7 +638,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
               </form>
 
               {/* Toggle between Login and Sign Up */}
-              <div className="mt-6 pt-4 border-t border-slate-200 dark:border-slate-800/60 text-center">
+              <div className="mt-4 pt-3 border-t border-slate-200 dark:border-slate-800/60 text-center">
                 <button
                   type="button"
                   onClick={() => {
@@ -522,6 +651,37 @@ export const AuthView: React.FC<AuthViewProps> = ({
                     ? 'لديك حساب بالفعل؟ اضغط هنا لتسجيل الدخول'
                     : 'ليس لديك حساب؟ اضغط هنا لإنشاء حساب جديد'}
                 </button>
+              </div>
+
+              {/* ================= TELEGRAM LOGIN WIDGET SECTION ================= */}
+              {/* "حط كود الـ Telegram Widget تحت أزرار تسجيل الدخول وإنشاء الحساب في واجهة الدخول الأولى" */}
+              <div className="mt-5 pt-4 border-t border-slate-200 dark:border-slate-800/80 space-y-3">
+                <div className="flex items-center gap-2 justify-center text-xs font-black text-slate-500 dark:text-slate-400">
+                  <div className="h-px bg-slate-200 dark:bg-slate-800 flex-1" />
+                  <span className="flex items-center gap-1.5 px-2 text-sky-500 dark:text-sky-400">
+                    <Send className="w-3.5 h-3.5 fill-current" />
+                    <span>أو الدخول السريع عبر تيليجرام</span>
+                  </span>
+                  <div className="h-px bg-slate-200 dark:bg-slate-800 flex-1" />
+                </div>
+
+                <div className="flex flex-col items-center justify-center min-h-[50px] w-full">
+                  {telegramLoading ? (
+                    <div className="flex items-center gap-2 py-2.5 px-5 rounded-2xl bg-sky-500/10 border border-sky-500/30 text-sky-400 text-xs font-black animate-pulse">
+                      <Sparkles className="w-4 h-4 animate-spin text-sky-400" />
+                      <span>جاري ربط حساب تيليجرام والدخول للمنصة...</span>
+                    </div>
+                  ) : (
+                    <div
+                      ref={telegramContainerRef}
+                      className="telegram-login-widget flex items-center justify-center w-full min-h-[46px]"
+                    />
+                  )}
+                </div>
+
+                <p className={`text-[10px] text-center leading-relaxed ${isDarkMode ? 'text-slate-400' : 'text-slate-600 font-medium'}`}>
+                  تسجيل دخول آمن عبر بوت تيليجرام <strong className="text-sky-400 font-black" dir="ltr">@Ra3d6_bot</strong>
+                </p>
               </div>
             </div>
           </div>
