@@ -88,7 +88,7 @@ export const PlatformFooter: React.FC<PlatformFooterProps> = ({
 
           {/* كلام عاليسار بنفس المستوى */}
           <div className="text-center md:text-left w-full md:w-1/3 text-amber-500/90 font-bold">
-            <span>🎯 تدريب وتأهيل متقدم لاختبارات قياس والقدرات والتحصيلي</span>
+            <span>🎯 تدريب وتأهيل متقدم لاختبارات قياس والقدرات</span>
           </div>
         </div>
       </div>

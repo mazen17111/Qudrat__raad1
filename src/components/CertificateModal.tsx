@@ -219,7 +219,7 @@ export const CertificateModal: React.FC<CertificateModalProps> = ({
       ctx.fillText('اعتماد وتوثيق المنصة:', width - 150, 830);
       ctx.fillStyle = '#fcd34d';
       ctx.font = '900 24px Arial, sans-serif';
-      ctx.fillText(certificate.platformName || 'منصة أقسام رعد للقدرات والتحصيلي', width - 150, 875);
+      ctx.fillText(certificate.platformName || 'منصة أقسام رعد للقدرات', width - 150, 875);
       ctx.fillStyle = '#64748b';
       ctx.font = '16px Arial, sans-serif';
       ctx.fillText('إدارة التدريب والتعليم الإلكتروني', width - 150, 910);
@@ -424,7 +424,7 @@ export const CertificateModal: React.FC<CertificateModalProps> = ({
 
               <div className="text-center pt-2">
                 <span className="text-[11px] sm:text-xs text-slate-400 block font-medium">المملكة العربية السعودية</span>
-                <span className="text-xs sm:text-sm font-black text-amber-300 block">منصة أقسام رعد للقدرات العامة والتحصيلي ⚡</span>
+                <span className="text-xs sm:text-sm font-black text-amber-300 block">منصة أقسام رعد للقدرات العامة ⚡</span>
               </div>
             </div>
 

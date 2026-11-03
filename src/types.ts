@@ -127,6 +127,7 @@ export interface FolderQuestionItem {
   folderId: string;
   userId: string;
   courseId?: string; // معرّف الكورس التابع له السؤال
+  originalQuestionId?: string;
   questionText: string;
   imageUrl?: string;
   options: string[];

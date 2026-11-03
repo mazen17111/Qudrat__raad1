@@ -182,7 +182,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
           <div>
             <h1 className="text-lg md:text-xl font-black">منصة أقسام رعد</h1>
             <p className={`text-[11px] ${isDarkMode ? 'text-slate-400' : 'text-slate-500 font-bold'}`}>
-              طريقك للوصول إلى 100% في القدرات والتحصيلي
+              طريقك للوصول إلى 100% في القدرات
             </p>
           </div>
         </div>
@@ -222,7 +222,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
                 منصة أقسام رعد كافية للتقفيل وتضمن لك الـ 100% بإذن الله
               </h2>
               <p className={`text-xs sm:text-sm leading-relaxed ${isDarkMode ? 'text-slate-400' : 'text-slate-600 font-medium'}`}>
-                كل ما تحتاجه لاجتياز اختبارات القدرات العامة والتحصيلي لقياس في مكان واحد، بدون تشتت وبدون الحاجة لأي مصادر أو كتب خارجية.
+                كل ما تحتاجه لاجتياز اختبارات القدرات العامة لقياس في مكان واحد، بدون تشتت وبدون الحاجة لأي مصادر أو كتب خارجية.
               </p>
             </div>
 
@@ -241,7 +241,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
                   كافية للتقفيل التام 🎯
                 </h4>
                 <p className={`text-[11px] leading-relaxed ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
-                  تفكيك شامل لتجميعات الـ 120 نموذج وتكنيكات الحل في أقل من 30 ثانية لكل سؤال.
+                  نماذج وتجميعات شاملة كافية للتقفيل التام وتكنيكات الحل في أقل من 30 ثانية لكل سؤال.
                 </p>
               </div>
 

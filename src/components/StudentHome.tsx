@@ -1811,7 +1811,7 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                             <span className={`text-[10px] px-2 py-0.5 rounded font-black border ${
                               isDarkMode ? 'bg-slate-900 text-amber-300 border-slate-700' : 'bg-amber-50 text-amber-900 border-amber-300'
                             }`}>
-                              {ex.questions?.length || 10} سؤال
+                              كافية للتقفيل التام 🎯
                             </span>
                           </div>
 

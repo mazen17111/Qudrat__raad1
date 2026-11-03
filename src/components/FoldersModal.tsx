@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { StudentUser, FolderItem, FolderQuestionItem, ExamQuestion } from '../types';
 import { db } from '../firebase';
+import { markQuestionAsPermanentlyDeleted } from '../mistakesService';
 import {
   collection,
   query,
@@ -58,6 +59,8 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
   const [isClearingQuestions, setIsClearingQuestions] = useState(false);
   const [folderNotice, setFolderNotice] = useState<string | null>(null);
   const [isDeletingFolder, setIsDeletingFolder] = useState(false);
+  const [folderCounts, setFolderCounts] = useState<Record<string, number>>({});
+  const [zoomedImage, setZoomedImage] = useState<string | null>(null);
 
   // Load folders in real-time strictly for this course
   useEffect(() => {
@@ -71,17 +74,27 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
       let hasMistakes = false;
       snapshot.forEach((d) => {
         const item = { id: d.id, ...d.data() } as FolderItem;
-        const matchesCourse = item.courseId ? item.courseId === currentCourseId : currentCourseId === 'course_default_1';
-        if (matchesCourse) {
-          if (item.isDefaultMistakesFolder || item.title === 'مجلد الاخطاء' || item.title === 'مجلد الأخطاء') {
+        const isMistakes = Boolean(
+          item.isDefaultMistakesFolder ||
+          item.title === 'مجلد الاخطاء' ||
+          item.title === 'مجلد الأخطاء' ||
+          item.title === 'مجلد كل الأخطاء' ||
+          item.title === 'دفتر الاخطاء' ||
+          item.title === 'دفتر الأخطاء'
+        );
+        const folderCourse = item.courseId || 'course_default_1';
+        // Strict course separation! Course 1 folders never mix with Course 2 folders
+        if (folderCourse === currentCourseId) {
+          if (isMistakes) {
             hasMistakes = true;
             item.isDefaultMistakesFolder = true;
+            item.title = 'مجلد الأخطاء';
           }
           list.push(item);
         }
       });
 
-      // Ensure "مجلد الأخطاء" always exists for this specific course
+      // Ensure "مجلد الأخطاء" always exists
       if (!hasMistakes) {
         addDoc(collection(db, 'folders'), {
           userId: currentUser.id,
@@ -111,9 +124,30 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
     return () => unsub();
   }, [isOpen, currentUser, currentCourseId]);
 
-  // Load questions for selected folder
+  // Real-time live count of questions per folder
   useEffect(() => {
-    if (!selectedFolder) {
+    if (!isOpen || !currentUser) return;
+    const qAll = query(
+      collection(db, 'folder_questions'),
+      where('userId', '==', currentUser.id)
+    );
+    const unsubAll = onSnapshot(qAll, (snap) => {
+      const counts: Record<string, number> = {};
+      snap.forEach((d) => {
+        const data = d.data();
+        if (data.folderId) {
+          counts[data.folderId] = (counts[data.folderId] || 0) + 1;
+        }
+      });
+      setFolderCounts(counts);
+    });
+
+    return () => unsubAll();
+  }, [isOpen, currentUser]);
+
+  // Load questions for selected folder with continuous real-time sync
+  useEffect(() => {
+    if (!selectedFolder?.id) {
       setFolderQuestions([]);
       return;
     }
@@ -133,7 +167,7 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
     });
 
     return () => unsub();
-  }, [selectedFolder]);
+  }, [selectedFolder?.id]);
 
   if (!isOpen) return null;
 
@@ -191,9 +225,38 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
     }
   };
 
-  const handleDeleteQuestion = async (questionId: string) => {
+  const handleDeleteQuestion = async (qItem: FolderQuestionItem) => {
     try {
-      await deleteDoc(doc(db, 'folder_questions', questionId));
+      // 1. Delete by direct document ID
+      await deleteDoc(doc(db, 'folder_questions', qItem.id));
+
+      // 2. Clear any lingering duplicates of this question in this folder
+      if (selectedFolder?.id && qItem.questionText) {
+        const qRef = query(
+          collection(db, 'folder_questions'),
+          where('folderId', '==', selectedFolder.id),
+          where('questionText', '==', qItem.questionText)
+        );
+        const snap = await getDocs(qRef);
+        for (const d of snap.docs) {
+          if (d.id !== qItem.id) {
+            await deleteDoc(d.ref).catch(() => {});
+          }
+        }
+      }
+
+      // 3. Mark permanently deleted so it NEVER returns to this course!
+      if (currentUser?.id) {
+        await markQuestionAsPermanentlyDeleted({
+          userId: currentUser.id,
+          courseId: currentCourseId,
+          folderId: selectedFolder?.id,
+          originalQuestionId: qItem.originalQuestionId,
+          questionText: qItem.questionText,
+        });
+      }
+
+      setFolderQuestions((prev) => prev.filter((item) => item.id !== qItem.id));
     } catch (err) {
       console.error('Error deleting question:', err);
     }
@@ -205,7 +268,21 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
     try {
       const qRef = query(collection(db, 'folder_questions'), where('folderId', '==', selectedFolder.id));
       const snap = await getDocs(qRef);
-      await Promise.all(snap.docs.map((d) => deleteDoc(d.ref)));
+      await Promise.all(
+        snap.docs.map(async (d) => {
+          const data = d.data();
+          if (currentUser?.id) {
+            await markQuestionAsPermanentlyDeleted({
+              userId: currentUser.id,
+              courseId: currentCourseId,
+              folderId: selectedFolder.id,
+              originalQuestionId: data.originalQuestionId,
+              questionText: data.questionText,
+            });
+          }
+          await deleteDoc(d.ref);
+        })
+      );
       setFolderQuestions([]);
       setShowDeleteAllQuestionsModal(false);
       setFolderNotice(`تم حذف جميع الأسئلة من مجلد "${selectedFolder.title}" نهائياً ولن تعود أبداً ✓`);
@@ -349,14 +426,16 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
                       <div>
                         <div className="text-sm font-bold flex items-center gap-1.5">
                           <span>{f.title}</span>
-                          {isMistakes && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30">
-                              ثابت
-                            </span>
-                          )}
+                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-black ${
+                            isMistakes
+                              ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                              : 'bg-blue-500/20 text-blue-300 border border-blue-500/40'
+                          }`}>
+                            {folderCounts[f.id] || 0} {isMistakes ? 'خطأ' : 'سؤال'}
+                          </span>
                         </div>
                         <span className="text-[10px] text-slate-400">
-                          {isMistakes ? 'يمنع حذفه • أسئلتك غير الموفقة' : 'مجلد خاص بك'}
+                          {isMistakes ? 'مجلد الأخطاء الدائم والتلقائي' : 'مجلد خاص بك'}
                         </span>
                       </div>
                     </div>
@@ -461,7 +540,7 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
                       <FileQuestion className="w-12 h-12 text-slate-400 mx-auto" />
                       <div className={`text-sm font-black ${isDarkMode ? 'text-slate-300' : 'text-black'}`}>هذا المجلد لا يحتوي على أسئلة بعد</div>
                       <p className={`text-xs max-w-sm mx-auto ${isDarkMode ? 'text-slate-500' : 'text-slate-700'}`}>
-                        عندما تحل أي اختبار، يمكنك الضغط على "حفظ في مجلد الأخطاء" أو المجلدات الخاصة بك لحفظها هنا والتدرب عليها في أي وقت.
+                        عندما تخطئ في أي اختبار مرفوع على المنصة، ينتقل الخطأ فورياً إلى مجلد الأخطاء حتى لو كان لديك آلاف الأخطاء، ويمكنك أيضاً حفظ أي سؤال يدوياً في مجلداتك الخاصة للتدرب عليها في أي وقت.
                       </p>
                     </div>
                   ) : (
@@ -474,8 +553,8 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex-1">
-                            <div className="flex items-center gap-2 mb-1.5">
-                              <span className="w-6 h-6 rounded-lg bg-amber-500/20 text-amber-600 flex items-center justify-center text-xs font-black">
+                            <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                              <span className="w-6 h-6 rounded-lg bg-amber-500/20 text-amber-600 flex items-center justify-center text-xs font-black shrink-0">
                                 {idx + 1}
                               </span>
                               <span className={`text-sm md:text-base font-black ${
@@ -483,11 +562,25 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
                               }`}>
                                 {q.questionText}
                               </span>
+                              {q.sourceExamTitle && (
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                                  من: {q.sourceExamTitle}
+                                </span>
+                              )}
                             </div>
 
                             {q.imageUrl && (
-                              <div className="my-2 max-w-xs rounded-lg overflow-hidden border border-slate-700">
-                                <img src={q.imageUrl} alt="سؤال" className="max-h-36 object-contain" />
+                              <div
+                                onClick={() => setZoomedImage(q.imageUrl || null)}
+                                className="my-2.5 max-w-xl rounded-xl overflow-hidden border border-emerald-500/30 bg-white dark:bg-slate-950/60 p-2 shadow-sm cursor-pointer hover:border-emerald-400 transition"
+                                title="انقر لتكبير صورة السؤال"
+                              >
+                                <img
+                                  src={q.imageUrl}
+                                  alt="صورة السؤال"
+                                  loading="eager"
+                                  className="max-h-64 sm:max-h-72 w-auto max-w-full object-contain mx-auto"
+                                />
                               </div>
                             )}
 
@@ -515,9 +608,9 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
                           </div>
 
                           <button
-                            onClick={() => handleDeleteQuestion(q.id)}
+                            onClick={() => handleDeleteQuestion(q)}
                             className="p-2 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition"
-                            title="حذف السؤال من هذا المجلد"
+                            title="حذف السؤال من هذا المجلد نهائياً"
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
@@ -734,6 +827,29 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Lightbox for zooming question image in Folders */}
+      {zoomedImage && (
+        <div
+          onClick={() => setZoomedImage(null)}
+          className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/95 backdrop-blur-md animate-in fade-in duration-200 cursor-zoom-out"
+        >
+          <div className="relative max-w-4xl max-h-[90vh] flex flex-col items-center">
+            <img
+              src={zoomedImage}
+              alt="صورة السؤال مكبرة"
+              className="max-w-full max-h-[85vh] object-contain rounded-2xl border-2 border-emerald-500 shadow-2xl bg-white"
+            />
+            <button
+              type="button"
+              onClick={() => setZoomedImage(null)}
+              className="mt-3 px-5 py-2 rounded-xl bg-slate-800 text-white text-xs font-bold border border-slate-700 hover:bg-slate-700 transition cursor-pointer"
+            >
+              إغلاق العرض المكبر ✕
+            </button>
           </div>
         </div>
       )}

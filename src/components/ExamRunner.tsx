@@ -34,6 +34,11 @@ import { StudentUser, ExamQuestion, FolderItem } from '../types';
 import { Whiteboard } from './Whiteboard';
 import { db } from '../firebase';
 import {
+  transferMistakeImmediately,
+  getOrCreateMistakesFolderId,
+  markQuestionAsPermanentlyDeleted,
+} from '../mistakesService';
+import {
   collection,
   addDoc,
   deleteDoc,
@@ -294,97 +299,10 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
   // Ensure default Mistakes Folder exists for this student in the current course
   const ensureMistakesFolderExists = async (): Promise<string | null> => {
     if (!currentUser?.id) return null;
-
-    const isMistakes = (f: { title?: string; isDefaultMistakesFolder?: boolean; courseId?: string }) => {
-      const isName = Boolean(f.isDefaultMistakesFolder || f.title === 'مجلد الاخطاء' || f.title === 'مجلد الأخطاء' || f.title === 'دفتر الاخطاء' || f.title === 'دفتر الأخطاء');
-      const matchesCourse = f.courseId ? f.courseId === currentCourseId : currentCourseId === 'course_default_1';
-      return isName && matchesCourse;
-    };
-
-    const existing = userFolders.find(isMistakes);
-    if (existing) return existing.id;
-
-    try {
-      const q = query(
-        collection(db, 'folders'),
-        where('userId', '==', currentUser.id)
-      );
-      const snap = await getDocs(q);
-      let foundId: string | null = null;
-      snap.forEach((docSnap) => {
-        const d = docSnap.data();
-        if (isMistakes(d as FolderItem)) {
-          foundId = docSnap.id;
-        }
-      });
-
-      if (foundId) return foundId;
-
-      const newRef = await addDoc(collection(db, 'folders'), {
-        userId: currentUser.id,
-        courseId: currentCourseId,
-        title: 'مجلد الأخطاء',
-        isDefaultMistakesFolder: true,
-        createdAt: new Date().toISOString(),
-      });
-      return newRef.id;
-    } catch (err) {
-      console.error('Error ensuring mistakes folder:', err);
-      return null;
-    }
+    return getOrCreateMistakesFolderId(currentUser.id, currentCourseId);
   };
 
-  // SILENT auto-transfer: saves mistakes to "مجلد الأخطاء" WITHOUT notifying the student during exam
-  const autoTransferMistakeSilently = async (question: ExamQuestion, studentAnswerIndex: number) => {
-    if (!currentUser?.id || !question) return;
-    const qKey = (question.id && !question.id.startsWith('q_')) ? question.id : (question.questionText || question.id);
-    if (autoSavedMistakeIds[qKey]) return; // Avoid duplicate saves in memory
-
-    setAutoSavedMistakeIds((prev) => ({ ...prev, [qKey]: true }));
-
-    try {
-      const folderId = await ensureMistakesFolderExists();
-      if (!folderId) return;
-
-      const dupQuery = query(
-        collection(db, 'folder_questions'),
-        where('folderId', '==', folderId)
-      );
-      const dupSnap = await getDocs(dupQuery);
-      let alreadySaved = false;
-      dupSnap.forEach((d) => {
-        const data = d.data();
-        if (
-          (question.id && data.originalQuestionId === question.id) ||
-          (data.questionText && question.questionText && data.questionText.trim() === question.questionText.trim())
-        ) {
-          alreadySaved = true;
-        }
-      });
-
-      if (!alreadySaved) {
-        await addDoc(collection(db, 'folder_questions'), {
-          folderId: folderId,
-          courseId: currentCourseId,
-          userId: currentUser.id,
-          originalQuestionId: question.id || '',
-          questionText: question.questionText || '',
-          imageUrl: question.imageUrl || '',
-          options: Array.isArray(question.options) ? question.options : [],
-          correctOptionIndex: typeof question.correctOptionIndex === 'number' ? question.correctOptionIndex : 0,
-          explanation: question.explanation || '',
-          sourceExamTitle: examTitle,
-          studentChoiceIndex: studentAnswerIndex,
-          isAutoTransferredMistake: true,
-          createdAt: new Date().toISOString(),
-        });
-      }
-    } catch (err) {
-      console.error('Error auto-transferring mistake silently to folder:', err);
-    }
-  };
-
-  // Option select handler: records answer (mistakes are transferred ONLY upon exam finish)
+  // Option select handler: purely records the student's selected answer during test
   const handleSelectOption = (qIdx: number, optionIdx: number) => {
     if (isFinished) return;
     setSelectedAnswers((prev) => ({
@@ -476,6 +394,17 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
         }
       }
 
+      // Mark permanently deleted so it NEVER returns to this course's folders!
+      if (showFolderModalForQ && currentUser?.id) {
+        await markQuestionAsPermanentlyDeleted({
+          userId: currentUser.id,
+          courseId: currentCourseId,
+          folderId,
+          originalQuestionId: showFolderModalForQ.id,
+          questionText: showFolderModalForQ.questionText,
+        });
+      }
+
       setFolderActionToast({ message: 'تم حذف السؤال من هذا المجلد' });
       setTimeout(() => setFolderActionToast(null), 2500);
     } catch (err) {
@@ -539,15 +468,37 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
     const total = Math.max(1, safeQuestions.length);
     const percentage = Math.round((score / total) * 100);
 
-    // Transfer ONLY the questions the student actually answered AND got wrong
-    // (لا ينتقل إلا الأسئلة التي أجاب عليها الطالب وكان اختياره خاطئاً فقط فقط)
-    if (!isFolderExam) {
+    // Transfer ONLY and strictly the questions the student got wrong in this exam:
+    // If the student made 3 errors in Test 1, exactly and only those 3 questions transfer.
+    // If they made 10 errors in Test 2, exactly and only those 10 transfer.
+    // Correctly answered questions are NEVER transferred!
+    if (!isFolderExam && currentUser?.id) {
+      const wrongItems: { question: ExamQuestion; studentAnswerIndex: number }[] = [];
       safeQuestions.forEach((q, idx) => {
-        const ans = selectedAnswers[idx];
-        if (typeof ans === 'number' && ans !== q.correctOptionIndex && !autoSavedMistakeIds[q.id]) {
-          autoTransferMistakeSilently(q, ans);
+        const studentAns = selectedAnswers[idx];
+        if (studentAns === undefined || studentAns !== q.correctOptionIndex) {
+          wrongItems.push({
+            question: q,
+            studentAnswerIndex: typeof studentAns === 'number' ? studentAns : -1,
+          });
         }
       });
+
+      const wrongQuestionsPromises = wrongItems.map((item) =>
+        transferMistakeImmediately({
+          userId: currentUser.id,
+          courseId: currentCourseId,
+          examTitle,
+          question: item.question,
+          studentAnswerIndex: item.studentAnswerIndex,
+        })
+      );
+
+      try {
+        await Promise.allSettled(wrongQuestionsPromises);
+      } catch (transferErr) {
+        console.error('Error transferring mistakes in finishTest:', transferErr);
+      }
     }
 
     if (percentage >= (targetPercentage || 80)) {
@@ -611,105 +562,9 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
     return `${m}:${s < 10 ? '0' : ''}${s}`;
   };
 
-  // Exit request handler: If testing mistakes/folder and answered questions correctly, asks student if they want to delete correct questions
+  // Exit request handler: exits cleanly without deleting any questions automatically!
+  // (ولا يحذف أي أسئلة إلا لما الطالب هو الذي يحذفها بنفسه يدوياً)
   const handleRequestExit = () => {
-    const isFromFolder = Boolean(isFolderExam || folderId || (examId && examId.startsWith('folder_')));
-    const correctCount = safeQuestions.filter((q, idx) => selectedAnswers[idx] === q.correctOptionIndex).length;
-
-    if (isFromFolder && correctCount > 0) {
-      setShowDeleteCorrectPrompt(true);
-    } else {
-      onExit();
-    }
-  };
-
-  // Student clicks "نعم" -> permanently delete correct questions from folder and mistakes folder so they never return
-  const handleConfirmDeleteCorrectQuestions = async () => {
-    setIsDeletingCorrectQuestions(true);
-    try {
-      const correctQuestions = safeQuestions.filter((q, idx) => selectedAnswers[idx] === q.correctOptionIndex);
-
-      // Identify the student's mistakes folder
-      const mistakesFolder = userFolders.find(
-        (f) => f.isDefaultMistakesFolder || f.title === 'مجلد الاخطاء' || f.title === 'مجلد الأخطاء' || f.title === 'دفتر الاخطاء'
-      );
-      const mistakesFolderId = mistakesFolder?.id;
-
-      for (const q of correctQuestions) {
-        // 1. Direct doc deletion if id is a Firestore document ID in folder_questions
-        if (q.id && !q.id.startsWith('q_') && !q.id.startsWith('temp_')) {
-          try {
-            await deleteDoc(doc(db, 'folder_questions', q.id));
-          } catch (e) {
-            console.warn('Direct delete by id attempt:', e);
-          }
-        }
-
-        const qText = (q.questionText || '').trim();
-        if (currentUser?.id && qText) {
-          // 2. Query and delete from current tested folder
-          if (folderId) {
-            try {
-              const snap = await getDocs(
-                query(
-                  collection(db, 'folder_questions'),
-                  where('userId', '==', currentUser.id),
-                  where('folderId', '==', folderId)
-                )
-              );
-              for (const d of snap.docs) {
-                const data = d.data();
-                if (
-                  d.id === q.id ||
-                  (data.questionText && data.questionText.trim() === qText) ||
-                  (data.originalQuestionId && data.originalQuestionId === q.id)
-                ) {
-                  await deleteDoc(d.ref).catch(() => {});
-                }
-              }
-            } catch (err) {
-              console.error('Error deleting from folderId:', err);
-            }
-          }
-
-          // 3. ALSO delete from student's Mistakes Folder (مجلد الأخطاء)
-          if (mistakesFolderId && mistakesFolderId !== folderId) {
-            try {
-              const snapM = await getDocs(
-                query(
-                  collection(db, 'folder_questions'),
-                  where('userId', '==', currentUser.id),
-                  where('folderId', '==', mistakesFolderId)
-                )
-              );
-              for (const d of snapM.docs) {
-                const data = d.data();
-                if (
-                  d.id === q.id ||
-                  (data.questionText && data.questionText.trim() === qText) ||
-                  (data.originalQuestionId && data.originalQuestionId === q.id)
-                ) {
-                  await deleteDoc(d.ref).catch(() => {});
-                }
-              }
-            } catch (err) {
-              console.error('Error deleting from mistakes folder:', err);
-            }
-          }
-        }
-      }
-    } catch (err) {
-      console.error('Error deleting correct questions on exit:', err);
-    } finally {
-      setIsDeletingCorrectQuestions(false);
-      setShowDeleteCorrectPrompt(false);
-      onExit();
-    }
-  };
-
-  // Student clicks "لا" -> keep questions in mistakes folder and exit to platform
-  const handleKeepCorrectQuestions = () => {
-    setShowDeleteCorrectPrompt(false);
     onExit();
   };
 
@@ -1313,86 +1168,9 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
     );
   }
 
-  // ================= Modal: هل تود حذف الأسئلة الصحيحة أم لا؟ =================
+  // ================= Modal: No questions are deleted automatically (ولا يحذف أي أسئلة إلا لما الطالب هو الذي يحذفها) =================
   function renderDeleteCorrectPromptModal() {
-    if (!showDeleteCorrectPrompt) return null;
-    const correctCount = safeQuestions.filter((q, idx) => selectedAnswers[idx] === q.correctOptionIndex).length;
-
-    return (
-      <div className="fixed inset-0 z-[100000] flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-200">
-        <div className="bg-slate-900 border-2 border-slate-700/80 rounded-3xl p-6 md:p-8 max-w-lg w-full shadow-2xl text-right space-y-6 relative overflow-hidden">
-          <div className="absolute top-0 right-0 left-0 h-1.5 bg-gradient-to-r from-amber-500 via-blue-500 to-emerald-500" />
-
-          <div className="flex items-start gap-4">
-            <div className="p-3.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-2xl shrink-0">
-              <CheckCircle2 className="w-8 h-8" />
-            </div>
-            <div className="space-y-1 flex-1">
-              <h3 className="text-xl font-black text-white">
-                هل تود حذف الأسئلة الصحيحة أم لا؟
-              </h3>
-              <p className="text-xs text-slate-400 font-bold">
-                {folderTitle ? `المجلد: ${folderTitle}` : 'اختبار المجلد والأخطاء'}
-              </p>
-            </div>
-          </div>
-
-          <div className="p-4 rounded-2xl bg-slate-800/80 border border-slate-700 text-slate-200 text-xs md:text-sm leading-relaxed space-y-3">
-            <p>
-              لقد أجبت بشكل صحيح على <strong className="text-emerald-400 font-black">{correctCount}</strong> من الأسئلة في هذا الاختبار.
-            </p>
-            <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-700/60 space-y-2 text-xs">
-              <div className="flex items-start gap-2">
-                <span className="text-emerald-400 font-black shrink-0">✓ إذا ضغطت نعم:</span>
-                <span className="text-slate-300">تُحذف الأسئلة الصحيحة نهائياً من مجلد الأخطاء ولن تعود لك أبداً، لتركز فقط على أخطائك.</span>
-              </div>
-              <div className="flex items-start gap-2">
-                <span className="text-amber-400 font-black shrink-0">✕ إذا ضغطت لا:</span>
-                <span className="text-slate-300">لا تُحذف وتبقى محفوظة في مجلد الأخطاء كما هي لمراجعتها في أي وقت.</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex flex-col sm:flex-row-reverse gap-3 pt-2">
-            <button
-              type="button"
-              onClick={handleConfirmDeleteCorrectQuestions}
-              disabled={isDeletingCorrectQuestions}
-              className="flex-1 py-3 px-4 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs md:text-sm transition shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-            >
-              {isDeletingCorrectQuestions ? (
-                <span>جاري الحذف...</span>
-              ) : (
-                <>
-                  <Trash2 className="w-4 h-4" />
-                  <span>نعم، احذف الأسئلة الصحيحة نهائياً</span>
-                </>
-              )}
-            </button>
-
-            <button
-              type="button"
-              onClick={handleKeepCorrectQuestions}
-              disabled={isDeletingCorrectQuestions}
-              className="flex-1 py-3 px-4 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-black text-xs md:text-sm border border-slate-700 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-            >
-              <span>لا، أبقِها في مجلد الأخطاء</span>
-            </button>
-          </div>
-
-          <div className="text-center pt-1">
-            <button
-              type="button"
-              disabled={isDeletingCorrectQuestions}
-              onClick={() => setShowDeleteCorrectPrompt(false)}
-              className="text-xs font-bold text-slate-500 hover:text-slate-300 transition cursor-pointer"
-            >
-              إلغاء والتراجع لمتابعة الاختبار
-            </button>
-          </div>
-        </div>
-      </div>
-    );
+    return null;
   }
 
   // Calculate progress percent
@@ -1528,21 +1306,23 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
                 {currentQ.questionText}
               </h3>
 
-              {/* Question Image (صورة السؤال عاليمين) */}
+              {/* Question Image (صورة السؤال فورية وكاملة الوضوح) */}
               {currentQ.imageUrl && (
-                <div className="relative group max-w-xl mx-auto w-full my-4">
+                <div className="relative group max-w-2xl mx-auto w-full my-3">
                   <div
                     onClick={() => {
                       setZoomedImageUrl(currentQ.imageUrl || null);
                       setImageZoomScale(1);
                     }}
-                    className="rounded-2xl overflow-hidden border-2 border-emerald-500/40 hover:border-emerald-400 bg-black/40 max-h-72 flex items-center justify-center p-2 cursor-pointer transition shadow-xl"
+                    className="rounded-2xl overflow-hidden border-2 border-emerald-500/40 hover:border-emerald-400 bg-white dark:bg-slate-950/80 min-h-[180px] max-h-[500px] sm:max-h-[560px] flex items-center justify-center p-2 sm:p-3 cursor-pointer transition-all duration-200 shadow-xl"
                     title="انقر لتكبير صورة السؤال"
                   >
                     <img
                       src={currentQ.imageUrl}
                       alt="صورة السؤال"
-                      className="max-h-64 max-w-full object-contain rounded-xl transition-transform duration-200 group-hover:scale-[1.01]"
+                      loading="eager"
+                      decoding="sync"
+                      className="max-h-[480px] sm:max-h-[540px] max-w-full object-contain rounded-xl transition-transform duration-200 group-hover:scale-[1.01]"
                     />
                   </div>
                   <button
@@ -1551,7 +1331,7 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
                       setZoomedImageUrl(currentQ.imageUrl || null);
                       setImageZoomScale(1);
                     }}
-                    className="absolute top-2 left-2 px-3 py-1.5 rounded-xl bg-black/80 hover:bg-black text-amber-300 text-xs font-bold border border-amber-500/40 flex items-center gap-1.5 shadow-lg backdrop-blur-md transition cursor-pointer"
+                    className="absolute top-3 left-3 px-3 py-1.5 rounded-xl bg-black/85 hover:bg-black text-amber-300 text-xs font-bold border border-amber-500/50 flex items-center gap-1.5 shadow-lg backdrop-blur-md transition cursor-pointer"
                   >
                     <ZoomIn className="w-3.5 h-3.5 text-amber-400" />
                     <span>تكبير الصورة 🔍</span>
@@ -2247,21 +2027,23 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
                 {currentQ.questionText}
               </h3>
 
-              {/* Optional Question Image with Click to Zoom ("اجعل الطالب داخل الاختبار يمكنه تكبير صورة السؤال") */}
+              {/* Optional Question Image with Click to Zoom (صورة السؤال فورية وكاملة الوضوح) */}
               {currentQ.imageUrl && (
-                <div className="relative group max-w-xl mx-auto w-full">
+                <div className="relative group max-w-2xl mx-auto w-full my-3">
                   <div
                     onClick={() => {
                       setZoomedImageUrl(currentQ.imageUrl || null);
                       setImageZoomScale(1);
                     }}
-                    className="rounded-2xl overflow-hidden border-2 border-slate-300 dark:border-slate-700 hover:border-amber-400 dark:hover:border-amber-400 bg-black/40 max-h-72 flex items-center justify-center p-2 cursor-pointer transition shadow-md"
+                    className="rounded-2xl overflow-hidden border-2 border-slate-300 dark:border-slate-700 hover:border-amber-400 dark:hover:border-amber-400 bg-white dark:bg-slate-950/80 min-h-[180px] max-h-[500px] sm:max-h-[560px] flex items-center justify-center p-2 sm:p-3 cursor-pointer transition-all duration-200 shadow-md"
                     title="انقر لتكبير صورة السؤال"
                   >
                     <img
                       src={currentQ.imageUrl}
                       alt="صورة توضيحية للسؤال"
-                      className="max-h-64 max-w-full object-contain rounded-xl transition-transform duration-200 group-hover:scale-[1.02]"
+                      loading="eager"
+                      decoding="sync"
+                      className="max-h-[480px] sm:max-h-[540px] max-w-full object-contain rounded-xl transition-transform duration-200 group-hover:scale-[1.01]"
                     />
                   </div>
                   <button
@@ -2270,7 +2052,7 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
                       setZoomedImageUrl(currentQ.imageUrl || null);
                       setImageZoomScale(1);
                     }}
-                    className="absolute top-2 left-2 px-3 py-1.5 rounded-xl bg-black/80 hover:bg-black text-amber-300 text-xs font-bold border border-amber-500/40 flex items-center gap-1.5 shadow-lg backdrop-blur-md transition cursor-pointer"
+                    className="absolute top-3 left-3 px-3 py-1.5 rounded-xl bg-black/85 hover:bg-black text-amber-300 text-xs font-bold border border-amber-500/50 flex items-center gap-1.5 shadow-lg backdrop-blur-md transition cursor-pointer"
                   >
                     <ZoomIn className="w-3.5 h-3.5 text-amber-400" />
                     <span>تكبير الصورة 🔍</span>
@@ -2603,7 +2385,7 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
                     ورقة القوانين والمعادلات الرياضية (قياس)
                   </h3>
                   <span className="text-xs text-slate-400">
-                    القوانين المعتمدة للاختبارات الكمية للقدرات والتحصيلي
+                    القوانين المعتمدة للاختبارات الكمية للقدرات
                   </span>
                 </div>
               </div>

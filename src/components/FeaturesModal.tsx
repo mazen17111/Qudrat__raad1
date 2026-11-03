@@ -37,6 +37,7 @@ import {
   FriendChallengeQuestionRef
 } from '../types';
 import { db } from '../firebase';
+import { transferMistakeImmediately } from '../mistakesService';
 import {
   collection,
   doc,
@@ -276,7 +277,7 @@ export const FeaturesModal: React.FC<FeaturesModalProps> = ({
 
     onClose();
     onStartDiagnosticExam({
-      title: `اختبار تحديد مستوى الطالب (${chosenExams.length} اختبارات - ${randomizedQuestions.length} سؤال عشوائي)`,
+      title: 'اختبار تحديد مستوى الطالب (كافية للتقفيل التام)',
       questions: randomizedQuestions,
       durationMinutes: totalMinutes,
       isTimed: diagnosticIsTimed,
@@ -537,6 +538,16 @@ export const FeaturesModal: React.FC<FeaturesModalProps> = ({
     const isCorrect = optIdx === currentQ.correctOptionIndex;
     const newAnswers = { ...challengeAnswers, [challengeCurrentQIdx]: optIdx };
     setChallengeAnswers(newAnswers);
+
+    // Immediately transfer wrong answer to mistakes folder!
+    if (!isCorrect && currentUser?.id) {
+      transferMistakeImmediately({
+        userId: currentUser.id,
+        examTitle: `تحدي الأصدقاء (${activeChallengeRoom.code})`,
+        question: currentQ,
+        studentAnswerIndex: optIdx,
+      }).catch((e) => console.error('Error auto-transferring challenge mistake:', e));
+    }
 
     // Calculate updated participant state
     const currentParticipant = activeChallengeRoom.participants[currentUser.id] || {

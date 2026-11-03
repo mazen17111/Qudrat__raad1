@@ -150,7 +150,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
   const [certFormCourse, setCertFormCourse] = useState<string>('');
   const [certFormGrade, setCertFormGrade] = useState<string>('ممتاز مرتفع بنسبة 100%');
   const [certFormDirector, setCertFormDirector] = useState<string>('أ. رعد / المشرف العام');
-  const [certFormPlatform, setCertFormPlatform] = useState<string>('منصة أقسام رعد للقدرات والتحصيلي');
+  const [certFormPlatform, setCertFormPlatform] = useState<string>('منصة أقسام رعد للقدرات');
   const [certFormNotes, setCertFormNotes] = useState<string>('تقديراً لاجتيازه كافة الاختبارات والمحاضرات بتفوق واقتدار نتمنى له دوام التوفيق والنجاح.');
   const [isIssuingCert, setIsIssuingCert] = useState<boolean>(false);
 
@@ -649,7 +649,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     setCertFormCourse(student.certificateIssued?.courseTitle || firstCourseTitle);
     setCertFormGrade(student.certificateIssued?.gradeText || 'ممتاز مرتفع بنسبة 100%');
     setCertFormDirector(student.certificateIssued?.directorName || 'أ. رعد / المشرف العام');
-    setCertFormPlatform(student.certificateIssued?.platformName || 'منصة أقسام رعد للقدرات والتحصيلي');
+    setCertFormPlatform(student.certificateIssued?.platformName || 'منصة أقسام رعد للقدرات');
     setCertFormNotes(
       student.certificateIssued?.notes ||
         'تقديراً لاجتيازه كافة الاختبارات والمحاضرات بتفوق واقتدار نتمنى له دوام التوفيق والنجاح.'
@@ -676,7 +676,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         }),
         gradeText: certFormGrade.trim() || 'ممتاز مرتفع بنسبة 100%',
         directorName: certFormDirector.trim() || 'أ. رعد / المشرف العام',
-        platformName: certFormPlatform.trim() || 'منصة أقسام رعد للقدرات والتحصيلي',
+        platformName: certFormPlatform.trim() || 'منصة أقسام رعد للقدرات',
         serialNumber: serialNum,
         logoUrl: systemSettings.logoUrl || '',
         notes: certFormNotes.trim(),
@@ -7377,7 +7377,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                     type="text"
                     value={certFormPlatform}
                     onChange={(e) => setCertFormPlatform(e.target.value)}
-                    placeholder="منصة أقسام رعد للقدرات والتحصيلي"
+                    placeholder="منصة أقسام رعد للقدرات"
                     className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-xs focus:outline-none focus:border-amber-500"
                   />
                 </div>
