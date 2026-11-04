@@ -128,7 +128,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
           watchedVideoIds: [],
           totalExamsTaken: 0,
           averageScore: 0,
-          enrolledCourseIds: ['course_default_1'],
+          enrolledCourseIds: [],
           createdAt: new Date().toISOString(),
           lastLoginAt: new Date().toISOString(),
         };
@@ -239,6 +239,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
           watchedVideoIds: [],
           totalExamsTaken: 0,
           averageScore: 0,
+          enrolledCourseIds: [],
           createdAt: new Date().toISOString(),
         };
 

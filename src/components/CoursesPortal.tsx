@@ -69,7 +69,7 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
     return '';
   });
 
-  // Track active list filter view on mobile/desktop: 4 sections (الكورسات المتفعلة | الكورسات المتاحة | خطوات التسجيل | تواصل معنا)
+  // Track active list filter view: always defaults to 'paid' (الكورسات المتفعلة) for both first-time and returning students
   const [activeListView, setActiveListView] = useState<'paid' | 'available' | 'steps' | 'contact'>('paid');
 
   const selectedCourse = useMemo(() => {
@@ -698,28 +698,42 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
 
                 {paidCourses.length === 0 ? (
                   <div
-                    className={`p-10 rounded-3xl border-2 text-center space-y-4 ${
-                      isDarkMode ? 'bg-slate-900/60 border-slate-800 text-slate-400' : 'bg-white border-slate-200 text-slate-600 shadow-sm'
+                    className={`p-8 sm:p-12 rounded-3xl border-2 text-center space-y-5 animate-in fade-in duration-300 ${
+                      isDarkMode
+                        ? 'bg-gradient-to-b from-slate-900/90 to-slate-950 border-blue-500/30 text-slate-300 shadow-2xl'
+                        : 'bg-gradient-to-b from-blue-50/50 to-white border-blue-200 text-slate-700 shadow-xl'
                     }`}
                   >
-                    <div className="w-16 h-16 mx-auto rounded-3xl bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center justify-center">
-                      <Lock className="w-8 h-8" />
+                    <div className="w-20 h-20 mx-auto rounded-3xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white flex items-center justify-center shadow-lg shadow-blue-500/30 ring-4 ring-blue-500/20">
+                      <Sparkles className="w-10 h-10 animate-pulse" />
                     </div>
-                    <div className="space-y-1.5 max-w-md mx-auto">
-                      <h4 className={`font-black text-base ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
-                        لم تقم بتفعيل أي كورس بعد
+
+                    <div className="space-y-2 max-w-lg mx-auto">
+                      <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-500 dark:text-amber-300 text-xs font-black">
+                        <Lock className="w-3.5 h-3.5" />
+                        <span>لم تقم بتفعيل أي كورس بعد</span>
+                      </div>
+
+                      <h4 className={`text-xl sm:text-2xl font-black ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
+                        انتقل للكورسات المتاحة وفعل دورتك الآن ⚡
                       </h4>
-                      <p className="text-xs leading-relaxed">
-                        اختر أي كورس ترغب بدراسته من خانة "الكورسات المتاحة" واضغط على تفعيل الآن للبدء الفوري بدراسة المحاضرات والاختبارات!
+
+                      <p className={`text-xs sm:text-sm font-medium leading-relaxed ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
+                        اختر الدورة المناسبة لك واضغط على تفعيل للبدء الفوري في دراسة المحاضرات والشروحات والاختبارات التفاعلية بنظام نمر!
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setActiveListView('available')}
-                      className="px-6 py-3 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white font-black text-xs sm:text-sm transition cursor-pointer shadow-lg shadow-blue-600/25"
-                    >
-                      تصفح الكورسات المتاحة الآن 📚
-                    </button>
+
+                    <div className="pt-2">
+                      <button
+                        type="button"
+                        onClick={() => setActiveListView('available')}
+                        className="inline-flex items-center justify-center gap-2.5 px-8 py-4 rounded-2xl bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-600 hover:from-blue-500 hover:to-indigo-500 text-white font-black text-sm sm:text-base shadow-xl shadow-blue-600/30 hover:scale-[1.02] active:scale-95 transition-all cursor-pointer ring-2 ring-blue-400/30"
+                      >
+                        <Zap className="w-5 h-5" />
+                        <span>انتقل للكورسات المتاحة وفعل دورتك الآن</span>
+                        <ChevronLeft className="w-5 h-5 -translate-x-1" />
+                      </button>
+                    </div>
                   </div>
                 ) : (
                   /* مستطيلات دورات عريضة وأنيقة بالصورة بنسبة العرض الصحيحة وزر دخول للمنصة */
