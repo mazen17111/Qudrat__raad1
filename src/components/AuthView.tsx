@@ -22,7 +22,6 @@ import {
 } from 'lucide-react';
 import { StudentUser, SystemSettings } from '../types';
 import { BrandLogo } from './BrandLogo';
-import { TelegramLoginCard, TelegramAccount } from './TelegramLoginCard';
 import { db } from '../firebase';
 import {
   collection,
@@ -51,32 +50,6 @@ export const AuthView: React.FC<AuthViewProps> = ({
   systemSettings,
   onSecretTriggerAdmin,
 }) => {
-  const [authMode, setAuthMode] = useState<'telegram' | 'email'>('telegram');
-  const [isAddingNewTelegram, setIsAddingNewTelegram] = useState(false);
-  const [savedTelegramAccounts, setSavedTelegramAccounts] = useState<TelegramAccount[]>(() => {
-    try {
-      const saved = localStorage.getItem('raad_saved_telegram_accounts');
-      if (saved) return JSON.parse(saved);
-      const sessionRaw = localStorage.getItem('raad_student_session');
-      if (sessionRaw) {
-        const sess = JSON.parse(sessionRaw);
-        if (sess.telegramId) {
-          return [
-            {
-              id: sess.telegramId,
-              name: sess.name,
-              username: sess.telegramUsername,
-              photoUrl: sess.photoUrl,
-            },
-          ];
-        }
-      }
-      return [];
-    } catch (e) {
-      return [];
-    }
-  });
-
   const [isSignUp, setIsSignUp] = useState(false);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -86,7 +59,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
   const [error, setError] = useState('');
   const telegramContainerRef = useRef<HTMLDivElement>(null);
 
-  // Handle Telegram Authentication Callback from Widget
+  // Handle Telegram Authentication Callback
   const handleTelegramAuthSuccess = async (tgUser: any) => {
     if (!tgUser || !tgUser.id) return;
     setTelegramLoading(true);
@@ -179,83 +152,11 @@ export const AuthView: React.FC<AuthViewProps> = ({
         localStorage.setItem('raad_student_session', JSON.stringify(authenticatedUser));
       } catch (e) {}
 
-      // Save to device's list of saved telegram accounts
-      try {
-        const newAcc: TelegramAccount = {
-          id: telegramIdStr,
-          name: authenticatedUser.name,
-          username: authenticatedUser.telegramUsername || '',
-          photoUrl: authenticatedUser.photoUrl || '',
-        };
-        const currentList: TelegramAccount[] = (() => {
-          try {
-            const raw = localStorage.getItem('raad_saved_telegram_accounts');
-            return raw ? JSON.parse(raw) : [];
-          } catch {
-            return [];
-          }
-        })();
-        const updated = [newAcc, ...currentList.filter((a) => String(a.id) !== telegramIdStr)];
-        localStorage.setItem('raad_saved_telegram_accounts', JSON.stringify(updated));
-        setSavedTelegramAccounts(updated);
-      } catch (e) {}
-
-      setIsAddingNewTelegram(false);
-
       // 5. Automatic redirect: immediately transfer student to Courses Portal!
       onSuccessAuth(authenticatedUser);
     } catch (err: any) {
       console.error('Telegram Auth Error:', err);
       setError('حدث خطأ أثناء ربط بيانات تيليجرام بقاعدة البيانات، يرجى المحاولة ثانية.');
-    } finally {
-      setTelegramLoading(false);
-    }
-  };
-
-  // Direct login with one of the saved Telegram accounts
-  const handleSavedTelegramLogin = async (account: TelegramAccount) => {
-    setTelegramLoading(true);
-    setError('');
-    try {
-      const telegramIdStr = String(account.id);
-      const usersRef = collection(db, 'users');
-      const q = query(usersRef, where('telegramId', '==', telegramIdStr));
-      const snap = await getDocs(q);
-
-      if (!snap.empty) {
-        const userDoc = snap.docs[0];
-        const existingData = { id: userDoc.id, ...userDoc.data() } as StudentUser;
-        if (existingData.isDeleted) {
-          setError('هذا الحساب تم حظره أو حذفه من قبل الإدارة.');
-          setTelegramLoading(false);
-          return;
-        }
-
-        try {
-          await updateDoc(doc(db, 'users', userDoc.id), {
-            lastLoginAt: new Date().toISOString(),
-          });
-        } catch (e) {}
-
-        const authenticatedUser = {
-          ...existingData,
-          lastLoginAt: new Date().toISOString(),
-          id: userDoc.id,
-        };
-
-        try {
-          localStorage.setItem('raad_student_session', JSON.stringify(authenticatedUser));
-        } catch (e) {}
-
-        onSuccessAuth(authenticatedUser);
-      } else {
-        // Account document not in firestore, activate widget
-        setIsAddingNewTelegram(true);
-        setError('يرجى الضغط على زر تليجرام أدناه لربط الحساب وتأكيد الدخول.');
-      }
-    } catch (err) {
-      console.error('Error logging in with saved telegram account:', err);
-      setError('حدث خطأ أثناء تسجيل الدخول بحساب تليجرام، يرجى المحاولة ثانية.');
     } finally {
       setTelegramLoading(false);
     }
@@ -281,7 +182,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
       script.async = true;
       telegramContainerRef.current.appendChild(script);
     }
-  }, [isSignUp, authMode, isAddingNewTelegram]);
+  }, [isSignUp]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -623,216 +524,166 @@ export const AuthView: React.FC<AuthViewProps> = ({
 
           </div>
 
-          {/* ================= LEFT COLUMN ================= */}
+          {/* ================= LEFT COLUMN (عاليسار شوية) ================= */}
+          {/* "خلي مستطيل تسجيل دخول وانشاء الحساب دخلها عاليسار شوية" */}
           <div className="lg:col-span-5 flex justify-center lg:justify-end w-full">
-            <div className="w-full max-w-md space-y-3.5">
-              {/* Method Switcher Tabs (تبديل بين تليجرام السريع والبريد) */}
-              <div className="flex items-center gap-2 p-1.5 rounded-2xl bg-slate-900/90 border border-slate-800 shadow-xl">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAuthMode('telegram');
-                    setError('');
-                  }}
-                  className={`flex-1 py-2.5 px-3 rounded-xl font-black text-xs flex items-center justify-center gap-2 transition cursor-pointer ${
-                    authMode === 'telegram'
-                      ? 'bg-gradient-to-r from-sky-500 to-blue-600 text-white shadow-lg shadow-sky-600/30'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  <Send className="w-4 h-4 fill-current" />
-                  <span>تسجيل الدخول بتليجرام ✈️</span>
-                </button>
+            <div
+              className={`w-full max-w-md p-6 sm:p-8 rounded-3xl border shadow-2xl relative transition-all ${
+                isDarkMode
+                  ? 'bg-slate-900/95 border-slate-800 backdrop-blur-xl shadow-slate-950/50'
+                  : 'bg-white border-slate-200 shadow-xl shadow-slate-200/50'
+              }`}
+            >
+              {/* Card Header with Brand Logo */}
+              <div className="text-center space-y-3 mb-6">
+                <div className="flex justify-center">
+                  <BrandLogo
+                    customLogoUrl={systemSettings.logoUrl}
+                    size="lg"
+                    primaryColor={activeTheme?.primary || '#2563eb'}
+                  />
+                </div>
+                <h2 className="text-2xl font-black">
+                  {isSignUp ? 'إنشاء حساب جديد' : 'تسجيل الدخول إلى المنصة'}
+                </h2>
+                <p className={`text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-600 font-bold'}`}>
+                  {isSignUp
+                    ? 'أدخل بياناتك للانضمام فوراً إلى تدريبات وشروحات رعد'
+                    : 'اكتب نفس البريد وكلمة المرور المسجلين لديك'}
+                </p>
+              </div>
+
+              {/* Form */}
+              <form onSubmit={handleSubmit} className="space-y-4">
+                {isSignUp && (
+                  <div>
+                    <label className={`block text-xs font-bold mb-1.5 ${isDarkMode ? 'text-slate-300' : 'text-slate-800'}`}>
+                      الاسم الكامل:
+                    </label>
+                    <div className="relative">
+                      <User className="w-4 h-4 text-slate-500 absolute top-3.5 right-3.5" />
+                      <input
+                        type="text"
+                        required
+                        placeholder="مثال: أحمد عبد الله..."
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        className={`w-full pr-10 pl-4 py-2.5 text-xs rounded-xl border focus:outline-none focus:ring-1 ${
+                          isDarkMode
+                            ? 'bg-slate-800/80 border-slate-700 text-white focus:border-blue-500'
+                            : 'bg-white border-slate-300 text-slate-900 focus:border-blue-500'
+                        }`}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <div>
+                  <label className={`block text-xs font-bold mb-1.5 ${isDarkMode ? 'text-slate-300' : 'text-slate-800'}`}>
+                    البريد الإلكتروني:
+                  </label>
+                  <div className="relative">
+                    <Mail className="w-4 h-4 text-slate-500 absolute top-3.5 right-3.5" />
+                    <input
+                      type="email"
+                      required
+                      placeholder="your.email@example.com"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      className={`w-full pr-10 pl-4 py-2.5 text-xs rounded-xl border focus:outline-none focus:ring-1 ${
+                        isDarkMode
+                          ? 'bg-slate-800/80 border-slate-700 text-white focus:border-blue-500'
+                          : 'bg-white border-slate-300 text-slate-900 focus:border-blue-500'
+                      }`}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className={`block text-xs font-bold mb-1.5 ${isDarkMode ? 'text-slate-300' : 'text-slate-800'}`}>
+                    كلمة المرور:
+                  </label>
+                  <div className="relative">
+                    <Lock className="w-4 h-4 text-slate-500 absolute top-3.5 right-3.5" />
+                    <input
+                      type="password"
+                      required
+                      placeholder="••••••••"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className={`w-full pr-10 pl-4 py-2.5 text-xs rounded-xl border focus:outline-none focus:ring-1 ${
+                        isDarkMode
+                          ? 'bg-slate-800/80 border-slate-700 text-white focus:border-blue-500'
+                          : 'bg-white border-slate-300 text-slate-900 focus:border-blue-500'
+                      }`}
+                    />
+                  </div>
+                </div>
+
+                {error && (
+                  <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs font-bold flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span>{error}</span>
+                  </div>
+                )}
 
                 <button
+                  type="submit"
+                  disabled={loading || telegramLoading}
+                  className="w-full flex items-center justify-center gap-2 py-3 rounded-xl text-white font-black text-sm shadow-xl transition transform active:scale-95 disabled:opacity-50 cursor-pointer"
+                  style={{ backgroundColor: activeTheme?.primary || '#2563eb' }}
+                >
+                  <span>{loading ? 'جاري المعالجة...' : isSignUp ? 'إنشاء حساب والبدء ⚡' : 'تسجيل الدخول'}</span>
+                  <ArrowLeft className="w-4 h-4" />
+                </button>
+              </form>
+
+              {/* Toggle between Login and Sign Up */}
+              <div className="mt-4 pt-3 border-t border-slate-200 dark:border-slate-800/60 text-center">
+                <button
                   type="button"
                   onClick={() => {
-                    setAuthMode('email');
+                    setIsSignUp(!isSignUp);
                     setError('');
                   }}
-                  className={`flex-1 py-2.5 px-3 rounded-xl font-black text-xs flex items-center justify-center gap-2 transition cursor-pointer ${
-                    authMode === 'email'
-                      ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg shadow-blue-600/30'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
+                  className="text-xs text-blue-600 dark:text-blue-400 hover:underline font-bold transition cursor-pointer"
                 >
-                  <Mail className="w-4 h-4" />
-                  <span>البريد الإلكتروني ✉️</span>
+                  {isSignUp
+                    ? 'لديك حساب بالفعل؟ اضغط هنا لتسجيل الدخول'
+                    : 'ليس لديك حساب؟ اضغط هنا لإنشاء حساب جديد'}
                 </button>
               </div>
 
-              {/* 1. TELEGRAM LOGIN CARD (مكون تسجيل الدخول بتليجرام المطلوب) */}
-              {authMode === 'telegram' ? (
-                <TelegramLoginCard
-                  accounts={savedTelegramAccounts}
-                  onLogin={handleSavedTelegramLogin}
-                  onUseAnotherAccount={() => setIsAddingNewTelegram((prev) => !prev)}
-                  isAddingNew={isAddingNewTelegram}
-                  isLoading={telegramLoading}
-                  errorMessage={error}
-                  widgetNode={
-                    telegramLoading ? (
-                      <div className="flex items-center gap-2 py-2 px-4 rounded-xl bg-sky-500/10 border border-sky-500/30 text-sky-400 text-xs font-black animate-pulse">
-                        <Sparkles className="w-4 h-4 animate-spin text-sky-400" />
-                        <span>جاري ربط حساب تليجرام...</span>
-                      </div>
-                    ) : (
-                      <div
-                        ref={telegramContainerRef}
-                        className="telegram-login-widget flex items-center justify-center w-full min-h-[46px]"
-                      />
-                    )
-                  }
-                  onSwitchToEmail={() => {
-                    setAuthMode('email');
-                    setError('');
-                  }}
-                />
-              ) : (
-                /* 2. EMAIL / PASSWORD FORM */
-                <div
-                  className={`w-full p-6 sm:p-8 rounded-3xl border shadow-2xl relative transition-all ${
-                    isDarkMode
-                      ? 'bg-slate-900/95 border-slate-800 backdrop-blur-xl shadow-slate-950/50'
-                      : 'bg-white border-slate-200 shadow-xl shadow-slate-200/50'
-                  }`}
-                >
-                  {/* Card Header with Brand Logo */}
-                  <div className="text-center space-y-3 mb-6">
-                    <div className="flex justify-center">
-                      <BrandLogo
-                        customLogoUrl={systemSettings.logoUrl}
-                        size="lg"
-                        primaryColor={activeTheme?.primary || '#2563eb'}
-                      />
-                    </div>
-                    <h2 className="text-2xl font-black">
-                      {isSignUp ? 'إنشاء حساب جديد' : 'تسجيل الدخول إلى المنصة'}
-                    </h2>
-                    <p className={`text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-600 font-bold'}`}>
-                      {isSignUp
-                        ? 'أدخل بياناتك للانضمام فوراً إلى تدريبات وشروحات رعد'
-                        : 'اكتب نفس البريد وكلمة المرور المسجلين لديك'}
-                    </p>
-                  </div>
-
-                  {/* Form */}
-                  <form onSubmit={handleSubmit} className="space-y-4">
-                    {isSignUp && (
-                      <div>
-                        <label className={`block text-xs font-bold mb-1.5 ${isDarkMode ? 'text-slate-300' : 'text-slate-800'}`}>
-                          الاسم الكامل:
-                        </label>
-                        <div className="relative">
-                          <User className="w-4 h-4 text-slate-500 absolute top-3.5 right-3.5" />
-                          <input
-                            type="text"
-                            required
-                            placeholder="مثال: أحمد عبد الله..."
-                            value={name}
-                            onChange={(e) => setName(e.target.value)}
-                            className={`w-full pr-10 pl-4 py-2.5 text-xs rounded-xl border focus:outline-none focus:ring-1 ${
-                              isDarkMode
-                                ? 'bg-slate-800/80 border-slate-700 text-white focus:border-blue-500'
-                                : 'bg-white border-slate-300 text-slate-900 focus:border-blue-500'
-                            }`}
-                          />
-                        </div>
-                      </div>
-                    )}
-
-                    <div>
-                      <label className={`block text-xs font-bold mb-1.5 ${isDarkMode ? 'text-slate-300' : 'text-slate-800'}`}>
-                        البريد الإلكتروني:
-                      </label>
-                      <div className="relative">
-                        <Mail className="w-4 h-4 text-slate-500 absolute top-3.5 right-3.5" />
-                        <input
-                          type="email"
-                          required
-                          placeholder="your.email@example.com"
-                          value={email}
-                          onChange={(e) => setEmail(e.target.value)}
-                          className={`w-full pr-10 pl-4 py-2.5 text-xs rounded-xl border focus:outline-none focus:ring-1 ${
-                            isDarkMode
-                              ? 'bg-slate-800/80 border-slate-700 text-white focus:border-blue-500'
-                              : 'bg-white border-slate-300 text-slate-900 focus:border-blue-500'
-                          }`}
-                        />
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className={`block text-xs font-bold mb-1.5 ${isDarkMode ? 'text-slate-300' : 'text-slate-800'}`}>
-                        كلمة المرور:
-                      </label>
-                      <div className="relative">
-                        <Lock className="w-4 h-4 text-slate-500 absolute top-3.5 right-3.5" />
-                        <input
-                          type="password"
-                          required
-                          placeholder="••••••••"
-                          value={password}
-                          onChange={(e) => setPassword(e.target.value)}
-                          className={`w-full pr-10 pl-4 py-2.5 text-xs rounded-xl border focus:outline-none focus:ring-1 ${
-                            isDarkMode
-                              ? 'bg-slate-800/80 border-slate-700 text-white focus:border-blue-500'
-                              : 'bg-white border-slate-300 text-slate-900 focus:border-blue-500'
-                          }`}
-                        />
-                      </div>
-                    </div>
-
-                    {error && (
-                      <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs font-bold flex items-center gap-2">
-                        <AlertCircle className="w-4 h-4 shrink-0" />
-                        <span>{error}</span>
-                      </div>
-                    )}
-
-                    <button
-                      type="submit"
-                      disabled={loading || telegramLoading}
-                      className="w-full flex items-center justify-center gap-2 py-3 rounded-xl text-white font-black text-sm shadow-xl transition transform active:scale-95 disabled:opacity-50 cursor-pointer"
-                      style={{ backgroundColor: activeTheme?.primary || '#2563eb' }}
-                    >
-                      <span>{loading ? 'جاري المعالجة...' : isSignUp ? 'إنشاء حساب والبدء ⚡' : 'تسجيل الدخول'}</span>
-                      <ArrowLeft className="w-4 h-4" />
-                    </button>
-                  </form>
-
-                  {/* Toggle between Login and Sign Up */}
-                  <div className="mt-4 pt-3 border-t border-slate-200 dark:border-slate-800/60 text-center">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsSignUp(!isSignUp);
-                        setError('');
-                      }}
-                      className="text-xs text-blue-600 dark:text-blue-400 hover:underline font-bold transition cursor-pointer"
-                    >
-                      {isSignUp
-                        ? 'لديك حساب بالفعل؟ اضغط هنا لتسجيل الدخول'
-                        : 'ليس لديك حساب؟ اضغط هنا لإنشاء حساب جديد'}
-                    </button>
-                  </div>
-
-                  {/* Quick Telegram Shortcut in Email View */}
-                  <div className="mt-5 pt-3 border-t border-slate-200 dark:border-slate-800/60 text-center">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAuthMode('telegram');
-                        setError('');
-                      }}
-                      className="text-xs text-sky-500 dark:text-sky-400 hover:text-sky-300 font-bold transition cursor-pointer flex items-center justify-center gap-1.5 mx-auto"
-                    >
-                      <Send className="w-3.5 h-3.5 fill-current" />
-                      <span>أو التبديل إلى تسجيل الدخول بتليجرام ✈️</span>
-                    </button>
-                  </div>
+              {/* ================= TELEGRAM LOGIN WIDGET SECTION ================= */}
+              {/* "حط كود الـ Telegram Widget تحت أزرار تسجيل الدخول وإنشاء الحساب في واجهة الدخول الأولى" */}
+              <div className="mt-5 pt-4 border-t border-slate-200 dark:border-slate-800/80 space-y-3">
+                <div className="flex items-center gap-2 justify-center text-xs font-black text-slate-500 dark:text-slate-400">
+                  <div className="h-px bg-slate-200 dark:bg-slate-800 flex-1" />
+                  <span className="flex items-center gap-1.5 px-2 text-sky-500 dark:text-sky-400">
+                    <Send className="w-3.5 h-3.5 fill-current" />
+                    <span>أو الدخول السريع عبر تيليجرام</span>
+                  </span>
+                  <div className="h-px bg-slate-200 dark:bg-slate-800 flex-1" />
                 </div>
-              )}
+
+                <div className="flex flex-col items-center justify-center min-h-[50px] w-full">
+                  {telegramLoading ? (
+                    <div className="flex items-center gap-2 py-2.5 px-5 rounded-2xl bg-sky-500/10 border border-sky-500/30 text-sky-400 text-xs font-black animate-pulse">
+                      <Sparkles className="w-4 h-4 animate-spin text-sky-400" />
+                      <span>جاري ربط حساب تيليجرام والدخول للمنصة...</span>
+                    </div>
+                  ) : (
+                    <div
+                      ref={telegramContainerRef}
+                      className="telegram-login-widget flex items-center justify-center w-full min-h-[46px]"
+                    />
+                  )}
+                </div>
+
+                <p className={`text-[10px] text-center leading-relaxed ${isDarkMode ? 'text-slate-400' : 'text-slate-600 font-medium'}`}>
+                  تسجيل دخول آمن عبر بوت تيليجرام <strong className="text-sky-400 font-black" dir="ltr">@Ra3d6_bot</strong>
+                </p>
+              </div>
             </div>
           </div>
 
