@@ -53,7 +53,8 @@ import {
   ContentItem,
   ExamQuestion,
   FolderItem,
-  CourseItem
+  CourseItem,
+  CourseThemeColor
 } from '../types';
 import { db, INITIAL_SECTIONS, INITIAL_RESOURCES, INITIAL_CONTENT_ITEMS } from '../firebase';
 import {
@@ -74,6 +75,8 @@ import { ExamRunner } from './ExamRunner';
 import { ErrorBoundary } from './ErrorBoundary';
 import { CertificateModal } from './CertificateModal';
 import { SmartVideoPlayer } from './SmartVideoPlayer';
+import { StudentProfileDropdown } from './StudentProfileDropdown';
+import { getEffectiveCourseTheme } from '../utils/courseThemes';
 
 interface StudentHomeProps {
   currentUser: StudentUser;
@@ -84,6 +87,8 @@ interface StudentHomeProps {
   onSecretTriggerAdmin: () => void;
   activeCourse?: CourseItem | null;
   onBackToCourses?: () => void;
+  currentThemeColor?: CourseThemeColor;
+  onSelectThemeColor?: (color: CourseThemeColor) => void;
 }
 
 interface SupervisorContactButtonsProps {
@@ -142,6 +147,8 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
   onSecretTriggerAdmin,
   activeCourse,
   onBackToCourses,
+  currentThemeColor = 'default',
+  onSelectThemeColor,
 }) => {
   // Navigation & Modals
   const [showStatsModal, setShowStatsModal] = useState(false);
@@ -665,7 +672,11 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
     });
   };
 
-  const activeTheme = systemSettings.activeTheme;
+  const effectiveTheme = useMemo(() => {
+    return getEffectiveCourseTheme(currentThemeColor, systemSettings.activeTheme);
+  }, [currentThemeColor, systemSettings.activeTheme]);
+
+  const activeTheme = effectiveTheme;
 
   // Performance Optimization: Memoize filtered and sorted lists strictly for active course
   const courseSections = useMemo(() => {
@@ -1067,8 +1078,14 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
 
   return (
     <div
-      className={`min-h-screen flex flex-col transition-colors duration-200 ${
-        isDarkMode ? 'bg-slate-950 text-slate-100' : 'bg-white text-slate-900'
+      className={`min-h-screen flex flex-col transition-all duration-300 ${
+        isDarkMode
+          ? currentThemeColor && currentThemeColor !== 'default'
+            ? `bg-gradient-to-b ${activeTheme.bgGradient} text-slate-100`
+            : 'bg-slate-950 text-slate-100'
+          : currentThemeColor && currentThemeColor !== 'default'
+          ? 'bg-slate-50 text-slate-900'
+          : 'bg-white text-slate-900'
       }`}
     >
       {/* Top Header: Neat and tight on mobile without gaps */}
@@ -1076,6 +1093,9 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
         className={`sticky top-0 z-30 px-2.5 sm:px-4 md:px-8 py-2 sm:py-3 border-b backdrop-blur-xl flex items-center justify-between gap-2 transition-all shadow-sm ${
           isDarkMode ? 'bg-slate-900/90 border-slate-800' : 'bg-white/95 border-slate-200'
         }`}
+        style={currentThemeColor && currentThemeColor !== 'default' ? {
+          borderBottomColor: `${activeTheme?.primary || '#2563eb'}30`,
+        } : {}}
       >
         {/* Brand & Student Welcome - Platform Logo on any browser */}
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
@@ -1088,7 +1108,14 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
             <div className="flex items-center gap-1.5 flex-wrap">
               <h1 className="text-sm sm:text-lg md:text-xl font-black tracking-tight truncate">منصة أقسام رعد</h1>
               {activeCourse && (
-                <span className="text-[10px] sm:text-xs font-black px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-400 border border-sky-500/30 truncate max-w-[120px] sm:max-w-xs">
+                <span
+                  className="text-[10px] sm:text-xs font-black px-2.5 py-0.5 rounded-full border truncate max-w-[140px] sm:max-w-xs transition-colors shadow-xs"
+                  style={{
+                    backgroundColor: `${activeTheme?.primary || '#2563eb'}20`,
+                    borderColor: `${activeTheme?.primary || '#2563eb'}50`,
+                    color: activeTheme?.accent || '#38bdf8',
+                  }}
+                >
                   {activeCourse.title}
                 </span>
               )}
@@ -1169,43 +1196,15 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
             {isDarkMode ? <Sun className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> : <Moon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />}
           </button>
 
-          {/* Student Profile (صورته الدائرية واسمه وزر تسجيل الخروج) */}
-          <div className={`flex items-center gap-1.5 sm:gap-2 p-1 sm:pr-2.5 sm:pl-1.5 rounded-2xl border transition shadow-xs ${
-            isDarkMode ? 'bg-slate-800/80 border-slate-700/80' : 'bg-slate-100/90 border-slate-300'
-          }`}>
-            {currentUser.photoUrl ? (
-              <img
-                src={currentUser.photoUrl}
-                alt={currentUser.name}
-                className="w-7 h-7 sm:w-8 sm:h-8 rounded-full object-cover ring-2 ring-emerald-500/70 shadow-sm shrink-0"
-              />
-            ) : (
-              <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-gradient-to-tr from-sky-500 to-blue-600 text-white font-black text-xs flex items-center justify-center ring-2 ring-sky-400/50 shadow-sm shrink-0">
-                {currentUser.name ? currentUser.name.trim().charAt(0) : 'ط'}
-              </div>
-            )}
-
-            <div className="hidden md:flex flex-col text-right min-w-0 pr-0.5">
-              <span className={`text-xs font-black truncate max-w-[120px] ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
-                {currentUser.name}
-              </span>
-              {currentUser.telegramUsername && (
-                <span className="text-[10px] text-sky-400 font-bold truncate" dir="ltr">
-                  @{currentUser.telegramUsername}
-                </span>
-              )}
-            </div>
-
-            {/* زر تسجيل الخروج */}
-            <button
-              onClick={onLogout}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 dark:text-rose-400 border border-rose-500/30 text-xs font-black transition cursor-pointer"
-              title="تسجيل الخروج من المنصة"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-              <span className="text-[11px] hidden sm:inline">تسجيل الخروج</span>
-            </button>
-          </div>
+          {/* Student Profile Dropdown (عند الضغط يجد حسابي، تسجيل خروج، ودوائر الألوان) */}
+          <StudentProfileDropdown
+            currentUser={currentUser}
+            onLogout={onLogout}
+            onNavigateToCourses={onBackToCourses}
+            currentThemeColor={currentThemeColor}
+            onSelectThemeColor={onSelectThemeColor || (() => {})}
+            isDarkMode={isDarkMode}
+          />
         </div>
       </header>
 

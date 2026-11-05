@@ -46,7 +46,10 @@ export interface StudentUser {
   avatarUrl?: string;
   isDeleted?: boolean; // علامة الحذف لتسجيل الخروج الفوري للطالب في وقتها
   deletedAt?: string;
+  preferredThemeColor?: 'default' | 'red' | 'green' | 'blue' | 'purple' | 'pink'; // ثيم ولون الكورس المخصص المختار من الطالب
 }
+
+export type CourseThemeColor = 'default' | 'red' | 'green' | 'blue' | 'purple' | 'pink';
 
 export interface CourseItem {
   id: string;

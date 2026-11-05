@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { StudentUser, SystemSettings, FeaturesConfig, IntroLessonConfig, CourseItem } from './types';
+import { StudentUser, SystemSettings, FeaturesConfig, IntroLessonConfig, CourseItem, CourseThemeColor } from './types';
 import { db, testConnection, seedInitialPlatformData, DEFAULT_SETTINGS, INITIAL_COURSES, restoreDefaultCoursesAndContent } from './firebase';
 import { doc, onSnapshot, collection, updateDoc, arrayUnion } from 'firebase/firestore';
 import { AuthView } from './components/AuthView';
@@ -13,6 +13,7 @@ const STUDENT_SESSION_KEY = 'raad_student_auth_session';
 const THEME_STORAGE_KEY = 'raad_platform_theme_dark';
 const CACHED_SETTINGS_KEY = 'raad_cached_system_settings';
 const CACHED_COURSES_KEY = 'raad_cached_courses';
+const COURSE_THEME_STORAGE_KEY = 'raad_student_course_theme_color';
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<StudentUser | null>(() => {
@@ -273,6 +274,42 @@ export default function App() {
     }
   };
 
+  const [courseThemeColor, setCourseThemeColor] = useState<CourseThemeColor>(() => {
+    try {
+      const saved = localStorage.getItem(COURSE_THEME_STORAGE_KEY);
+      if (saved && ['default', 'red', 'green', 'blue', 'purple', 'pink'].includes(saved)) {
+        return saved as CourseThemeColor;
+      }
+    } catch (e) {}
+    return (currentUser?.preferredThemeColor as CourseThemeColor) || 'default';
+  });
+
+  // Sync preferredThemeColor if updated in user document
+  useEffect(() => {
+    if (currentUser?.preferredThemeColor && ['default', 'red', 'green', 'blue', 'purple', 'pink'].includes(currentUser.preferredThemeColor)) {
+      setCourseThemeColor(currentUser.preferredThemeColor as CourseThemeColor);
+      try {
+        localStorage.setItem(COURSE_THEME_STORAGE_KEY, currentUser.preferredThemeColor);
+      } catch (e) {}
+    }
+  }, [currentUser?.preferredThemeColor]);
+
+  const handleSelectCourseThemeColor = async (color: CourseThemeColor) => {
+    setCourseThemeColor(color);
+    try {
+      localStorage.setItem(COURSE_THEME_STORAGE_KEY, color);
+    } catch (e) {}
+
+    if (currentUser?.id) {
+      try {
+        const userRef = doc(db, 'users', currentUser.id);
+        await updateDoc(userRef, { preferredThemeColor: color });
+      } catch (err) {
+        console.warn('Failed to update preferredThemeColor in Firestore:', err);
+      }
+    }
+  };
+
   const handleSelectCourse = (course: CourseItem) => {
     setActiveCourse(course);
   };
@@ -298,6 +335,8 @@ export default function App() {
             onSecretTriggerAdmin={handleSecretTriggerAdmin}
             onActivateCourse={handleActivateCourse}
             onSelectCourse={handleSelectCourse}
+            currentThemeColor={courseThemeColor}
+            onSelectThemeColor={handleSelectCourseThemeColor}
           />
         ) : (
           /* Student Main Course Platform */
@@ -311,6 +350,8 @@ export default function App() {
               onSecretTriggerAdmin={handleSecretTriggerAdmin}
               activeCourse={activeCourse}
               onBackToCourses={() => setActiveCourse(null)}
+              currentThemeColor={courseThemeColor}
+              onSelectThemeColor={handleSelectCourseThemeColor}
             />
           </ErrorBoundary>
         )

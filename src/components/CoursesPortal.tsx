@@ -24,10 +24,11 @@ import {
   Phone,
   AlertTriangle,
 } from 'lucide-react';
-import { StudentUser, CourseItem, SystemSettings } from '../types';
+import { StudentUser, CourseItem, SystemSettings, CourseThemeColor } from '../types';
 import { BrandLogo } from './BrandLogo';
 import { CertificateModal } from './CertificateModal';
 import { PlatformFooter } from './PlatformFooter';
+import { StudentProfileDropdown } from './StudentProfileDropdown';
 
 interface CoursesPortalProps {
   currentUser: StudentUser;
@@ -39,6 +40,8 @@ interface CoursesPortalProps {
   onLogout: () => void;
   onSecretTriggerAdmin: () => void;
   onActivateCourse: (courseId: string) => Promise<void>;
+  currentThemeColor?: CourseThemeColor;
+  onSelectThemeColor?: (color: CourseThemeColor) => void;
 }
 
 export const CoursesPortal: React.FC<CoursesPortalProps> = ({
@@ -51,6 +54,8 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
   onLogout,
   onSecretTriggerAdmin,
   onActivateCourse,
+  currentThemeColor = 'default',
+  onSelectThemeColor,
 }) => {
   // Sort courses by order
   const sortedCourses = useMemo(() => {
@@ -254,44 +259,17 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
             {isDarkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
           </button>
 
-          {/* Student Profile (صورته الدائرية واسمه وزر تسجيل الخروج) */}
-          <div className={`flex items-center gap-2 p-1 sm:pr-2.5 sm:pl-1.5 rounded-2xl border transition shadow-xs ${
-            isDarkMode ? 'bg-slate-800/80 border-slate-700/80' : 'bg-slate-100/90 border-slate-300'
-          }`}>
-            {currentUser.photoUrl ? (
-              <img
-                src={currentUser.photoUrl}
-                alt={currentUser.name}
-                className="w-8 h-8 rounded-full object-cover ring-2 ring-emerald-500/70 shadow-sm shrink-0"
-              />
-            ) : (
-              <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-sky-500 to-blue-600 text-white font-black text-xs flex items-center justify-center ring-2 ring-sky-400/50 shadow-sm shrink-0">
-                {currentUser.name ? currentUser.name.trim().charAt(0) : 'ط'}
-              </div>
-            )}
-
-            <div className="hidden sm:flex flex-col text-right min-w-0 pr-0.5">
-              <span className={`text-xs font-black truncate max-w-[120px] ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
-                {currentUser.name}
-              </span>
-              {currentUser.telegramUsername && (
-                <span className="text-[10px] text-sky-400 font-bold truncate" dir="ltr">
-                  @{currentUser.telegramUsername}
-                </span>
-              )}
-            </div>
-
-            {/* زر تسجيل الخروج */}
-            <button
-              type="button"
-              onClick={onLogout}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 dark:text-rose-400 border border-rose-500/30 text-xs font-black transition cursor-pointer"
-              title="تسجيل الخروج من الحساب"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-              <span>تسجيل الخروج</span>
-            </button>
-          </div>
+          {/* Student Profile Dropdown (عند الضغط يجد حسابي، تسجيل خروج، ودوائر الألوان) */}
+          <StudentProfileDropdown
+            currentUser={currentUser}
+            onLogout={onLogout}
+            onNavigateToCourses={() => {
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }}
+            currentThemeColor={currentThemeColor}
+            onSelectThemeColor={onSelectThemeColor || (() => {})}
+            isDarkMode={isDarkMode}
+          />
         </div>
       </header>
 
