@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, Check, Send, AlertCircle, ArrowLeft, Mail, Sparkles } from 'lucide-react';
+import { Check, Send, AlertCircle, Mail, Sparkles } from 'lucide-react';
 
 export interface TelegramAccount {
   id: string | number;
@@ -194,54 +194,40 @@ export const TelegramLoginCard: React.FC<TelegramLoginCardProps> = ({
         </div>
       )}
 
-      {/* ================= 3. زر استخدام حساب آخر (+) ================= */}
-      <div className="pt-1 pb-3">
-        <button
-          type="button"
-          onClick={onUseAnotherAccount}
-          className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-2xl border border-dashed border-slate-600 hover:border-sky-400 bg-slate-800/40 hover:bg-slate-800/90 text-slate-300 hover:text-sky-300 text-xs sm:text-sm font-black transition-all duration-200 cursor-pointer group shadow-xs"
-        >
-          <div className="w-5 h-5 rounded-full bg-slate-700 group-hover:bg-sky-500/20 text-slate-300 group-hover:text-sky-400 flex items-center justify-center transition-colors">
-            <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
-          </div>
-          <span>استخدام حساب آخر</span>
-        </button>
-      </div>
-
-      {/* الودجت الخاص بتسجيل الدخول بتليجرام (إذا كان مفعل أو إذا لم تكن هناك حسابات محفوظة) */}
-      {(isAddingNew || !hasAccounts) && (
-        <div className="mb-4 p-4 rounded-2xl bg-slate-800/70 border border-slate-700 text-center space-y-3 animate-in fade-in duration-200">
-          <div className="flex items-center justify-center gap-1.5 text-sky-400 text-xs font-black">
-            <Sparkles className="w-4 h-4" />
-            <span>تسجيل دخول حساب تليجرام جديد</span>
-          </div>
-          <p className="text-[11px] text-slate-400">
-            اضغط على زر تيليجرام أدناه لربط حسابك عبر البوت <strong className="text-sky-300 font-mono" dir="ltr">@Ra3d6_bot</strong>:
-          </p>
-          <div className="flex justify-center items-center min-h-[46px] w-full">
-            {widgetNode}
-          </div>
+      {/* ================= 3. زر التأكيد والدخول للحساب المختار ================= */}
+      {hasAccounts && selectedAccount && (
+        <div className="py-2">
+          <button
+            type="button"
+            onClick={handleConfirmLogin}
+            disabled={isLoading}
+            className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-sky-500 via-blue-600 to-sky-500 hover:from-sky-400 hover:via-blue-500 hover:to-sky-400 text-white font-black text-sm shadow-lg shadow-sky-600/30 hover:shadow-sky-600/40 hover:scale-[1.01] active:scale-95 transition-all duration-200 cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2"
+          >
+            {isLoading ? (
+              <span>جاري تسجيل الدخول...</span>
+            ) : (
+              <>
+                <span>متابعة كـ {selectedAccount.name}</span>
+                <Send className="w-4 h-4 fill-current -translate-x-0.5" />
+              </>
+            )}
+          </button>
         </div>
       )}
 
-      {/* ================= 4. زر التأكيد والدخول للحساب المختار ================= */}
-      {hasAccounts && selectedAccount && (
-        <button
-          type="button"
-          onClick={handleConfirmLogin}
-          disabled={isLoading}
-          className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-sky-500 via-blue-600 to-sky-500 hover:from-sky-400 hover:via-blue-500 hover:to-sky-400 text-white font-black text-sm shadow-lg shadow-sky-600/30 hover:shadow-sky-600/40 hover:scale-[1.01] active:scale-95 transition-all duration-200 cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2"
-        >
-          {isLoading ? (
-            <span>جاري تسجيل الدخول...</span>
-          ) : (
-            <>
-              <span>متابعة كـ {selectedAccount.name}</span>
-              <Send className="w-4 h-4 fill-current -translate-x-0.5" />
-            </>
-          )}
-        </button>
-      )}
+      {/* الودجت الخاص بتسجيل الدخول بتليجرام */}
+      <div className="mb-4 p-4 rounded-2xl bg-slate-800/70 border border-slate-700 text-center space-y-3 animate-in fade-in duration-200">
+        <div className="flex items-center justify-center gap-1.5 text-sky-400 text-xs font-black">
+          <Sparkles className="w-4 h-4" />
+          <span>{hasAccounts ? 'أو تسجيل الدخول بزر تيليجرام' : 'تسجيل الدخول عبر تيليجرام'}</span>
+        </div>
+        <p className="text-[11px] text-slate-400">
+          اضغط على زر تيليجرام أدناه للمتابعة عبر البوت <strong className="text-sky-300 font-mono" dir="ltr">@Ra3d6_bot</strong>:
+        </p>
+        <div className="flex justify-center items-center min-h-[46px] w-full">
+          {widgetNode}
+        </div>
+      </div>
 
       {/* التبديل للدخول بالبريد الإلكتروني */}
       {onSwitchToEmail && (
