@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Check, Send, AlertCircle, Mail, Sparkles } from 'lucide-react';
+import React from 'react';
+import { Send, AlertCircle, Mail } from 'lucide-react';
 
 export interface TelegramAccount {
   id: string | number;
@@ -10,19 +10,19 @@ export interface TelegramAccount {
 
 interface TelegramLoginCardProps {
   /**
-   * قائمة الحسابات المتاحة للاختيار منها
+   * قائمة الحسابات المتاحة للاختيار منها (اختياري)
    */
   accounts?: TelegramAccount[];
   /**
-   * معرف الحساب المختار افتراضياً
+   * معرف الحساب المختار افتراضياً (اختياري)
    */
   defaultSelectedId?: string | number;
   /**
-   * استدعاء عند الضغط على زر تسجيل الدخول بالحساب المختار
+   * استدعاء عند تسجيل الدخول (اختياري)
    */
   onLogin?: (selectedAccount: TelegramAccount) => void;
   /**
-   * استدعاء عند الضغط على "استخدام حساب آخر"
+   * استدعاء عند الضغط على حساب آخر (اختياري)
    */
   onUseAnotherAccount?: () => void;
   /**
@@ -48,35 +48,10 @@ interface TelegramLoginCardProps {
 }
 
 export const TelegramLoginCard: React.FC<TelegramLoginCardProps> = ({
-  accounts = [],
-  defaultSelectedId,
-  onLogin,
-  onUseAnotherAccount,
   widgetNode,
-  isAddingNew = false,
-  isLoading = false,
   errorMessage,
   onSwitchToEmail,
 }) => {
-  const [selectedId, setSelectedId] = useState<string | number>(
-    defaultSelectedId || (accounts.length > 0 ? accounts[0].id : '')
-  );
-
-  const selectedAccount =
-    accounts.find((acc) => String(acc.id) === String(selectedId)) || accounts[0];
-
-  const handleSelect = (account: TelegramAccount) => {
-    setSelectedId(account.id);
-  };
-
-  const handleConfirmLogin = () => {
-    if (selectedAccount && onLogin) {
-      onLogin(selectedAccount);
-    }
-  };
-
-  const hasAccounts = accounts.length > 0;
-
   return (
     <div
       dir="rtl"
@@ -94,7 +69,7 @@ export const TelegramLoginCard: React.FC<TelegramLoginCardProps> = ({
             تسجيل الدخول بتليجرام
           </h2>
           <p className="text-xs sm:text-sm text-slate-400 font-medium leading-relaxed max-w-xs mx-auto">
-            سيستلم الموقع اسمك ومعرّفك وصورة ملفك الشخصي.
+            سيستلم الموقع اسمك ومعرّفك وصورة ملفك الشخصي بأمان.
           </p>
         </div>
       </div>
@@ -107,131 +82,19 @@ export const TelegramLoginCard: React.FC<TelegramLoginCardProps> = ({
         </div>
       )}
 
-      {/* ================= 2. قائمة اختيار الحسابات (Radio Group) ================= */}
-      {hasAccounts && (
-        <div className="py-4 space-y-2.5">
-          <label className="block text-xs font-bold text-slate-400 px-1 mb-1">
-            اختر الحساب للمتابعة:
-          </label>
-
-          <div className="space-y-2.5" role="radiogroup" aria-label="حسابات تليجرام">
-            {accounts.map((account) => {
-              const isSelected = String(account.id) === String(selectedId);
-
-              return (
-                <div
-                  key={account.id}
-                  role="radio"
-                  aria-checked={isSelected}
-                  tabIndex={0}
-                  onClick={() => handleSelect(account)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      handleSelect(account);
-                    }
-                  }}
-                  className={`group flex items-center justify-between p-3.5 rounded-2xl border-2 transition-all duration-200 cursor-pointer ${
-                    isSelected
-                      ? 'bg-slate-800/90 border-sky-500 shadow-md shadow-sky-500/10 ring-2 ring-sky-500/20'
-                      : 'bg-slate-800/40 border-slate-700/70 hover:bg-slate-800 hover:border-slate-600'
-                  }`}
-                >
-                  {/* معلومات الحساب (صورة واسم ومعرّف) */}
-                  <div className="flex items-center gap-3.5 min-w-0">
-                    {/* صورة البروفايل الدائرية */}
-                    {account.photoUrl ? (
-                      <img
-                        src={account.photoUrl}
-                        alt={account.name}
-                        className={`w-11 h-11 rounded-full object-cover shrink-0 transition-transform duration-200 group-hover:scale-105 ${
-                          isSelected ? 'ring-2 ring-sky-400' : 'ring-1 ring-slate-600'
-                        }`}
-                      />
-                    ) : (
-                      <div
-                        className={`w-11 h-11 rounded-full bg-gradient-to-tr from-sky-600 to-blue-700 text-white font-black text-sm flex items-center justify-center shrink-0 shadow-inner ${
-                          isSelected ? 'ring-2 ring-sky-400' : 'ring-1 ring-slate-600'
-                        }`}
-                      >
-                        {account.name.charAt(0)}
-                      </div>
-                    )}
-
-                    {/* الاسم البارز والمعرّف */}
-                    <div className="min-w-0 flex flex-col text-right">
-                      <span className="text-sm font-black text-white group-hover:text-sky-300 transition-colors truncate">
-                        {account.name}
-                      </span>
-                      {account.username ? (
-                        <span className="text-xs text-sky-400 font-mono font-medium truncate" dir="ltr">
-                          @{account.username}
-                        </span>
-                      ) : (
-                        <span className="text-[11px] text-slate-400 font-mono">
-                          ID: {account.id}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* زر الاختيار الدائري (Custom Radio Button) */}
-                  <div
-                    className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-all duration-200 ${
-                      isSelected
-                        ? 'border-sky-500 bg-sky-500 shadow-xs'
-                        : 'border-slate-500 bg-transparent group-hover:border-slate-400'
-                    }`}
-                  >
-                    {isSelected && (
-                      <Check className="w-3.5 h-3.5 text-white stroke-[3]" />
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* ================= 3. زر التأكيد والدخول للحساب المختار ================= */}
-      {hasAccounts && selectedAccount && (
-        <div className="py-2">
-          <button
-            type="button"
-            onClick={handleConfirmLogin}
-            disabled={isLoading}
-            className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-sky-500 via-blue-600 to-sky-500 hover:from-sky-400 hover:via-blue-500 hover:to-sky-400 text-white font-black text-sm shadow-lg shadow-sky-600/30 hover:shadow-sky-600/40 hover:scale-[1.01] active:scale-95 transition-all duration-200 cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2"
-          >
-            {isLoading ? (
-              <span>جاري تسجيل الدخول...</span>
-            ) : (
-              <>
-                <span>متابعة كـ {selectedAccount.name}</span>
-                <Send className="w-4 h-4 fill-current -translate-x-0.5" />
-              </>
-            )}
-          </button>
-        </div>
-      )}
-
-      {/* الودجت الخاص بتسجيل الدخول بتليجرام */}
-      <div className="mb-4 p-4 rounded-2xl bg-slate-800/70 border border-slate-700 text-center space-y-3 animate-in fade-in duration-200">
-        <div className="flex items-center justify-center gap-1.5 text-sky-400 text-xs font-black">
-          <Sparkles className="w-4 h-4" />
-          <span>{hasAccounts ? 'أو تسجيل الدخول بزر تيليجرام' : 'تسجيل الدخول عبر تيليجرام'}</span>
-        </div>
-        <p className="text-[11px] text-slate-400">
+      {/* ================= 2. زر تسجيل الدخول عبر تيليجرام فقط ================= */}
+      <div className="my-5 p-5 rounded-2xl bg-slate-800/70 border border-slate-700 text-center space-y-3">
+        <p className="text-xs text-slate-300 font-medium leading-relaxed">
           اضغط على زر تيليجرام أدناه للمتابعة عبر البوت <strong className="text-sky-300 font-mono" dir="ltr">@Ra3d6_bot</strong>:
         </p>
-        <div className="flex justify-center items-center min-h-[46px] w-full">
+        <div className="flex justify-center items-center min-h-[46px] w-full pt-1">
           {widgetNode}
         </div>
       </div>
 
       {/* التبديل للدخول بالبريد الإلكتروني */}
       {onSwitchToEmail && (
-        <div className="mt-4 pt-3 border-t border-slate-700/60 text-center">
+        <div className="pt-3 border-t border-slate-700/60 text-center">
           <button
             type="button"
             onClick={onSwitchToEmail}
