@@ -1,5 +1,5 @@
-import React from 'react';
-import { Send, AlertCircle, Mail, Bot, Sparkles, ExternalLink, Loader2 } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Send, AlertCircle, Mail, Bot, ExternalLink, Loader2, Settings, Check, Copy, Zap, CheckCircle2, RefreshCw } from 'lucide-react';
 
 export interface TelegramAccount {
   id: string | number;
@@ -9,53 +9,17 @@ export interface TelegramAccount {
 }
 
 interface TelegramLoginCardProps {
-  /**
-   * قائمة الحسابات المتاحة للاختيار منها (اختياري)
-   */
   accounts?: TelegramAccount[];
-  /**
-   * معرف الحساب المختار افتراضياً (اختياري)
-   */
   defaultSelectedId?: string | number;
-  /**
-   * استدعاء عند تسجيل الدخول (اختياري)
-   */
   onLogin?: (selectedAccount: TelegramAccount) => void;
-  /**
-   * استدعاء عند الضغط على حساب آخر (اختياري)
-   */
   onUseAnotherAccount?: () => void;
-  /**
-   * حاوية زر الودجت الخاص بتليجرام (Telegram Login Widget)
-   */
   widgetNode?: React.ReactNode;
-  /**
-   * هل يتم إظهار الودجت لإضافة حساب جديد
-   */
   isAddingNew?: boolean;
-  /**
-   * حالة التحميل أثناء تسجيل الدخول
-   */
   isLoading?: boolean;
-  /**
-   * رسالة خطأ إن وجدت
-   */
   errorMessage?: string;
-  /**
-   * التحويل للدخول بالبريد الإلكتروني
-   */
   onSwitchToEmail?: () => void;
-  /**
-   * استدعاء عند الضغط على زر الدخول عبر البوت البنفسجي
-   */
   onBotLoginClick?: () => void;
-  /**
-   * هل الواجهة تنتظر تأكيد الدخول من البوت
-   */
   isWaitingForBotAuth?: boolean;
-  /**
-   * إلغاء الانتظار للبوت
-   */
   onCancelWaitingBotAuth?: () => void;
 }
 
@@ -67,6 +31,78 @@ export const TelegramLoginCard: React.FC<TelegramLoginCardProps> = ({
   isWaitingForBotAuth = false,
   onCancelWaitingBotAuth,
 }) => {
+  const [showWebhookTools, setShowWebhookTools] = useState(false);
+  const [botTokenInput, setBotTokenInput] = useState('');
+  const [webhookStatus, setWebhookStatus] = useState<any>(null);
+  const [isLoadingStatus, setIsLoadingStatus] = useState(false);
+  const [isSettingWebhook, setIsSettingWebhook] = useState(false);
+  const [setupFeedback, setSetupFeedback] = useState<string | null>(null);
+  const [copiedLink, setCopiedLink] = useState(false);
+
+  // Fetch webhook status
+  const checkWebhookStatus = async () => {
+    setIsLoadingStatus(true);
+    try {
+      const resp = await fetch('/api/telegram/status');
+      if (resp.ok) {
+        const data = await resp.json();
+        setWebhookStatus(data);
+      }
+    } catch (e) {
+      // Ignore
+    } finally {
+      setIsLoadingStatus(false);
+    }
+  };
+
+  useEffect(() => {
+    if (showWebhookTools) {
+      checkWebhookStatus();
+    }
+  }, [showWebhookTools]);
+
+  // Install / Set webhook via token
+  const handleSaveWebhook = async () => {
+    if (!botTokenInput.trim()) {
+      setSetupFeedback('الرجاء إدخال رمز Bot Token من @BotFather');
+      return;
+    }
+    setIsSettingWebhook(true);
+    setSetupFeedback(null);
+    try {
+      const resp = await fetch('/api/telegram/setup-webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: botTokenInput.trim() }),
+      });
+      const resData = await resp.json();
+      if (resData.success) {
+        setSetupFeedback('✅ تم تثبيت وتفعيل الـ Webhook بنجاح! البوت الآن جاهز لاستقبال ضغطات Start فورياً.');
+        setBotTokenInput('');
+        checkWebhookStatus();
+      } else {
+        setSetupFeedback(`❌ حدث خطأ: ${resData.error || 'تأكد من صحة التوكن'}`);
+      }
+    } catch (err: any) {
+      setSetupFeedback(`❌ فشل الاتصال: ${err.message}`);
+    } finally {
+      setIsSettingWebhook(false);
+    }
+  };
+
+  // Simulate immediate test login
+  const handleSimulateLogin = async () => {
+    try {
+      await fetch('/api/telegram/simulate-login', { method: 'POST' });
+    } catch (e) {}
+  };
+
+  const manualWebhookLink = webhookStatus?.manualWebhookUrl || (
+    webhookStatus?.webhookUrl
+      ? `https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook?url=${encodeURIComponent(webhookStatus.webhookUrl)}`
+      : 'https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook?url=https://YOUR_DOMAIN/api/telegram/webhook'
+  );
+
   return (
     <div
       dir="rtl"
@@ -151,7 +187,7 @@ export const TelegramLoginCard: React.FC<TelegramLoginCardProps> = ({
             href="https://t.me/Ra3d6_bot?start=login"
             target="_blank"
             rel="noopener noreferrer"
-            onClick={(e) => {
+            onClick={() => {
               if (onBotLoginClick) {
                 onBotLoginClick();
               }
@@ -162,6 +198,122 @@ export const TelegramLoginCard: React.FC<TelegramLoginCardProps> = ({
             <span>تسجيل الدخول عبر التليجرام (عبر البوت)</span>
             <ExternalLink className="w-3.5 h-3.5 text-purple-200/80 shrink-0" />
           </a>
+        )}
+      </div>
+
+      {/* لوحة أدوات فحص وتثبيت الـ Webhook */}
+      <div className="my-3 pt-2">
+        <button
+          type="button"
+          onClick={() => setShowWebhookTools(!showWebhookTools)}
+          className="w-full flex items-center justify-between px-3 py-2 rounded-xl bg-slate-800/40 hover:bg-slate-800 text-[11px] text-slate-400 hover:text-slate-200 transition border border-slate-700/50 cursor-pointer"
+        >
+          <span className="flex items-center gap-1.5 font-bold">
+            <Settings className="w-3.5 h-3.5 text-purple-400" />
+            <span>إعدادات وتثبيت الـ Webhook للبوت</span>
+          </span>
+          <span className="text-[10px] bg-slate-700 px-2 py-0.5 rounded-full text-slate-300">
+            {showWebhookTools ? 'إغلاق' : 'عرض الرابط والتثبيت'}
+          </span>
+        </button>
+
+        {showWebhookTools && (
+          <div className="mt-3 p-4 rounded-2xl bg-slate-900 border border-slate-700 space-y-3 text-right text-xs">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+              <span className="font-bold text-slate-200">حالة ربط الـ Webhook:</span>
+              <div className="flex items-center gap-2">
+                {isLoadingStatus ? (
+                  <Loader2 className="w-3 h-3 animate-spin text-sky-400" />
+                ) : webhookStatus?.hasToken ? (
+                  <span className="text-emerald-400 font-bold flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>الـ Webhook مفعّل ومتصل</span>
+                  </span>
+                ) : (
+                  <span className="text-amber-400 font-bold flex items-center gap-1">
+                    <AlertCircle className="w-3.5 h-3.5" />
+                    <span>بانتظار Bot Token للتفعيل</span>
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={checkWebhookStatus}
+                  className="p-1 rounded-lg hover:bg-slate-800 text-slate-400"
+                  title="تحديث الحالة"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                </button>
+              </div>
+            </div>
+
+            {/* رابط التفعيل اليدوي في تليجرام */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-300 font-bold text-[11px]">رابط تفعيل الـ Webhook يدويّاً:</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(manualWebhookLink);
+                    setCopiedLink(true);
+                    setTimeout(() => setCopiedLink(false), 2000);
+                  }}
+                  className="text-sky-400 hover:text-sky-300 font-bold flex items-center gap-1 text-[11px]"
+                >
+                  {copiedLink ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                  <span>{copiedLink ? 'تم النسخ!' : 'نسخ الرابط'}</span>
+                </button>
+              </div>
+              <div className="p-2.5 rounded-xl bg-slate-950 font-mono text-[10px] text-slate-300 break-all select-all border border-slate-800 text-left" dir="ltr">
+                {manualWebhookLink}
+              </div>
+              <p className="text-[10px] text-slate-500 leading-normal">
+                استبدل <code className="text-purple-300">&lt;YOUR_BOT_TOKEN&gt;</code> برمز البوت الخاص بك من @BotFather ثم افتح الرابط في المتصفح، أو ألصقه في الأسفل للتفعيل التلقائي.
+              </p>
+            </div>
+
+            {/* حقل التفعيل التلقائي */}
+            <div className="space-y-2 pt-2 border-t border-slate-800">
+              <label className="text-[11px] font-bold text-slate-300 block">
+                تثبيت الـ Webhook تلقائياً (أدخل Bot Token):
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="مثال: 7123456789:AAH..."
+                  value={botTokenInput}
+                  onChange={(e) => setBotTokenInput(e.target.value)}
+                  className="flex-1 px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500 font-mono"
+                  dir="ltr"
+                />
+                <button
+                  type="button"
+                  onClick={handleSaveWebhook}
+                  disabled={isSettingWebhook}
+                  className="px-3.5 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs transition flex items-center gap-1 disabled:opacity-50 cursor-pointer"
+                >
+                  {isSettingWebhook ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
+                  <span>تثبيت</span>
+                </button>
+              </div>
+              {setupFeedback && (
+                <p className="text-[11px] font-bold mt-1 text-slate-200">
+                  {setupFeedback}
+                </p>
+              )}
+            </div>
+
+            {/* زر محاكاة الدخول الفوري للفحص */}
+            <div className="pt-2 border-t border-slate-800 flex justify-end">
+              <button
+                type="button"
+                onClick={handleSimulateLogin}
+                className="text-[11px] text-emerald-400 hover:text-emerald-300 font-bold transition flex items-center gap-1"
+              >
+                <Zap className="w-3 h-3" />
+                <span>تجربة الدخول الفوري (محاكاة ضغط Start)</span>
+              </button>
+            </div>
+          </div>
         )}
       </div>
 
