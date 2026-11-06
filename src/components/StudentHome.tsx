@@ -76,7 +76,7 @@ import { ErrorBoundary } from './ErrorBoundary';
 import { CertificateModal } from './CertificateModal';
 import { SmartVideoPlayer } from './SmartVideoPlayer';
 import { StudentProfileDropdown } from './StudentProfileDropdown';
-import { getEffectiveCourseTheme } from '../utils/courseThemes';
+import { getEffectiveCourseTheme, getLinkedExamCardTheme, getLinkedFileCardTheme } from '../utils/courseThemes';
 
 interface StudentHomeProps {
   currentUser: StudentUser;
@@ -677,6 +677,15 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
   }, [currentThemeColor, systemSettings.activeTheme]);
 
   const activeTheme = effectiveTheme;
+
+  const linkedExamTheme = useMemo(
+    () => getLinkedExamCardTheme(currentThemeColor, isDarkMode),
+    [currentThemeColor, isDarkMode]
+  );
+  const linkedFileTheme = useMemo(
+    () => getLinkedFileCardTheme(currentThemeColor, isDarkMode),
+    [currentThemeColor, isDarkMode]
+  );
 
   // Performance Optimization: Memoize filtered and sorted lists strictly for active course
   const courseSections = useMemo(() => {
@@ -2167,33 +2176,25 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                         {linkedExams.map((linkedEx) => (
                           <div
                             key={linkedEx.id}
-                            className={`rounded-3xl p-5 md:p-6 border-2 shadow-xl transition-all flex flex-col justify-between space-y-4 group relative overflow-hidden ${
-                              isDarkMode
-                                ? 'bg-gradient-to-br from-amber-950/80 via-slate-900 to-amber-900/50 border-amber-500/90 hover:border-amber-400 shadow-amber-500/15'
-                                : 'bg-gradient-to-br from-amber-50 via-white to-amber-50/60 border-amber-500 hover:border-amber-600 shadow-amber-500/10'
-                            }`}
+                            className={`rounded-3xl p-5 md:p-6 border-2 shadow-xl transition-all flex flex-col justify-between space-y-4 group relative overflow-hidden ${linkedExamTheme.cardBg}`}
                           >
                             <div className="flex items-center justify-between gap-2">
-                              <span className="px-3 py-1 rounded-full text-xs font-black bg-amber-500/20 text-amber-500 border border-amber-500/40 flex items-center gap-1.5 shadow-sm">
-                                <Award className="w-3.5 h-3.5 text-amber-500" />
+                              <span className={`px-3 py-1 rounded-full text-xs font-black ${linkedExamTheme.badgeBg} ${linkedExamTheme.badgeText} border ${linkedExamTheme.badgeBorder} flex items-center gap-1.5 shadow-sm`}>
+                                <Award className={`w-3.5 h-3.5 ${linkedExamTheme.iconColor}`} />
                                 <span>اختبار تفاعلي مربوط 📝</span>
                               </span>
-                              <span className={`text-[11px] font-mono font-black px-2.5 py-0.5 rounded-lg border ${
-                                isDarkMode
-                                  ? 'text-amber-400 bg-black/40 border-amber-500/20'
-                                  : 'text-amber-900 bg-amber-100 border-amber-300'
-                              }`}>
+                              <span className={`text-[11px] font-mono font-black px-2.5 py-0.5 rounded-lg border ${linkedExamTheme.targetBadge}`}>
                                 الهدف: %{linkedEx.targetPercentage || 90}
                               </span>
                             </div>
 
                             <div className="space-y-2">
-                              <div className={`text-[11px] font-black ${isDarkMode ? 'text-amber-400/90' : 'text-amber-800'}`}>
+                              <div className={`text-[11px] font-black ${linkedExamTheme.label}`}>
                                 اسم الاختبار:
                               </div>
                               <h4 className={`text-lg md:text-xl font-black transition-colors leading-snug ${
-                                isDarkMode ? 'text-white group-hover:text-amber-300' : 'text-slate-950 group-hover:text-amber-800'
-                              }`}>
+                                isDarkMode ? 'text-white' : 'text-slate-950'
+                              } ${linkedExamTheme.titleHover}`}>
                                 {linkedEx.title}
                               </h4>
                               {linkedEx.description && (
@@ -2201,9 +2202,7 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                                   {linkedEx.description}
                                 </p>
                               )}
-                              <div className={`flex items-center gap-3 pt-1 text-xs font-bold ${
-                                isDarkMode ? 'text-amber-400' : 'text-amber-800'
-                              }`}>
+                              <div className={`flex items-center gap-3 pt-1 text-xs font-bold ${linkedExamTheme.info}`}>
                                 <span className="flex items-center gap-1">
                                   <HelpCircle className="w-3.5 h-3.5" />
                                   <span>{linkedEx.questions?.length || 0} أسئلة</span>
@@ -2219,9 +2218,9 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                             <button
                               type="button"
                               onClick={() => handleOpenExamPrompt(linkedEx)}
-                              className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-xs md:text-sm shadow-lg shadow-amber-500/30 transition-all flex items-center justify-center gap-2 cursor-pointer hover:scale-[1.01] active:scale-[0.99]"
+                              className={`w-full py-3.5 px-4 rounded-2xl ${linkedExamTheme.button} font-black text-xs md:text-sm transition-all flex items-center justify-center gap-2 cursor-pointer hover:scale-[1.01] active:scale-[0.99]`}
                             >
-                              <Zap className="w-4 h-4 fill-slate-950" />
+                              <Zap className="w-4 h-4" />
                               <span>بدأ الاختبار الآن ⚡</span>
                             </button>
                           </div>
@@ -2233,33 +2232,25 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                           return (
                             <div
                               key={linkedFl.id}
-                              className={`rounded-3xl p-5 md:p-6 border-2 shadow-xl transition-all flex flex-col justify-between space-y-4 group relative overflow-hidden ${
-                                isDarkMode
-                                  ? 'bg-gradient-to-br from-emerald-950/80 via-slate-900 to-teal-900/50 border-emerald-500/90 hover:border-emerald-400 shadow-emerald-500/15'
-                                  : 'bg-gradient-to-br from-emerald-50 via-white to-teal-50/60 border-emerald-500 hover:border-emerald-600 shadow-emerald-500/10'
-                              }`}
+                              className={`rounded-3xl p-5 md:p-6 border-2 shadow-xl transition-all flex flex-col justify-between space-y-4 group relative overflow-hidden ${linkedFileTheme.cardBg}`}
                             >
                               <div className="flex items-center justify-between gap-2">
-                                <span className="px-3 py-1 rounded-full text-xs font-black bg-emerald-500/20 text-emerald-500 border border-emerald-500/40 flex items-center gap-1.5 shadow-sm">
-                                  <FileText className="w-3.5 h-3.5 text-emerald-500" />
+                                <span className={`px-3 py-1 rounded-full text-xs font-black ${linkedFileTheme.badgeBg} ${linkedFileTheme.badgeText} border ${linkedFileTheme.badgeBorder} flex items-center gap-1.5 shadow-sm`}>
+                                  <FileText className={`w-3.5 h-3.5 ${linkedFileTheme.iconColor}`} />
                                   <span>ملف ملخص مربوط 📁</span>
                                 </span>
-                                <span className={`text-[11px] font-mono font-black px-2.5 py-0.5 rounded-lg border ${
-                                  isDarkMode
-                                    ? 'text-emerald-400 bg-black/40 border-emerald-500/20'
-                                    : 'text-emerald-900 bg-emerald-100 border-emerald-300'
-                                }`}>
+                                <span className={`text-[11px] font-mono font-black px-2.5 py-0.5 rounded-lg border ${linkedFileTheme.targetBadge}`}>
                                   {linkedFl.fileSize || 'ملف PDF'}
                                 </span>
                               </div>
 
                               <div className="space-y-2">
-                                <div className={`text-[11px] font-black ${isDarkMode ? 'text-emerald-400/90' : 'text-emerald-800'}`}>
+                                <div className={`text-[11px] font-black ${linkedFileTheme.label}`}>
                                   اسم الملف المرفق:
                                 </div>
                                 <h4 className={`text-lg md:text-xl font-black transition-colors leading-snug ${
-                                  isDarkMode ? 'text-white group-hover:text-emerald-300' : 'text-slate-950 group-hover:text-emerald-800'
-                                }`}>
+                                  isDarkMode ? 'text-white' : 'text-slate-950'
+                                } ${linkedFileTheme.titleHover}`}>
                                   {linkedFl.title || linkedFl.fileName || 'ملف الشرح والملخص'}
                                 </h4>
                                 {linkedFl.description ? (
@@ -2271,9 +2262,7 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                                     ملف ومستند مرفق ومربوط مع هذا الفيديو للمذاكرة والمراجعة الشاملة.
                                   </p>
                                 )}
-                                <div className={`flex items-center gap-3 pt-1 text-xs font-bold ${
-                                  isDarkMode ? 'text-emerald-400' : 'text-emerald-800'
-                                }`}>
+                                <div className={`flex items-center gap-3 pt-1 text-xs font-bold ${linkedFileTheme.info}`}>
                                   <span className="flex items-center gap-1">
                                     <CheckCircle className="w-3.5 h-3.5" />
                                     <span>جاهز للانتقال والتحميل الفوري</span>
@@ -2287,7 +2276,7 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                                     href={fileLink}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="flex-1 py-3.5 px-4 rounded-2xl bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500 hover:from-emerald-400 hover:to-teal-300 text-slate-950 font-black text-xs md:text-sm shadow-lg shadow-emerald-500/30 transition-all flex items-center justify-center gap-2 cursor-pointer hover:scale-[1.01] active:scale-[0.99]"
+                                    className={`flex-1 py-3.5 px-4 rounded-2xl ${linkedFileTheme.button} font-black text-xs md:text-sm transition-all flex items-center justify-center gap-2 cursor-pointer hover:scale-[1.01] active:scale-[0.99]`}
                                   >
                                     <FileText className="w-4 h-4" />
                                     <span>الانتقال للملف وفتحه 📁</span>
@@ -2306,8 +2295,8 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                                     download={linkedFl.fileName || 'document.pdf'}
                                     className={`p-3.5 rounded-2xl border transition shrink-0 cursor-pointer shadow-md ${
                                       isDarkMode
-                                        ? 'bg-slate-800 hover:bg-slate-700 text-emerald-400 border-emerald-500/40'
-                                        : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-300'
+                                        ? `bg-slate-800 hover:bg-slate-700 ${linkedFileTheme.iconColor} ${linkedFileTheme.badgeBorder}`
+                                        : `bg-slate-50 hover:bg-slate-100 ${linkedFileTheme.iconColor} ${linkedFileTheme.badgeBorder}`
                                     }`}
                                     title="تحميل الملف للجهاز"
                                   >

@@ -29,6 +29,7 @@ import { BrandLogo } from './BrandLogo';
 import { CertificateModal } from './CertificateModal';
 import { PlatformFooter } from './PlatformFooter';
 import { StudentProfileDropdown } from './StudentProfileDropdown';
+import { getEnterPlatformButtonClass } from '../utils/courseThemes';
 
 interface CoursesPortalProps {
   currentUser: StudentUser;
@@ -762,7 +763,7 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
                         <button
                           type="button"
                           onClick={() => onSelectCourse(course)}
-                          className="w-full py-3.5 sm:py-4 px-4 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs sm:text-sm shadow-lg shadow-emerald-600/25 transition flex items-center justify-center gap-2 cursor-pointer"
+                          className={`w-full py-3.5 sm:py-4 px-4 rounded-2xl font-black text-xs sm:text-sm transition flex items-center justify-center gap-2 cursor-pointer ${getEnterPlatformButtonClass(currentThemeColor)}`}
                         >
                           <Zap className="w-4 h-4" />
                           <span>دخول لمحتوى المنصة ⚡</span>
@@ -899,7 +900,7 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
                             }}
                             className={`w-full py-3.5 sm:py-4 px-4 rounded-2xl text-white font-black text-xs sm:text-sm shadow-md transition flex items-center justify-center gap-2 cursor-pointer ${
                               isEnrolled
-                                ? 'bg-emerald-600 hover:bg-emerald-500'
+                                ? getEnterPlatformButtonClass(currentThemeColor)
                                 : course.isLocked
                                 ? 'bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 shadow-amber-600/25'
                                 : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 shadow-blue-600/25'
