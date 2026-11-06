@@ -264,7 +264,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
     }
   };
 
-  // Handle Click on the new Purple Bot Login Button: "تسجيل الدخول عبر التليجرام (عبر البوت)"
+  // Handle Telegram login authentication
   const handleBotLoginClick = () => {
     setError('');
     const sessionId = 'tg_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
