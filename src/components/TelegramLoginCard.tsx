@@ -1,5 +1,5 @@
 import React from 'react';
-import { Send, AlertCircle, Mail } from 'lucide-react';
+import { Send, AlertCircle, Mail, Bot, Sparkles, ExternalLink, Loader2 } from 'lucide-react';
 
 export interface TelegramAccount {
   id: string | number;
@@ -45,12 +45,27 @@ interface TelegramLoginCardProps {
    * التحويل للدخول بالبريد الإلكتروني
    */
   onSwitchToEmail?: () => void;
+  /**
+   * استدعاء عند الضغط على زر الدخول عبر البوت البنفسجي
+   */
+  onBotLoginClick?: () => void;
+  /**
+   * هل الواجهة تنتظر تأكيد الدخول من البوت
+   */
+  isWaitingForBotAuth?: boolean;
+  /**
+   * إلغاء الانتظار للبوت
+   */
+  onCancelWaitingBotAuth?: () => void;
 }
 
 export const TelegramLoginCard: React.FC<TelegramLoginCardProps> = ({
   widgetNode,
   errorMessage,
   onSwitchToEmail,
+  onBotLoginClick,
+  isWaitingForBotAuth = false,
+  onCancelWaitingBotAuth,
 }) => {
   return (
     <div
@@ -69,7 +84,7 @@ export const TelegramLoginCard: React.FC<TelegramLoginCardProps> = ({
             تسجيل الدخول بتليجرام
           </h2>
           <p className="text-xs sm:text-sm text-slate-400 font-medium leading-relaxed max-w-xs mx-auto">
-            سيستلم الموقع اسمك ومعرّفك وصورة ملفك الشخصي بأمان.
+            اختر الطريقة الأنسب لك لتسجيل الدخول الفوري بأمان عبر تيليجرام.
           </p>
         </div>
       </div>
@@ -82,14 +97,72 @@ export const TelegramLoginCard: React.FC<TelegramLoginCardProps> = ({
         </div>
       )}
 
-      {/* ================= 2. زر تسجيل الدخول عبر تيليجرام فقط ================= */}
-      <div className="my-5 p-5 rounded-2xl bg-slate-800/70 border border-slate-700 text-center space-y-3">
+      {/* ================= 2. منطقة أزرار الدخول عبر تيليجرام ================= */}
+      <div className="my-5 p-5 rounded-2xl bg-slate-800/70 border border-slate-700 text-center space-y-3.5">
         <p className="text-xs text-slate-300 font-medium leading-relaxed">
-          اضغط على زر تيليجرام أدناه للمتابعة عبر البوت <strong className="text-sky-300 font-mono" dir="ltr">@Ra3d6_bot</strong>:
+          1. الزر الأساسي المباشر عبر البوت <strong className="text-sky-300 font-mono" dir="ltr">@Ra3d6_bot</strong>:
         </p>
-        <div className="flex justify-center items-center min-h-[46px] w-full pt-1">
+
+        {/* الزر الأساسي لتسجيل الدخول بتليجرام */}
+        <div className="flex justify-center items-center min-h-[46px] w-full pt-0.5">
           {widgetNode}
         </div>
+
+        {/* خط فاصل أنيق بين الزر الأساسي والزر الجديد */}
+        <div className="relative flex py-1 items-center">
+          <div className="flex-grow border-t border-slate-700"></div>
+          <span className="flex-shrink mx-3 text-[11px] text-slate-400 font-bold">أو مباشرة</span>
+          <div className="flex-grow border-t border-slate-700"></div>
+        </div>
+
+        {/* ================= الزر البنفسجي الجديد المطلوب: تسجيل الدخول عبر التليجرام (عبر البوت) ================= */}
+        {isWaitingForBotAuth ? (
+          <div className="p-4 rounded-2xl bg-purple-950/50 border-2 border-purple-500/60 text-center space-y-2.5 animate-in fade-in duration-200">
+            <div className="flex items-center justify-center gap-2 text-purple-300 font-black text-xs sm:text-sm">
+              <Loader2 className="w-4 h-4 animate-spin text-purple-400" />
+              <span>جاري انتظار ضغطك على (ابدأ / Start) في شات البوت... ⏳</span>
+            </div>
+            <p className="text-[11px] text-purple-200/80 leading-relaxed">
+              افتح شات البوت واضغط زر <strong>Start</strong> أو <strong>ابدأ</strong>، وسيتم نقلك للوحة التحكم تلقائياً دون كتابة أي أرقام!
+            </p>
+            <div className="flex items-center justify-center gap-2 pt-1">
+              <a
+                href="https://t.me/Ra3d6_bot?start=login"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-black text-xs transition inline-flex items-center gap-1 shadow-md"
+              >
+                <span>فتح شات البوت مجدداً</span>
+                <ExternalLink className="w-3 h-3" />
+              </a>
+              {onCancelWaitingBotAuth && (
+                <button
+                  type="button"
+                  onClick={onCancelWaitingBotAuth}
+                  className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition"
+                >
+                  إلغاء
+                </button>
+              )}
+            </div>
+          </div>
+        ) : (
+          <a
+            href="https://t.me/Ra3d6_bot?start=login"
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => {
+              if (onBotLoginClick) {
+                onBotLoginClick();
+              }
+            }}
+            className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-purple-600 via-violet-600 to-indigo-600 hover:from-purple-500 hover:via-violet-500 hover:to-indigo-500 text-white font-black text-xs sm:text-sm shadow-xl shadow-purple-600/30 hover:shadow-purple-600/50 hover:scale-[1.01] active:scale-95 transition-all duration-200 cursor-pointer flex items-center justify-center gap-2.5 border border-purple-400/40"
+          >
+            <Bot className="w-4 h-4 text-purple-200 shrink-0" />
+            <span>تسجيل الدخول عبر التليجرام (عبر البوت)</span>
+            <ExternalLink className="w-3.5 h-3.5 text-purple-200/80 shrink-0" />
+          </a>
+        )}
       </div>
 
       {/* التبديل للدخول بالبريد الإلكتروني */}

@@ -158,9 +158,27 @@
         "createdAt": { "type": "string" }
       },
       "required": ["id", "title"]
+    },
+    "TelegramLoginSession": {
+      "title": "TelegramLoginSession",
+      "description": "Realtime authentication session initiated via Telegram Bot login",
+      "type": "object",
+      "properties": {
+        "sessionId": { "type": "string" },
+        "status": { "type": "string" },
+        "telegramId": { "type": "number" },
+        "user": { "type": "object" },
+        "createdAt": { "type": "string" },
+        "authenticatedAt": { "type": "string" }
+      },
+      "required": ["sessionId", "status"]
     }
   },
   "firestore": {
+    "/telegram_login_sessions/{sessionId}": {
+      "schema": { "$ref": "TelegramLoginSession" },
+      "description": "Sessions paired with Telegram Bot start commands"
+    },
     "/courses/{courseId}": {
       "schema": { "$ref": "Course" },
       "description": "Educational courses"

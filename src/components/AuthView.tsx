@@ -32,7 +32,8 @@ import {
   doc,
   setDoc,
   addDoc,
-  updateDoc
+  updateDoc,
+  onSnapshot
 } from 'firebase/firestore';
 import { PlatformFooter } from './PlatformFooter';
 
@@ -84,6 +85,8 @@ export const AuthView: React.FC<AuthViewProps> = ({
   const [loading, setLoading] = useState(false);
   const [telegramLoading, setTelegramLoading] = useState(false);
   const [error, setError] = useState('');
+  const [isWaitingForBotAuth, setIsWaitingForBotAuth] = useState(false);
+  const [activeBotSessionId, setActiveBotSessionId] = useState<string>('');
   const telegramContainerRef = useRef<HTMLDivElement>(null);
 
   // Handle Telegram Authentication Callback from Widget
@@ -260,6 +263,87 @@ export const AuthView: React.FC<AuthViewProps> = ({
       setTelegramLoading(false);
     }
   };
+
+  // Handle Click on the new Purple Bot Login Button: "تسجيل الدخول عبر التليجرام (عبر البوت)"
+  const handleBotLoginClick = () => {
+    setError('');
+    const sessionId = 'tg_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
+    setActiveBotSessionId(sessionId);
+    setIsWaitingForBotAuth(true);
+
+    // 1. Notify server of pending session
+    fetch('/api/telegram/register-pending-session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId }),
+    }).catch(() => {});
+
+    // 2. Set pending doc in Firestore
+    try {
+      setDoc(doc(db, 'telegram_login_sessions', sessionId), {
+        sessionId,
+        status: 'pending',
+        createdAt: new Date().toISOString(),
+      }).catch(() => {});
+    } catch (e) {}
+  };
+
+  // Listen and Poll for Telegram Bot Authentication confirmation
+  useEffect(() => {
+    if (!isWaitingForBotAuth || !activeBotSessionId) return;
+
+    let isDone = false;
+
+    const handleLoginComplete = (authenticatedUser: any) => {
+      if (isDone) return;
+      isDone = true;
+      setIsWaitingForBotAuth(false);
+
+      try {
+        localStorage.setItem('raad_student_auth_session', JSON.stringify(authenticatedUser));
+        localStorage.setItem('raad_student_session', JSON.stringify(authenticatedUser));
+      } catch (e) {}
+
+      onSuccessAuth(authenticatedUser);
+    };
+
+    // 1. Real-time Firestore snapshot listener on the session document
+    const unsubSession = onSnapshot(
+      doc(db, 'telegram_login_sessions', activeBotSessionId),
+      (snap) => {
+        if (isDone) return;
+        if (snap.exists()) {
+          const data = snap.data();
+          if (data.status === 'authenticated' && data.user) {
+            handleLoginComplete(data.user);
+          }
+        }
+      },
+      (err) => {
+        console.warn('Telegram session snapshot listener notice:', err);
+      }
+    );
+
+    // 2. Secondary HTTP polling fallback every 1200ms
+    const interval = setInterval(async () => {
+      if (isDone) return;
+      try {
+        const resp = await fetch(`/api/telegram/check-session?sessionId=${encodeURIComponent(activeBotSessionId)}`);
+        if (resp.ok) {
+          const result = await resp.json();
+          if (result.authenticated && result.user) {
+            handleLoginComplete(result.user);
+          }
+        }
+      } catch (e) {}
+    }, 1200);
+
+    return () => {
+      isDone = true;
+      clearInterval(interval);
+      unsubSession();
+    };
+  }, [isWaitingForBotAuth, activeBotSessionId, onSuccessAuth]);
 
   // Mount Telegram Login Widget
   useEffect(() => {
@@ -670,6 +754,9 @@ export const AuthView: React.FC<AuthViewProps> = ({
                   isAddingNew={isAddingNewTelegram}
                   isLoading={telegramLoading}
                   errorMessage={error}
+                  onBotLoginClick={handleBotLoginClick}
+                  isWaitingForBotAuth={isWaitingForBotAuth}
+                  onCancelWaitingBotAuth={() => setIsWaitingForBotAuth(false)}
                   widgetNode={
                     telegramLoading ? (
                       <div className="flex items-center gap-2 py-2 px-4 rounded-xl bg-sky-500/10 border border-sky-500/30 text-sky-400 text-xs font-black animate-pulse">
