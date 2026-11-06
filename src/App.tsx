@@ -229,7 +229,9 @@ export default function App() {
   const handleStudentLogout = () => {
     try {
       localStorage.removeItem(STUDENT_SESSION_KEY);
+      localStorage.removeItem(COURSE_THEME_STORAGE_KEY);
     } catch (e) {}
+    setCourseThemeColor('default');
     setCurrentUser(null);
     setActiveCourse(null);
   };
@@ -242,6 +244,15 @@ export default function App() {
     setCurrentUser(user);
     // Student always starts on the Courses Portal per request
     setActiveCourse(null);
+
+    // Ensure every new account starts with 'default', or loads their own saved choice
+    const userColor = (user.preferredThemeColor && ['default', 'red', 'green', 'blue', 'purple', 'pink'].includes(user.preferredThemeColor))
+      ? user.preferredThemeColor
+      : 'default';
+    setCourseThemeColor(userColor);
+    try {
+      localStorage.setItem(COURSE_THEME_STORAGE_KEY, userColor);
+    } catch (e) {}
   };
 
   // Course activation handler
@@ -275,24 +286,32 @@ export default function App() {
   };
 
   const [courseThemeColor, setCourseThemeColor] = useState<CourseThemeColor>(() => {
+    if (currentUser?.preferredThemeColor && ['default', 'red', 'green', 'blue', 'purple', 'pink'].includes(currentUser.preferredThemeColor)) {
+      return currentUser.preferredThemeColor as CourseThemeColor;
+    }
     try {
       const saved = localStorage.getItem(COURSE_THEME_STORAGE_KEY);
       if (saved && ['default', 'red', 'green', 'blue', 'purple', 'pink'].includes(saved)) {
         return saved as CourseThemeColor;
       }
     } catch (e) {}
-    return (currentUser?.preferredThemeColor as CourseThemeColor) || 'default';
+    return 'default';
   });
 
-  // Sync preferredThemeColor if updated in user document
+  // Sync preferredThemeColor if updated in user document or on user change
   useEffect(() => {
-    if (currentUser?.preferredThemeColor && ['default', 'red', 'green', 'blue', 'purple', 'pink'].includes(currentUser.preferredThemeColor)) {
-      setCourseThemeColor(currentUser.preferredThemeColor as CourseThemeColor);
+    if (currentUser) {
+      const userColor = (currentUser.preferredThemeColor && ['default', 'red', 'green', 'blue', 'purple', 'pink'].includes(currentUser.preferredThemeColor))
+        ? currentUser.preferredThemeColor
+        : 'default';
+      setCourseThemeColor(userColor);
       try {
-        localStorage.setItem(COURSE_THEME_STORAGE_KEY, currentUser.preferredThemeColor);
+        localStorage.setItem(COURSE_THEME_STORAGE_KEY, userColor);
       } catch (e) {}
+    } else {
+      setCourseThemeColor('default');
     }
-  }, [currentUser?.preferredThemeColor]);
+  }, [currentUser?.id, currentUser?.preferredThemeColor]);
 
   const handleSelectCourseThemeColor = async (color: CourseThemeColor) => {
     setCourseThemeColor(color);

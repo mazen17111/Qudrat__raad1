@@ -159,6 +159,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
           totalExamsTaken: 0,
           averageScore: 0,
           enrolledCourseIds: [],
+          preferredThemeColor: 'default',
           createdAt: new Date().toISOString(),
           lastLoginAt: new Date().toISOString(),
         };
@@ -443,6 +444,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
           totalExamsTaken: 0,
           averageScore: 0,
           enrolledCourseIds: [],
+          preferredThemeColor: 'default',
           createdAt: new Date().toISOString(),
         };
 
