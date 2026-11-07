@@ -30,8 +30,11 @@ import {
   BookOpen,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { StudentUser, ExamQuestion, FolderItem } from '../types';
+import { StudentUser, ExamQuestion, FolderItem, ExamSystemType } from '../types';
 import { Whiteboard } from './Whiteboard';
+import { NimrExamSystem } from './systems/NimrExamSystem';
+import { DefaultExamSystem } from './systems/DefaultExamSystem';
+import { BlueExamSystem } from './systems/BlueExamSystem';
 import { db } from '../firebase';
 import {
   transferMistakeImmediately,
@@ -66,7 +69,7 @@ interface ExamRunnerProps {
   onFinishExam: () => void;
   onExit: () => void;
   isTimedInitial?: boolean;
-  examSystem?: 'nimr' | 'standard';
+  examSystem?: ExamSystemType;
   durationMinutes?: number;
   targetPercentage?: number;
   isDarkMode?: boolean;
@@ -145,8 +148,8 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
   const [isTimed] = useState(isTimedInitial);
   const [showMobileQuestionsList, setShowMobileQuestionsList] = useState(false);
 
-  // Exam system mode: 'nimr' (Tiger Qiyas layout) or 'standard' (Platform layout)
-  const [systemMode, setSystemMode] = useState<'nimr' | 'standard'>(examSystem || 'nimr');
+  // Exam system mode: 'nimr' | 'standard' | 'blue'
+  const [systemMode, setSystemMode] = useState<ExamSystemType>(examSystem || 'nimr');
 
   useEffect(() => {
     if (examSystem) {
@@ -539,8 +542,10 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
         await addDoc(collection(db, 'exam_attempts'), {
           userId: currentUser.id,
           studentName: currentUser.name || 'طالب',
+          studentNationalId: nationalId,
           examId: examId,
           examTitle: examTitle,
+          examSystem: systemMode,
           score,
           totalQuestions: total,
           percentage,
@@ -1201,771 +1206,107 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
   // Calculate progress percent
   const progressPercent = Math.round(((currentIdx + 1) / safeQuestions.length) * 100);
 
-  // ================= 5. NIKR (TIGER) EXAM SYSTEM VIEW (نظام نمر - محاكي قياس) =================
-  // تصميم ونظام محاكي قياس المطابق للكود المطلوب:
-  // - هيدر علوي بلون #00a59a مع شعار قياس والتاريخ وعنوان الاختبار وزر الخروج
-  // - الشريط الجانبي (sidebar) بعرض 280px: بطاقة الوقت، بطاقة بيانات الطالب (الاسم ورقم الهوية)، بطاقة القسم والإحصائيات والشبكة 6 أعمدة والأزرار
-  // - منطقة عرض السؤال (content-area): رقم السؤال، صورة السؤال، الاختيارات الأربعة، تمييز السؤال للمراجعة، وزر حفظ والتالي
-  function renderNimrView() {
-    const unvisitedCount = Math.max(0, safeQuestions.length - Object.keys(visitedIndices).length);
-    const visitedCount = Object.keys(visitedIndices).length;
-    const answeredCount = Object.keys(selectedAnswers).length;
-    const remainingCount = Math.max(0, safeQuestions.length - answeredCount);
-
-    return (
-      <div className="flex flex-col flex-1 w-full bg-[#f4f6f8] text-[#333] font-sans min-h-screen">
-        {/* ================= الهيدر العلوي ================= */}
-        <header className="bg-[#00a59a] text-white flex justify-between items-center py-2 px-5 font-bold text-base select-none shadow-sm shrink-0">
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={handleRequestExit}
-              className="p-1 px-2.5 rounded bg-[#008f85] hover:bg-[#007a71] text-white text-xs transition cursor-pointer flex items-center gap-1 font-bold"
-              title="الخروج من الاختبار والعودة للمنصة"
-            >
-              <ArrowRight className="w-3.5 h-3.5" />
-              <span>خروج</span>
-            </button>
-            <div className="text-xl font-bold tracking-wide">قياس</div>
-          </div>
-
-          <div className="font-mono text-sm sm:text-base tracking-wider">{currentDateStr}</div>
-
-          <div className="text-sm sm:text-base font-bold truncate max-w-[180px] sm:max-w-md">
-            {examTitle || 'اختبارات القدرات'}
-          </div>
-        </header>
-
-        {/* ================= الحاوية الرئيسية (main-container) ================= */}
-        <div className="flex flex-col lg:flex-row gap-4 p-3.5 sm:p-4 max-w-[1400px] w-full mx-auto flex-1 items-start">
-          {/* ================= الشريط الجانبي (sidebar: 280px) ================= */}
-          <div className="w-full lg:w-[280px] shrink-0 flex flex-col gap-3">
-            {/* Card 1: الوقت المتبقي */}
-            <div className="bg-white border border-[#e0e0e0] rounded p-2.5 text-center shadow-xs">
-              <div className="text-sm text-[#666] mb-1 font-bold">الوقت المتبقي</div>
-              <div className="text-[26px] text-[#2b73b6] font-bold font-mono">
-                {isTimed ? formatTime(timeLeft) : 'تدريب حر'}
-              </div>
-            </div>
-
-            {/* Card 2: بطاقة بيانات الطالب (تتغير حسب كل طالب مسجل وتولد رقم هوية مختلف وعشوائي) */}
-            <div className="bg-white border border-[#e0e0e0] rounded p-2.5 text-center shadow-xs">
-              <div className="flex flex-col gap-1.5 text-right text-[13px] bg-[#fafafa] p-2 rounded border border-[#eee]">
-                <div>
-                  <strong>اسم الطالب:</strong> <span className="font-bold text-[#111]">{currentUser?.name || 'اسم الطالب هنا'}</span>
-                </div>
-                <div>
-                  <strong>رقم الهوية:</strong> <span className="font-mono font-bold text-[#111]">{nationalId}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Card 3: معلومات القسم والشبكة الإحصائية والأسئلة والأزرار */}
-            <div className="bg-white border border-[#e0e0e0] rounded p-2.5 text-center shadow-xs space-y-3">
-              <div className="text-[13px] font-bold border-b border-[#eee] pb-1.5 text-right leading-relaxed">
-                القسم الحالي: 1 / 1<br />
-                مجموع الأسئلة: {safeQuestions.length}
-              </div>
-
-              {/* شبكة الإحصائيات (stats-grid) */}
-              <div className="grid grid-cols-4 gap-1.5 text-center">
-                <div>
-                  <div className="py-1 px-0.5 rounded text-sm font-bold bg-white text-[#333] border border-[#ccc]">
-                    {unvisitedCount}
-                  </div>
-                  <div className="text-[10px] text-[#333] mt-1 h-7 flex items-center justify-center leading-tight font-bold">
-                    لم تتم زيارته
-                  </div>
-                </div>
-                <div>
-                  <div className="py-1 px-0.5 rounded text-sm font-bold bg-[#4a90e2] text-white">
-                    {visitedCount}
-                  </div>
-                  <div className="text-[10px] text-[#333] mt-1 h-7 flex items-center justify-center leading-tight font-bold">
-                    تمت زيارته
-                  </div>
-                </div>
-                <div>
-                  <div className="py-1 px-0.5 rounded text-sm font-bold bg-[#2e7d32] text-white">
-                    {answeredCount}
-                  </div>
-                  <div className="text-[10px] text-[#333] mt-1 h-7 flex items-center justify-center leading-tight font-bold">
-                    تمت الإجابة
-                  </div>
-                </div>
-                <div>
-                  <div className="py-1 px-0.5 rounded text-sm font-bold bg-[#ff5722] text-white">
-                    {remainingCount}
-                  </div>
-                  <div className="text-[10px] text-[#333] mt-1 h-7 flex items-center justify-center leading-tight font-bold">
-                    باقي من القسم
-                  </div>
-                </div>
-              </div>
-
-              {/* شبكة أرقام الأسئلة (questions-grid: 6 أعمدة) */}
-              <div className="grid grid-cols-6 gap-1.5 max-h-[290px] overflow-y-auto p-0.5">
-                {safeQuestions.map((_, i) => {
-                  const isCurrent = i === currentIdx;
-                  const isAnswered = selectedAnswers[i] !== undefined;
-                  const isVisited = !!visitedIndices[i];
-                  const isMarked = !!markedForReview[i];
-
-                  let btnBg = 'bg-[#ff5722]'; // لم تتم زيارته
-                  if (isAnswered) {
-                    btnBg = 'bg-[#2e7d32]'; // تمت الإجابة
-                  } else if (isVisited) {
-                    btnBg = 'bg-[#4a90e2]'; // تمت زيارته
-                  }
-
-                  return (
-                    <button
-                      key={i}
-                      type="button"
-                      onClick={() => setCurrentIdx(i)}
-                      className={`h-[35px] text-white border-none rounded-[3px] font-bold cursor-pointer transition-all flex items-center justify-center relative text-xs ${btnBg} ${
-                        isCurrent
-                          ? 'ring-2 ring-[#00a59a] scale-105 z-10 shadow-md font-black'
-                          : 'hover:opacity-90'
-                      }`}
-                      title={`الانتقال للسؤال رقم ${i + 1}`}
-                    >
-                      <span>{i + 1}</span>
-                      {isMarked && (
-                        <span
-                          className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-amber-300 ring-1 ring-black shadow"
-                          title="مميز للمراجعة"
-                        />
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* أزرار أسفل الشريط الجانبي (sidebar-actions: 2x2) */}
-              <div className="grid grid-cols-2 gap-2 mt-2 pt-2.5 border-t border-[#eee]">
-                <button
-                  type="button"
-                  onClick={() => setShowExamInstructionsModal(true)}
-                  className="py-2.5 px-1 rounded text-white font-bold cursor-pointer text-xs sm:text-[13px] bg-[#00a59a] hover:bg-[#008f85] transition"
-                >
-                  تعليمات الاختبار
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowSectionModal(true)}
-                  className="py-2.5 px-1 rounded text-white font-bold cursor-pointer text-xs sm:text-[13px] bg-[#00a59a] hover:bg-[#008f85] transition"
-                >
-                  تعليمات القسم
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowEquationsModal(true)}
-                  className="py-2.5 px-1 rounded text-white font-bold cursor-pointer text-xs sm:text-[13px] bg-[#00a59a] hover:bg-[#008f85] transition"
-                >
-                  المعادلات
-                </button>
-                <button
-                  type="button"
-                  onClick={finishTest}
-                  className="py-2.5 px-1 rounded text-white font-bold cursor-pointer text-xs sm:text-[13px] bg-[#f44336] hover:bg-[#d32f2f] transition"
-                >
-                  إنهاء الاختبار
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* ================= منطقة عرض السؤال وصورته (content-area) ================= */}
-          <div className="flex-1 bg-white border border-[#e0e0e0] rounded p-4 sm:p-5 flex flex-col justify-between shadow-xs min-h-[580px] w-full">
-            <div>
-              {/* Question Header */}
-              <div className="flex justify-between items-center border-b border-[#eee] pb-2.5 mb-4 gap-2 flex-wrap">
-                <div className="flex items-center gap-2">
-                  {currentQCustomFolders.map((cf) => (
-                    <span
-                      key={cf.id}
-                      className="text-[11px] px-2 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-300 font-bold"
-                    >
-                      📁 {cf.title}
-                    </span>
-                  ))}
-                  <button
-                    type="button"
-                    onClick={() => setShowFolderModalForQ(currentQ)}
-                    className="flex items-center gap-1 px-2.5 py-1 rounded border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 text-xs font-bold transition cursor-pointer"
-                    title="إضافة السؤال إلى مجلد أو حذفه منه"
-                  >
-                    <FolderPlus className="w-3.5 h-3.5 text-amber-600" />
-                    <span>إدارة المجلدات</span>
-                  </button>
-                </div>
-
-                <div className="text-lg font-bold text-[#444]">
-                  رقم السؤال {currentIdx + 1}
-                </div>
-              </div>
-
-              {/* Question Text */}
-              {currentQ.questionText && (
-                <h3 className="text-base sm:text-lg font-bold text-[#333] leading-relaxed mb-4">
-                  {currentQ.questionText}
-                </h3>
-              )}
-
-              {/* مكان صورة السؤال المرفوعة */}
-              {currentQ.imageUrl && (
-                <div className="text-center my-4 p-2.5 bg-white border border-[#e8e8e8] rounded-md relative group">
-                  <img
-                    id="questionImage"
-                    src={currentQ.imageUrl}
-                    alt="صورة السؤال"
-                    className="max-w-full max-h-[460px] mx-auto rounded object-contain cursor-pointer"
-                    onClick={() => {
-                      setZoomedImageUrl(currentQ.imageUrl || null);
-                      setImageZoomScale(1);
-                    }}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setZoomedImageUrl(currentQ.imageUrl || null);
-                      setImageZoomScale(1);
-                    }}
-                    className="absolute top-2 left-2 px-2.5 py-1 rounded bg-black/75 hover:bg-black text-amber-300 text-xs font-bold flex items-center gap-1 shadow transition cursor-pointer"
-                    title="تكبير صورة السؤال"
-                  >
-                    <ZoomIn className="w-3.5 h-3.5 text-amber-400" />
-                    <span>تكبير 🔍</span>
-                  </button>
-                </div>
-              )}
-
-              {/* 4 Choices / Options */}
-              <div className="space-y-2.5 my-4">
-                {safeOptions.map((option, optIdx) => {
-                  const isSelected = selectedAnswers[currentIdx] === optIdx;
-                  const letter = optIdx === 0 ? 'أ' : optIdx === 1 ? 'ب' : optIdx === 2 ? 'ج' : 'د';
-
-                  return (
-                    <button
-                      key={optIdx}
-                      type="button"
-                      onClick={() => handleSelectOption(currentIdx, optIdx)}
-                      className={`w-full text-right p-3.5 rounded border transition-all flex items-center justify-between text-sm md:text-base font-bold cursor-pointer ${
-                        isSelected
-                          ? 'bg-[#00a59a]/10 border-[#00a59a] text-[#00796b] ring-2 ring-[#00a59a]'
-                          : 'bg-[#fafafa] hover:bg-[#f0f9f8] border-[#e0e0e0] text-[#333]'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3">
-                        <span
-                          className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${
-                            isSelected ? 'bg-[#00a59a] text-white' : 'bg-[#eee] text-[#555]'
-                          }`}
-                        >
-                          {letter}
-                        </span>
-                        <span>{option}</span>
-                      </div>
-                      {isSelected && (
-                        <div className="w-5 h-5 rounded-full bg-[#00a59a] text-white flex items-center justify-center shrink-0">
-                          <Check className="w-3.5 h-3.5 stroke-[3]" />
-                        </div>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* أسفل محتوى السؤال والأزرار (content-footer) */}
-            <div className="flex justify-between items-center border-t border-[#eee] pt-4 mt-4 gap-2 flex-wrap">
-              <label className="flex items-center gap-2 text-[#555] text-sm cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  id="reviewCheck"
-                  checked={!!markedForReview[currentIdx]}
-                  onChange={(e) =>
-                    setMarkedForReview((prev) => ({
-                      ...prev,
-                      [currentIdx]: e.target.checked,
-                    }))
-                  }
-                  className="w-4 h-4 text-[#00a59a] rounded border-gray-300 focus:ring-[#00a59a] cursor-pointer"
-                />
-                <span>تمييز السؤال للمراجعة</span>
-              </label>
-
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  disabled={currentIdx === 0}
-                  onClick={() => setCurrentIdx((i) => Math.max(0, i - 1))}
-                  className="px-4 py-2 rounded text-sm font-bold bg-[#f0f0f0] hover:bg-[#e4e4e4] disabled:opacity-40 disabled:cursor-not-allowed text-[#444] transition cursor-pointer border border-[#ddd]"
-                >
-                  السابق
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (currentIdx < safeQuestions.length - 1) {
-                      setCurrentIdx(currentIdx + 1);
-                    } else {
-                      finishTest();
-                    }
-                  }}
-                  className="bg-[#00a59a] hover:bg-[#008f85] text-white border-none py-2.5 px-6 rounded-md text-base font-bold cursor-pointer transition shadow-sm"
-                >
-                  {currentIdx < safeQuestions.length - 1 ? 'حفظ والتالي' : 'إنهاء وتسليم الاختبار ✓'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className={systemMode === 'nimr' ? 'min-h-screen bg-[#f4f6f8] text-[#333] flex flex-col w-full selection:bg-[#00a59a]/20' : `flex flex-col min-h-screen lg:h-screen p-2 sm:p-3 md:p-4 gap-2 sm:gap-3 max-w-[1900px] mx-auto w-full pb-4 sm:pb-6 overflow-x-hidden ${
-      isDarkMode ? 'text-white' : 'text-black'
-    }`} dir="rtl">
-      {systemMode === 'nimr' ? (
-        renderNimrView()
-      ) : (
-        <>
-          {/* Top Exam Header: Perfectly responsive on Mobile and Desktop */}
-          <div className={`border rounded-2xl p-2.5 sm:p-3 md:px-6 shadow-xl shrink-0 ${
-            isDarkMode ? 'bg-slate-900/95 border-slate-800' : 'bg-white border-slate-200'
-          }`}>
-            {/* Mobile View: 2 neat rows */}
-            <div className="flex flex-col gap-2 md:hidden">
-          {/* Row 1: Back + Title + Timer */}
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 min-w-0">
-              <button
-                onClick={handleRequestExit}
-                className={`p-2 rounded-xl transition shrink-0 ${
-                  isDarkMode ? 'bg-slate-800 text-slate-300 hover:bg-slate-700' : 'bg-slate-100 text-black hover:bg-slate-200 font-bold'
-                }`}
-                title="خروج من الاختبار والعودة للمنصة"
-              >
-                <ArrowRight className="w-4 h-4" />
-              </button>
-              <div className="min-w-0">
-                <h2 className={`text-xs sm:text-sm font-black flex items-center gap-1.5 truncate ${
-                  isDarkMode ? 'text-white' : 'text-black'
-                }`}>
-                  <Zap className="w-4 h-4 text-amber-500 shrink-0" />
-                  <span className="truncate">{examTitle}</span>
-                </h2>
-              </div>
-            </div>
-
-            {/* Timer Badge */}
-            <div className="shrink-0">
-              {isTimed ? (
-                <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl border font-mono font-bold text-xs ${
-                  timeLeft < 60
-                    ? 'bg-rose-500/20 border-rose-500 text-rose-600 animate-pulse'
-                    : isDarkMode
-                    ? 'bg-slate-800 border-slate-700 text-blue-300'
-                    : 'bg-slate-100 border-slate-300 text-black'
-                }`}>
-                  <Clock className="w-3.5 h-3.5 text-blue-500" />
-                  <span>{formatTime(timeLeft)}</span>
-                </div>
-              ) : (
-                <div className="px-2 py-0.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 text-[10px] font-black">
-                  تدريب حر
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Row 2: Progress Counter + Whiteboard Button + Finish Button */}
-          <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-800/40">
-            <span className={`text-[11px] font-bold shrink-0 ${isDarkMode ? 'text-slate-400' : 'text-slate-700'}`}>
-              سؤال {currentIdx + 1} من {safeQuestions.length} ({answeredCount} تم)
-            </span>
-
-            <div className="flex items-center gap-1.5 shrink-0">
-              {/* Whiteboard button */}
-              <button
-                type="button"
-                onClick={() => {
-                  setIsWhiteboardOpen((prev) => {
-                    const next = !prev;
-                    setMobileViewMode(next ? 'whiteboard' : 'question');
-                    return next;
-                  });
-                }}
-                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl border text-[11px] font-black transition shadow-sm ${
-                  isWhiteboardOpen
-                    ? 'bg-rose-500/15 text-rose-500 border-rose-500/40'
-                    : 'bg-indigo-600/20 text-indigo-500 border-indigo-500/40'
-                }`}
-              >
-                {isWhiteboardOpen ? (
-                  <>
-                    <PanelLeftClose className="w-3.5 h-3.5" />
-                    <span>قفل السبورة</span>
-                  </>
-                ) : (
-                  <>
-                    <PenTool className="w-3.5 h-3.5" />
-                    <span>السبورة 📝</span>
-                  </>
-                )}
-              </button>
-
-              {/* Finish Button */}
-              <button
-                onClick={finishTest}
-                className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-[11px] transition shadow-md shadow-emerald-600/20"
-              >
-                إنهاء والنتيجة
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Desktop View: Single Line */}
-        <div className="hidden md:flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={handleRequestExit}
-              className={`p-2 rounded-xl transition ${
-                isDarkMode ? 'bg-slate-800 text-slate-300 hover:bg-slate-700' : 'bg-slate-100 text-black hover:bg-slate-200 font-bold'
-              }`}
-              title="خروج من الاختبار والعودة للمنصة"
-            >
-              <ArrowRight className="w-5 h-5" />
-            </button>
-            <div>
-              <h2 className={`text-base md:text-lg font-black flex items-center gap-2 ${
-                isDarkMode ? 'text-white' : 'text-black'
-              }`}>
-                <Zap className="w-5 h-5 text-amber-500" />
-                <span>{examTitle}</span>
-                {targetPercentage && (
-                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-600 border border-amber-500/30 font-black">
-                    الهدف: %{targetPercentage}
-                  </span>
-                )}
-              </h2>
-              <span className={`text-xs ${isDarkMode ? 'text-slate-400' : 'text-black font-semibold'}`}>
-                السؤال {currentIdx + 1} من {safeQuestions.length} • تم الإجابة على {answeredCount}
-              </span>
-            </div>
-          </div>
-
-          {/* Center/Right Controls */}
-          <div className="flex items-center gap-2 md:gap-3">
-            <button
-              type="button"
-              onClick={() => setIsWhiteboardOpen((prev) => !prev)}
-              className={`flex items-center gap-1.5 px-3 md:px-4 py-2 rounded-xl border text-xs md:text-sm font-black transition shadow-md ${
-                isWhiteboardOpen
-                  ? 'bg-rose-500/15 hover:bg-rose-500/25 text-rose-500 border-rose-500/40'
-                  : 'bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-600 border-indigo-500/50'
-              }`}
-              title={isWhiteboardOpen ? 'قفل وإخفاء السبورة لتوسيع السؤال' : 'فتح وإظهار السبورة للرسم وحل المسائل'}
-            >
-              {isWhiteboardOpen ? (
-                <>
-                  <PanelLeftClose className="w-4 h-4 text-rose-500" />
-                  <span>قفل السبورة</span>
-                </>
-              ) : (
-                <>
-                  <PenTool className="w-4 h-4 text-indigo-500" />
-                  <span>فتح السبورة 📝</span>
-                </>
-              )}
-            </button>
-
-            {isTimed ? (
-              <div className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl border font-mono font-bold text-sm ${
-                timeLeft < 60
-                  ? 'bg-rose-500/20 border-rose-500 text-rose-600 animate-pulse'
-                  : isDarkMode
-                  ? 'bg-slate-800 border-slate-700 text-blue-300'
-                  : 'bg-slate-100 border-slate-300 text-black'
-              }`}>
-                <Clock className="w-4 h-4 text-blue-500" />
-                <span>{formatTime(timeLeft)}</span>
-              </div>
-            ) : (
-              <div className="px-3 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 text-xs font-black">
-                تدريب حر مفتوح
-              </div>
-            )}
-
-            <button
-              onClick={finishTest}
-              className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs md:text-sm transition shadow-lg shadow-emerald-600/25"
-            >
-              إنهاء والنتيجة
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Mobile view segmented tabs when whiteboard is toggled on ("بمنظور الهاتف داخل الاختبار كل شيء مرتب وموجود في اطار الهاتف") */}
-      {isWhiteboardOpen && (
-        <div className="flex items-center gap-1 p-1 rounded-xl bg-slate-900/90 border border-slate-800 lg:hidden shrink-0">
-          <button
-            type="button"
-            onClick={() => setMobileViewMode('question')}
-            className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-black transition flex items-center justify-center gap-1.5 ${
-              mobileViewMode === 'question'
-                ? 'bg-blue-600 text-white shadow-sm'
-                : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            <span>السؤال والخيارات</span>
-            <span className="text-[10px] opacity-80 font-mono">({currentIdx + 1}/{safeQuestions.length})</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setMobileViewMode('whiteboard')}
-            className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-black transition flex items-center justify-center gap-1.5 ${
-              mobileViewMode === 'whiteboard'
-                ? 'bg-indigo-600 text-white shadow-sm'
-                : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            <PenTool className="w-3.5 h-3.5" />
-            <span>مسودة السبورة الذكية 🎨</span>
-          </button>
-        </div>
+    <div className="min-h-screen w-full flex flex-col" dir="rtl">
+      {systemMode === 'nimr' && (
+        <NimrExamSystem
+          safeQuestions={safeQuestions}
+          currentIdx={currentIdx}
+          setCurrentIdx={setCurrentIdx}
+          selectedAnswers={selectedAnswers}
+          handleSelectOption={handleSelectOption}
+          visitedIndices={visitedIndices}
+          markedForReview={markedForReview}
+          setMarkedForReview={setMarkedForReview}
+          isTimed={isTimed}
+          timeLeft={timeLeft}
+          formatTime={formatTime}
+          currentUser={currentUser}
+          nationalId={nationalId}
+          examTitle={examTitle}
+          currentDateStr={currentDateStr}
+          handleRequestExit={handleRequestExit}
+          finishTest={finishTest}
+          setShowFolderModalForQ={setShowFolderModalForQ}
+          currentQCustomFolders={currentQCustomFolders}
+          setZoomedImageUrl={setZoomedImageUrl}
+          setImageZoomScale={setImageZoomScale}
+          setShowExamInstructionsModal={setShowExamInstructionsModal}
+          setShowSectionModal={setShowSectionModal}
+          setShowEquationsModal={setShowEquationsModal}
+          isDarkMode={isDarkMode}
+          systemMode={systemMode}
+        />
       )}
 
-      {/* Main split view:
-          - When whiteboard is open: QUESTION ON RIGHT (lg:col-span-5), WHITEBOARD ON LEFT (lg:col-span-7)
-          - When whiteboard is closed: QUESTION FULL-WIDTH (lg:col-span-12 max-w-4xl mx-auto) for focused reading!
-      */}
-      <div className={`flex-1 grid grid-cols-1 ${isWhiteboardOpen ? 'lg:grid-cols-12' : 'lg:grid-cols-1 max-w-4xl mx-auto w-full'} gap-3 min-h-0`}>
-        {/* ================= RIGHT SIDE (اليمين): QUESTION, IMAGE, CHOICES & FOLDER ACTIONS ================= */}
-        <div className={`${isWhiteboardOpen ? 'lg:col-span-5 xl:col-span-5' : 'w-full'} ${isWhiteboardOpen && mobileViewMode === 'whiteboard' ? 'hidden lg:flex' : 'flex'} h-full flex-col border rounded-2xl p-3 sm:p-4 md:p-6 shadow-xl overflow-y-auto ${
-          isDarkMode ? 'bg-slate-900/90 border-slate-800 text-white' : 'bg-white border-slate-200 text-black'
-        }`}>
-          {/* Question Index Bar & Action Toolbar */}
-          <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800 mb-3 gap-2 flex-wrap">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-black text-blue-600 dark:text-blue-400">
-                سؤال رقم {currentIdx + 1}
-              </span>
-
-              {/* Display custom user folders this question was saved to */}
-              {currentQCustomFolders.map((cf) => (
-                <span
-                  key={cf.id}
-                  className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30 font-bold"
-                >
-                  📁 {cf.title}
-                </span>
-              ))}
-            </div>
-
-            {/* FOLDER ADD / REMOVE BUTTON ON QUESTION */}
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setShowFolderModalForQ(currentQ)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-black transition shadow-sm ${
-                  isDarkMode
-                    ? 'bg-slate-800 hover:bg-slate-700 text-amber-300 border-amber-500/30'
-                    : 'bg-amber-50 hover:bg-amber-100 text-amber-950 border-amber-400'
-                }`}
-                title="إضافة السؤال إلى مجلد أو حذفه منه"
-              >
-                <FolderPlus className="w-4 h-4 text-amber-500" />
-                <span>إضافة / حذف من مجلد</span>
-              </button>
-
-              {!isWhiteboardOpen && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsWhiteboardOpen(true);
-                    setMobileViewMode('whiteboard');
-                  }}
-                  className={`hidden sm:flex items-center gap-1 px-2.5 py-1.5 rounded-xl border text-xs font-bold transition ${
-                    isDarkMode
-                      ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30 hover:bg-indigo-500/30'
-                      : 'bg-indigo-50 text-indigo-900 border-indigo-200 hover:bg-indigo-100'
-                  }`}
-                  title="فتح السبورة"
-                >
-                  <PenTool className="w-3.5 h-3.5 text-indigo-500" />
-                  <span>فتح السبورة</span>
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Numbers pagination strip: neat horizontal scroll on mobile */}
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-2.5 mb-2.5 border-b border-slate-200 dark:border-slate-800/60 max-w-full">
-            {safeQuestions.map((_, i) => (
-              <button
-                key={i}
-                onClick={() => setCurrentIdx(i)}
-                className={`w-7 h-7 sm:w-6 sm:h-6 shrink-0 rounded-lg text-xs font-black transition ${
-                  i === currentIdx
-                    ? 'bg-blue-600 text-white ring-2 ring-blue-400'
-                    : selectedAnswers[i] !== undefined
-                    ? isDarkMode
-                      ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-500/40'
-                      : 'bg-emerald-100 text-emerald-900 border border-emerald-300'
-                    : isDarkMode
-                    ? 'bg-slate-800 text-slate-400 hover:bg-slate-700'
-                    : 'bg-slate-100 text-black border border-slate-200 hover:bg-slate-200'
-                }`}
-              >
-                {i + 1}
-              </button>
-            ))}
-          </div>
-
-          {/* Question Text */}
-          <div className="space-y-4 flex-1 flex flex-col justify-between">
-            <div className="space-y-4">
-              <h3 className={`text-base md:text-lg font-black leading-relaxed ${
-                isDarkMode ? 'text-white' : 'text-black'
-              }`}>
-                {currentQ.questionText}
-              </h3>
-
-              {/* Optional Question Image with Click to Zoom (صورة السؤال فورية وكاملة الوضوح) */}
-              {currentQ.imageUrl && (
-                <div className="relative group max-w-2xl mx-auto w-full my-3">
-                  <div
-                    onClick={() => {
-                      setZoomedImageUrl(currentQ.imageUrl || null);
-                      setImageZoomScale(1);
-                    }}
-                    className="rounded-2xl overflow-hidden border-2 border-slate-300 dark:border-slate-700 hover:border-amber-400 dark:hover:border-amber-400 bg-white dark:bg-slate-950/80 min-h-[180px] max-h-[500px] sm:max-h-[560px] flex items-center justify-center p-2 sm:p-3 cursor-pointer transition-all duration-200 shadow-md"
-                    title="انقر لتكبير صورة السؤال"
-                  >
-                    <img
-                      src={currentQ.imageUrl}
-                      alt="صورة توضيحية للسؤال"
-                      loading="eager"
-                      decoding="sync"
-                      className="max-h-[480px] sm:max-h-[540px] max-w-full object-contain rounded-xl transition-transform duration-200 group-hover:scale-[1.01]"
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setZoomedImageUrl(currentQ.imageUrl || null);
-                      setImageZoomScale(1);
-                    }}
-                    className="absolute top-3 left-3 px-3 py-1.5 rounded-xl bg-black/85 hover:bg-black text-amber-300 text-xs font-bold border border-amber-500/50 flex items-center gap-1.5 shadow-lg backdrop-blur-md transition cursor-pointer"
-                  >
-                    <ZoomIn className="w-3.5 h-3.5 text-amber-400" />
-                    <span>تكبير الصورة 🔍</span>
-                  </button>
-                </div>
-              )}
-
-              {/* 4 Answer Options */}
-              <div className="space-y-2.5 pt-2">
-                {safeOptions.map((option, optIdx) => {
-                  const isSelected = selectedAnswers[currentIdx] === optIdx;
-                  return (
-                    <button
-                      key={optIdx}
-                      type="button"
-                      onClick={() => handleSelectOption(currentIdx, optIdx)}
-                      className={`w-full text-right p-3.5 rounded-2xl border transition-all duration-150 flex items-center justify-between text-xs md:text-sm font-black ${
-                        isSelected
-                          ? isDarkMode
-                            ? 'bg-blue-600/25 border-blue-400 text-white ring-1 ring-blue-400 shadow-md'
-                            : 'bg-blue-50 border-blue-600 text-black ring-2 ring-blue-500 shadow-sm'
-                          : isDarkMode
-                          ? 'bg-slate-800/50 hover:bg-slate-800 border-slate-700/80 hover:border-slate-600 text-slate-200'
-                          : 'bg-white hover:bg-slate-50 border-slate-300 hover:border-blue-400 text-black font-black'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3">
-                        <span className={`w-6 h-6 rounded-lg flex items-center justify-center text-xs font-black ${
-                          isSelected
-                            ? 'bg-blue-600 text-white'
-                            : isDarkMode
-                            ? 'bg-slate-700 text-slate-300'
-                            : 'bg-slate-100 text-black border border-slate-300'
-                        }`}>
-                          {optIdx === 0 ? 'أ' : optIdx === 1 ? 'ب' : optIdx === 2 ? 'ج' : 'د'}
-                        </span>
-                        <span className={isSelected ? 'font-black' : ''}>{option}</span>
-                      </div>
-                      {isSelected && <Check className="w-4 h-4 text-blue-600" />}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Next / Prev Navigation */}
-            <div className="flex items-center justify-between pt-4 mt-4 border-t border-slate-200 dark:border-slate-800">
-              <button
-                type="button"
-                onClick={() => setCurrentIdx((prev) => Math.max(0, prev - 1))}
-                disabled={currentIdx === 0}
-                className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-black transition disabled:opacity-30 border ${
-                  isDarkMode
-                    ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
-                    : 'bg-slate-100 hover:bg-slate-200 text-black border-slate-300'
-                }`}
-              >
-                <ArrowRight className="w-4 h-4" />
-                <span>السابق</span>
-              </button>
-
-              <span className={`text-xs font-black ${isDarkMode ? 'text-slate-400' : 'text-black'}`}>
-                {currentIdx + 1} / {safeQuestions.length}
-              </span>
-
-              {currentIdx < safeQuestions.length - 1 ? (
-                <button
-                  type="button"
-                  onClick={() => setCurrentIdx((prev) => Math.min(safeQuestions.length - 1, prev + 1))}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-black transition shadow-md shadow-blue-600/20"
-                >
-                  <span>التالي</span>
-                  <ArrowLeft className="w-4 h-4" />
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={finishTest}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black transition shadow-md shadow-emerald-600/20"
-                >
-                  <Award className="w-4 h-4" />
-                  <span>إنهاء الاختبار</span>
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* ================= LEFT SIDE (اليسار): INTERACTIVE WHITEBOARD ================= */}
-        {isWhiteboardOpen && (
-          <div className={`lg:col-span-7 xl:col-span-7 ${mobileViewMode === 'question' ? 'hidden lg:flex' : 'flex'} min-h-[380px] h-[65vh] sm:h-[500px] lg:h-full border rounded-2xl shadow-xl overflow-hidden flex-col transition-all ${
-            isDarkMode ? 'bg-slate-900/90 border-slate-800' : 'bg-white border-slate-200'
-          }`}>
-            <Whiteboard isDark={isDarkMode} />
-          </div>
-        )}
-      </div>
-        </>
+      {systemMode === 'standard' && (
+        <DefaultExamSystem
+          safeQuestions={safeQuestions}
+          currentIdx={currentIdx}
+          setCurrentIdx={setCurrentIdx}
+          selectedAnswers={selectedAnswers}
+          handleSelectOption={handleSelectOption}
+          visitedIndices={visitedIndices}
+          markedForReview={markedForReview}
+          setMarkedForReview={setMarkedForReview}
+          isTimed={isTimed}
+          timeLeft={timeLeft}
+          formatTime={formatTime}
+          currentUser={currentUser}
+          nationalId={nationalId}
+          examTitle={examTitle}
+          currentDateStr={currentDateStr}
+          handleRequestExit={handleRequestExit}
+          finishTest={finishTest}
+          setShowFolderModalForQ={setShowFolderModalForQ}
+          currentQCustomFolders={currentQCustomFolders}
+          setZoomedImageUrl={setZoomedImageUrl}
+          setImageZoomScale={setImageZoomScale}
+          setShowExamInstructionsModal={setShowExamInstructionsModal}
+          setShowSectionModal={setShowSectionModal}
+          setShowEquationsModal={setShowEquationsModal}
+          isDarkMode={isDarkMode}
+          systemMode={systemMode}
+          isWhiteboardOpen={isWhiteboardOpen}
+          setIsWhiteboardOpen={setIsWhiteboardOpen}
+          mobileViewMode={mobileViewMode}
+          setMobileViewMode={setMobileViewMode}
+          setShowMobileQuestionsList={setShowMobileQuestionsList}
+          showMobileQuestionsList={showMobileQuestionsList}
+          progressPercent={progressPercent}
+        />
       )}
 
+      {systemMode === 'blue' && (
+        <BlueExamSystem
+          safeQuestions={safeQuestions}
+          currentIdx={currentIdx}
+          setCurrentIdx={setCurrentIdx}
+          selectedAnswers={selectedAnswers}
+          handleSelectOption={handleSelectOption}
+          visitedIndices={visitedIndices}
+          markedForReview={markedForReview}
+          setMarkedForReview={setMarkedForReview}
+          isTimed={isTimed}
+          timeLeft={timeLeft}
+          formatTime={formatTime}
+          currentUser={currentUser}
+          nationalId={nationalId}
+          examTitle={examTitle}
+          currentDateStr={currentDateStr}
+          handleRequestExit={handleRequestExit}
+          finishTest={finishTest}
+          setShowFolderModalForQ={setShowFolderModalForQ}
+          currentQCustomFolders={currentQCustomFolders}
+          setZoomedImageUrl={setZoomedImageUrl}
+          setImageZoomScale={setImageZoomScale}
+          setShowExamInstructionsModal={setShowExamInstructionsModal}
+          setShowSectionModal={setShowSectionModal}
+          setShowEquationsModal={setShowEquationsModal}
+          isDarkMode={isDarkMode}
+          systemMode={systemMode}
+        />
+      )}
       {/* ================= MODAL: ZOOMED QUESTION IMAGE LIGHTBOX ("تكبير صورة السؤال") ================= */}
       {zoomedImageUrl && (
         <div
@@ -2301,6 +1642,7 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
 
       {/* Render Folder Picker Modal */}
       {renderFolderModal()}
+
     </div>
   );
 };

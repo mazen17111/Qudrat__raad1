@@ -51,6 +51,8 @@ export interface StudentUser {
 
 export type CourseThemeColor = 'default' | 'red' | 'green' | 'blue' | 'purple' | 'pink';
 
+export type ExamSystemType = 'nimr' | 'standard' | 'blue';
+
 export interface CourseItem {
   id: string;
   title: string;
