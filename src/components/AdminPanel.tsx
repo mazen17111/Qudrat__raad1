@@ -11,6 +11,7 @@ import {
   Edit,
   Save,
   CheckCircle2,
+  Check,
   XCircle,
   AlertTriangle,
   Lock,
@@ -282,6 +283,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
   const [examTargetPercentage, setExamTargetPercentage] = useState<number>(90);
   const [isUploadingServerFile, setIsUploadingServerFile] = useState<boolean>(false);
   const [serverUploadProgress, setServerUploadProgress] = useState<number>(0);
+  const [isSavingItem, setIsSavingItem] = useState<boolean>(false);
 
   // Sync draft to localStorage so title and description are preserved even on navigation or modal reopen
   const updateItemTitle = (val: string) => {
@@ -1521,8 +1523,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
 
       if (importedQuestions.length > 0) {
         setExamQuestions(importedQuestions);
-        if (!itemTitle) {
-          setItemTitle(file.name.replace(/\.[^/.]+$/, ''));
+        if (!itemTitle.trim()) {
+          updateItemTitle(file.name.replace(/\.[^/.]+$/, ''));
         }
         notifySave(`تم استيراد ${importedQuestions.length} سؤال من ملف الاختبار (${file.name}) بنجاح ✓`);
       } else {
@@ -1605,6 +1607,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       return;
     }
 
+    setIsSavingItem(true);
     try {
       const targetId = editingItem ? editingItem.id : doc(collection(db, 'content_items')).id;
       const basePayload: any = {
@@ -1701,11 +1704,25 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         }
       }
 
+      // Optimistic local state update for instant UI feedback without waiting
+      setItems((prev) => {
+        const index = prev.findIndex((i) => i.id === targetId);
+        if (index >= 0) {
+          const next = [...prev];
+          next[index] = { ...prev[index], ...basePayload };
+          return next;
+        }
+        return [basePayload, ...prev];
+      });
+
+      // Persist to Firestore
       await setDoc(doc(db, 'content_items', targetId), basePayload, { merge: true });
+
       try {
         localStorage.removeItem('admin_draft_item_title');
         localStorage.removeItem('admin_draft_item_desc');
       } catch (e) {}
+
       setIsAddingItem(false);
       setEditingItem(null);
       setItemTitle('');
@@ -1730,12 +1747,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       ]);
       notifySave(
         editingItem
-          ? 'تم حفظ التعديلات بنجاح مع الحفاظ التام على الملف الأصلي ✓'
-          : 'تم الرفع وحفظ المحتوى على المنصة بنجاح دون أي مساس بالملفات السابقة ✓'
+          ? 'تم حفظ التعديلات فوراً بنجاح ✓'
+          : 'تم الرفع وحفظ المحتوى على المنصة فوراً بنجاح ✓'
       );
     } catch (err) {
       console.error(err);
-      notifySave('حدث خطأ أثناء حفظ المحتوى');
+      notifySave('حدث خطأ أثناء حفظ المحتوى، يرجى المحاولة مرة أخرى');
+    } finally {
+      setIsSavingItem(false);
     }
   };
 
@@ -5875,24 +5894,43 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
 
             {/* Basic Info */}
             <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="text-xs font-bold text-slate-400">
-                  {itemType === 'video' ? 'اسم / عنوان الفيديو:' : itemType === 'exam' ? 'اسم / عنوان الاختبار:' : 'اسم / عنوان الملف أو المستند:'}
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-black text-slate-200 flex items-center gap-1.5">
+                  <span>
+                    {itemType === 'video' ? 'اسم / عنوان الفيديو:' : itemType === 'exam' ? 'اسم / عنوان الاختبار:' : 'اسم / عنوان الملف أو المستند:'}
+                  </span>
+                  <span className="text-rose-400">*</span>
                 </label>
-                {itemTitle && (
-                  <span className="text-[10px] text-emerald-400 font-bold flex items-center gap-1">
-                    <span>محفوظ تلقائياً ✓</span>
+                {itemTitle.trim().length > 0 ? (
+                  <span className="text-[11px] font-black text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 px-2 py-0.5 rounded-full flex items-center gap-1 animate-in fade-in duration-150">
+                    <Check className="w-3.5 h-3.5 text-emerald-400 stroke-[3]" />
+                    <span>تم حفظ الاسم ✓</span>
+                  </span>
+                ) : (
+                  <span className="text-[10px] text-slate-500 font-bold">
+                    (اكتب الاسم هنا وسيتم تثبيته تلقائياً)
                   </span>
                 )}
               </div>
-              <input
-                type="text"
-                required
-                placeholder={itemType === 'video' ? 'مثال: شرح درس التناظر اللفظي 1...' : itemType === 'exam' ? 'مثال: اختبار القدرات العام...' : 'مثال: ملخص ومذكرة القوانين...'}
-                value={itemTitle}
-                onChange={(e) => updateItemTitle(e.target.value)}
-                className="w-full px-3.5 py-2.5 text-xs rounded-xl bg-slate-800 border border-slate-700 text-white focus:outline-none focus:border-blue-500 font-bold"
-              />
+              <div className="relative">
+                <input
+                  type="text"
+                  required
+                  placeholder={itemType === 'video' ? 'مثال: شرح درس التناظر اللفظي 1...' : itemType === 'exam' ? 'مثال: اختبار القدرات العام...' : 'مثال: ملخص ومذكرة القوانين...'}
+                  value={itemTitle}
+                  onChange={(e) => updateItemTitle(e.target.value)}
+                  className={`w-full py-2.5 px-3.5 text-xs rounded-xl bg-slate-800 border text-white focus:outline-none font-bold transition ${
+                    itemTitle.trim().length > 0
+                      ? 'border-emerald-500/60 focus:border-emerald-400 pl-9'
+                      : 'border-slate-700 focus:border-blue-500'
+                  }`}
+                />
+                {itemTitle.trim().length > 0 && (
+                  <div className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-emerald-500 text-slate-950 flex items-center justify-center shadow-sm">
+                    <Check className="w-3.5 h-3.5 stroke-[3]" />
+                  </div>
+                )}
+              </div>
             </div>
 
             <div>
@@ -6597,9 +6635,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                 </button>
                 <button
                   type="submit"
-                  className="px-6 py-2 text-xs bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl"
+                  disabled={isSavingItem}
+                  className="px-6 py-2.5 text-xs bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-black rounded-xl shadow-lg shadow-emerald-600/30 transition flex items-center gap-1.5 cursor-pointer"
                 >
-                  {editingItem ? 'حفظ التعديلات' : 'حفظ ونشر المحتوى'}
+                  {isSavingItem ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>جاري الحفظ فوراً...</span>
+                    </>
+                  ) : (
+                    <span>{editingItem ? 'حفظ التعديلات فوراً ✓' : 'حفظ ونشر المحتوى'}</span>
+                  )}
                 </button>
               </div>
             </div>
