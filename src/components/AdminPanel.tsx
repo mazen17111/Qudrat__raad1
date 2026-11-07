@@ -261,8 +261,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
   const [isAddingItem, setIsAddingItem] = useState(false);
   const [editingItem, setEditingItem] = useState<ContentItem | null>(null);
   const [itemType, setItemType] = useState<'video' | 'file' | 'exam'>('video');
-  const [itemTitle, setItemTitle] = useState('');
-  const [itemDesc, setItemDesc] = useState('');
+  const [itemTitle, setItemTitle] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('admin_draft_item_title') || '';
+    }
+    return '';
+  });
+  const [itemDesc, setItemDesc] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('admin_draft_item_desc') || '';
+    }
+    return '';
+  });
   const [itemUrl, setItemUrl] = useState('');
   const [itemFileData, setItemFileData] = useState('');
   const [itemFileName, setItemFileName] = useState('');
@@ -272,6 +282,25 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
   const [examTargetPercentage, setExamTargetPercentage] = useState<number>(90);
   const [isUploadingServerFile, setIsUploadingServerFile] = useState<boolean>(false);
   const [serverUploadProgress, setServerUploadProgress] = useState<number>(0);
+
+  // Sync draft to localStorage so title and description are preserved even on navigation or modal reopen
+  const updateItemTitle = (val: string) => {
+    setItemTitle(val);
+    try {
+      if (!editingItem) {
+        localStorage.setItem('admin_draft_item_title', val);
+      }
+    } catch (e) {}
+  };
+
+  const updateItemDesc = (val: string) => {
+    setItemDesc(val);
+    try {
+      if (!editingItem) {
+        localStorage.setItem('admin_draft_item_desc', val);
+      }
+    } catch (e) {}
+  };
 
   // Interactive Question Builder for internal exam
   const [examQuestions, setExamQuestions] = useState<ExamQuestion[]>([
@@ -1673,6 +1702,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       }
 
       await setDoc(doc(db, 'content_items', targetId), basePayload, { merge: true });
+      try {
+        localStorage.removeItem('admin_draft_item_title');
+        localStorage.removeItem('admin_draft_item_desc');
+      } catch (e) {}
       setIsAddingItem(false);
       setEditingItem(null);
       setItemTitle('');
@@ -1763,8 +1796,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     setModalResourceId(chosenResId);
     const chosenRes = resources.find((r) => r.id === chosenResId);
     setModalSectionId(chosenRes?.sectionId || selectedSectionId || effectiveSectionId || '');
-    setItemTitle('');
-    setItemDesc('');
+    const savedDraftTitle = (typeof window !== 'undefined' ? localStorage.getItem('admin_draft_item_title') : '') || '';
+    const savedDraftDesc = (typeof window !== 'undefined' ? localStorage.getItem('admin_draft_item_desc') : '') || '';
+    if (savedDraftTitle) {
+      setItemTitle(savedDraftTitle);
+    }
+    if (savedDraftDesc) {
+      setItemDesc(savedDraftDesc);
+    }
     setItemUrl('');
     setItemFileData('');
     setItemFileName('');
@@ -5836,25 +5875,34 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
 
             {/* Basic Info */}
             <div>
-              <label className="text-xs font-bold text-slate-400 block mb-1">العنوان:</label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs font-bold text-slate-400">
+                  {itemType === 'video' ? 'اسم / عنوان الفيديو:' : itemType === 'exam' ? 'اسم / عنوان الاختبار:' : 'اسم / عنوان الملف أو المستند:'}
+                </label>
+                {itemTitle && (
+                  <span className="text-[10px] text-emerald-400 font-bold flex items-center gap-1">
+                    <span>محفوظ تلقائياً ✓</span>
+                  </span>
+                )}
+              </div>
               <input
                 type="text"
                 required
-                placeholder="عنوان المحتوى..."
+                placeholder={itemType === 'video' ? 'مثال: شرح درس التناظر اللفظي 1...' : itemType === 'exam' ? 'مثال: اختبار القدرات العام...' : 'مثال: ملخص ومذكرة القوانين...'}
                 value={itemTitle}
-                onChange={(e) => setItemTitle(e.target.value)}
-                className="w-full px-3 py-2 text-xs rounded-xl bg-slate-800 border border-slate-700 text-white focus:outline-none focus:border-blue-500"
+                onChange={(e) => updateItemTitle(e.target.value)}
+                className="w-full px-3.5 py-2.5 text-xs rounded-xl bg-slate-800 border border-slate-700 text-white focus:outline-none focus:border-blue-500 font-bold"
               />
             </div>
 
             <div>
-              <label className="text-xs font-bold text-slate-400 block mb-1">الوصف:</label>
+              <label className="text-xs font-bold text-slate-400 block mb-1">الوصف والملاحظات:</label>
               <input
                 type="text"
-                placeholder="وصف مختصر..."
+                placeholder="وصف مختصر اختياري..."
                 value={itemDesc}
-                onChange={(e) => setItemDesc(e.target.value)}
-                className="w-full px-3 py-2 text-xs rounded-xl bg-slate-800 border border-slate-700 text-white focus:outline-none focus:border-blue-500"
+                onChange={(e) => updateItemDesc(e.target.value)}
+                className="w-full px-3.5 py-2 text-xs rounded-xl bg-slate-800 border border-slate-700 text-white focus:outline-none focus:border-blue-500"
               />
             </div>
 
