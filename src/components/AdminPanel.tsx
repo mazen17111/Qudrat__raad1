@@ -1547,9 +1547,47 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     }
   };
 
-  const handleQuestionImageUpload = (qIdx: number, e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleQuestionImageUpload = async (qIdx: number, e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    // 1. Permanently protect current title so it NEVER gets deleted
+    const currentTitle = itemTitle.trim() || pinnedTitleRef.current.trim();
+    if (currentTitle) {
+      pinnedTitleRef.current = currentTitle;
+      setItemTitle(currentTitle);
+      try {
+        localStorage.setItem('admin_draft_item_title', currentTitle);
+      } catch (err) {}
+    }
+
+    // 2. Upload to server first for a small permanent URL
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        body: formData,
+      });
+      const data = await res.json();
+      if (data.success && data.url) {
+        setExamQuestions((prev) => {
+          const next = [...prev];
+          next[qIdx] = { ...next[qIdx], imageUrl: data.url };
+          return next;
+        });
+        if (currentTitle) {
+          setItemTitle(currentTitle);
+          pinnedTitleRef.current = currentTitle;
+        }
+        notifySave('تم رفع صورة السؤال وحفظها على الخادم بنجاح ✓');
+        return;
+      }
+    } catch (uploadErr) {
+      console.warn('Server upload fallback to canvas', uploadErr);
+    }
+
+    // Fallback: local compressed canvas image
     const reader = new FileReader();
     reader.onload = (event) => {
       const rawData = event.target?.result as string;
@@ -1576,9 +1614,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
           const compressedUri = canvas.toDataURL('image/jpeg', 0.7);
           setExamQuestions((prev) => {
             const next = [...prev];
-            next[qIdx].imageUrl = compressedUri;
+            next[qIdx] = { ...next[qIdx], imageUrl: compressedUri };
             return next;
           });
+          if (currentTitle) {
+            setItemTitle(currentTitle);
+            pinnedTitleRef.current = currentTitle;
+          }
         }
       };
       img.src = rawData;
@@ -1586,8 +1628,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     reader.readAsDataURL(file);
   };
 
-  const handleSaveContentItem = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSaveContentItem = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     let targetResId = modalResourceId || (editingItem ? editingItem.resourceId : '') || selectedResourceId || effectiveResourceId;
     if (!targetResId) {
       const secId = modalSectionId || selectedSectionId || effectiveSectionId;
@@ -1616,8 +1658,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     const resolvedTitle = (
       itemTitle.trim() ||
       pinnedTitleRef.current.trim() ||
-      (typeof window !== 'undefined' ? (localStorage.getItem('admin_draft_item_title') || '') : '') ||
-      (editingItem ? editingItem.title : '')
+      (editingItem ? editingItem.title : '') ||
+      (typeof window !== 'undefined' ? (localStorage.getItem('admin_draft_item_title') || '') : '')
     ).trim();
 
     if (!resolvedTitle || !targetResId) {
@@ -1639,7 +1681,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       };
 
       if (itemType === 'video') {
-        let finalUrl = itemUrl || itemFileData || (editingItem ? editingItem.url : '') || 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
+        let finalUrl = itemUrl.trim() || itemFileData || (editingItem ? editingItem.url : '') || 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
         if (finalUrl.startsWith('data:') && finalUrl.length > 750000) {
           finalUrl = editingItem?.url || 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
         }
@@ -1654,7 +1696,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         basePayload.linkedExamIds = linkedExamIds;
         basePayload.linkedFileIds = linkedFileIds;
       } else if (itemType === 'file') {
-        let finalUrl: string = (itemUrl || itemFileData || (editingItem ? editingItem.url : '') || '') as string;
+        let finalUrl: string = (itemUrl.trim() || itemFileData || (editingItem ? editingItem.url : '') || '') as string;
         if (finalUrl && finalUrl.startsWith('data:') && finalUrl.length > 750000) {
           finalUrl = editingItem?.url || '';
         }
@@ -1666,9 +1708,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         basePayload.fileName = itemFileName || (editingItem ? editingItem.fileName : '') || 'document.pdf';
         basePayload.fileSize = itemFileSize || (editingItem ? editingItem.fileSize : '') || '1.5 MB';
       } else if (itemType === 'exam') {
-        basePayload.isExternal = isExternalExam;
+        basePayload.isExternal = Boolean(isExternalExam);
         if (isExternalExam) {
-          basePayload.url = itemUrl;
+          basePayload.url = itemUrl.trim();
         } else {
           // Process ALL questions: ensure questions are preserved even if only image or choices were added
           const cleanQuestions: ExamQuestion[] = examQuestions.map((q, idx) => {
@@ -1679,12 +1721,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
               : ['الخيار أ', 'الخيار ب', 'الخيار ج', 'الخيار د'];
 
             return {
-              id: q.id || `q_${idx + 1}`,
-              questionText: text || (image ? `سؤال رقم ${idx + 1} (انظر الصورة المرفقة)` : `سؤال رقم ${idx + 1}`),
-              imageUrl: image,
-              options: opts,
+              id: String(q.id || `q_${idx + 1}`),
+              questionText: String(text || (image ? `سؤال رقم ${idx + 1} (انظر الصورة المرفقة)` : `سؤال رقم ${idx + 1}`)),
+              imageUrl: String(image || ''),
+              options: opts.map((o) => String(o || '')),
               correctOptionIndex: typeof q.correctOptionIndex === 'number' ? q.correctOptionIndex : 0,
-              explanation: (q.explanation || '').trim(),
+              explanation: String(q.explanation || ''),
             };
           });
 
@@ -1723,11 +1765,23 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         }
       }
 
+      // Sanitize all undefined fields so Firestore never rejects the write
+      const sanitizedPayload: any = {};
+      for (const [k, v] of Object.entries(basePayload)) {
+        if (v !== undefined) {
+          sanitizedPayload[k] = v;
+        }
+      }
+
       // 1. Immediately switch active selectedResourceId and section so user views the saved item right away
       setSelectedResourceId(targetResId);
       const parentRes = resources.find((r) => r.id === targetResId);
       if (parentRes?.sectionId) {
         setSelectedSectionId(parentRes.sectionId);
+        const parentSec = sections.find((s) => s.id === parentRes.sectionId);
+        if (parentSec?.courseId) {
+          setSelectedCourseId(parentSec.courseId);
+        }
       }
 
       // 2. Instant optimistic local state update for zero-delay UI feedback
@@ -1736,10 +1790,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         let updatedList: ContentItem[];
         if (index >= 0) {
           const next = [...prev];
-          next[index] = { ...prev[index], ...basePayload };
+          next[index] = { ...prev[index], ...sanitizedPayload };
           updatedList = next;
         } else {
-          updatedList = [basePayload, ...prev];
+          updatedList = [sanitizedPayload, ...prev];
         }
         try {
           localStorage.setItem('raad_cached_content_items', JSON.stringify(updatedList));
@@ -1748,7 +1802,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       });
 
       // 3. Persist to Firestore with merge: true
-      await setDoc(doc(db, 'content_items', targetId), basePayload, { merge: true });
+      await setDoc(doc(db, 'content_items', targetId), sanitizedPayload, { merge: true });
 
       try {
         localStorage.removeItem('admin_draft_item_title');
@@ -1781,7 +1835,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       ]);
       notifySave(
         editingItem
-          ? `تم حفظ تعديلات (${resolvedTitle}) فوراً بنجاح ✓`
+          ? `تم حفظ وتطبيق تعديلات (${resolvedTitle}) فوراً بنجاح ✓`
           : `تم نشر وحفظ (${resolvedTitle}) فوراً بنجاح ✓`
       );
     } catch (err) {
@@ -5805,7 +5859,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       {/* ================= MODAL: ADD / EDIT CONTENT ITEM ================= */}
       {isAddingItem && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 md:p-6 bg-black/85 backdrop-blur-md overflow-y-auto">
-          <form onSubmit={handleSaveContentItem} autoComplete="off" noValidate className="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-2xl w-full my-auto space-y-4 max-h-[90vh] overflow-y-auto">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-2xl w-full my-auto space-y-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between pb-3 border-b border-slate-800">
               <h3 className="text-lg font-black text-white flex items-center gap-2">
                 {itemType === 'video' ? (
@@ -5993,23 +6047,84 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
               )}
             </div>
 
-            {/* Video Duration Input */}
+            {/* Video Duration & Quick Presets (كتابة المدة أو الضغط على زر فيديو تعليمي) */}
             {itemType === 'video' && (
-              <div className="p-3 bg-slate-800/60 rounded-2xl border border-slate-700 flex items-center justify-between gap-3">
-                <label className="text-xs font-bold text-blue-300 flex items-center gap-1.5">
-                  <Clock className="w-4 h-4 text-blue-400" />
-                  <span>مدة الفيديو التقديرية بالدقائق:</span>
-                </label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="number"
-                    min={1}
-                    max={600}
-                    value={itemDurationMinutes}
-                    onChange={(e) => setItemDurationMinutes(Number(e.target.value) || 15)}
-                    className="w-20 px-2.5 py-1.5 text-xs rounded-lg bg-slate-900 border border-slate-700 text-white font-mono text-center font-bold"
-                  />
-                  <span className="text-xs text-slate-400">دقيقة</span>
+              <div className="p-3.5 bg-slate-800/80 rounded-2xl border border-blue-500/40 space-y-2.5 shadow-md">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <label className="text-xs font-black text-blue-300 flex items-center gap-1.5">
+                    <Clock className="w-4 h-4 text-blue-400" />
+                    <span>مدة الفيديو بالدقائق (اكتب المدة بحرية أو اختر زر سريع):</span>
+                  </label>
+                  <span className="text-xs font-mono font-black text-blue-300 bg-blue-500/20 px-2.5 py-1 rounded-xl border border-blue-500/40">
+                    ⏱️ المدة الحالية: {itemDurationMinutes || 15} دقيقة
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  <div className="flex items-center gap-2 bg-slate-900 px-3 py-1.5 rounded-xl border border-blue-500/40">
+                    <span className="text-xs text-slate-300 font-bold">كتابة المدة:</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={600}
+                      value={itemDurationMinutes}
+                      onChange={(e) => setItemDurationMinutes(Math.max(1, Number(e.target.value) || 15))}
+                      placeholder="15"
+                      className="w-20 px-2 py-1 text-xs rounded-lg bg-slate-800 border border-slate-700 text-white font-mono text-center font-black focus:outline-none focus:border-blue-400"
+                    />
+                    <span className="text-xs text-slate-400 font-bold">دقيقة</span>
+                  </div>
+
+                  {/* Quick Preset Buttons */}
+                  <button
+                    type="button"
+                    onClick={() => setItemDurationMinutes(15)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-black transition flex items-center gap-1.5 border cursor-pointer ${
+                      itemDurationMinutes === 15
+                        ? 'bg-blue-600 text-white border-blue-400 shadow-md shadow-blue-600/30 ring-2 ring-blue-400/50'
+                        : 'bg-slate-900/90 hover:bg-slate-800 text-blue-300 border-blue-500/30'
+                    }`}
+                  >
+                    <Video className="w-3.5 h-3.5" />
+                    <span>فيديو تعليمي (15 دقيقة) ⭐</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setItemDurationMinutes(30)}
+                    className={`px-2.5 py-1.5 rounded-xl text-xs font-black transition flex items-center gap-1 border cursor-pointer ${
+                      itemDurationMinutes === 30
+                        ? 'bg-blue-600 text-white border-blue-400 shadow-md shadow-blue-600/30 ring-2 ring-blue-400/50'
+                        : 'bg-slate-900/90 hover:bg-slate-800 text-blue-300 border-blue-500/30'
+                    }`}
+                  >
+                    <Clock className="w-3.5 h-3.5" />
+                    <span>شرح مكثف (30 دقيقة)</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setItemDurationMinutes(45)}
+                    className={`px-2.5 py-1.5 rounded-xl text-xs font-black transition flex items-center gap-1 border cursor-pointer ${
+                      itemDurationMinutes === 45
+                        ? 'bg-blue-600 text-white border-blue-400 shadow-md shadow-blue-600/30 ring-2 ring-blue-400/50'
+                        : 'bg-slate-900/90 hover:bg-slate-800 text-blue-300 border-blue-500/30'
+                    }`}
+                  >
+                    <span>تأسيسي (45 دقيقة)</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setItemDurationMinutes(60)}
+                    className={`px-2.5 py-1.5 rounded-xl text-xs font-black transition flex items-center gap-1 border cursor-pointer ${
+                      itemDurationMinutes === 60
+                        ? 'bg-blue-600 text-white border-blue-400 shadow-md shadow-blue-600/30 ring-2 ring-blue-400/50'
+                        : 'bg-slate-900/90 hover:bg-slate-800 text-blue-300 border-blue-500/30'
+                    }`}
+                  >
+                    <span>حصة كاملة (60 دقيقة)</span>
+                  </button>
                 </div>
               </div>
             )}
@@ -6759,7 +6874,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                   إلغاء
                 </button>
                 <button
-                  type="submit"
+                  type="button"
+                  onClick={() => handleSaveContentItem()}
                   disabled={isSavingItem}
                   className="px-6 py-2.5 text-xs bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-black rounded-xl shadow-lg shadow-emerald-600/30 transition flex items-center gap-1.5 cursor-pointer"
                 >
@@ -6774,7 +6890,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                 </button>
               </div>
             </div>
-          </form>
+          </div>
         </div>
       )}
 
