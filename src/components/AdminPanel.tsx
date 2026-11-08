@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Users,
   Settings,
@@ -284,9 +284,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
   const [isUploadingServerFile, setIsUploadingServerFile] = useState<boolean>(false);
   const [serverUploadProgress, setServerUploadProgress] = useState<number>(0);
   const [isSavingItem, setIsSavingItem] = useState<boolean>(false);
+  const [itemDurationMinutes, setItemDurationMinutes] = useState<number>(15);
+  const pinnedTitleRef = useRef<string>(
+    typeof window !== 'undefined' ? (localStorage.getItem('admin_draft_item_title') || '') : ''
+  );
 
-  // Sync draft to localStorage so title and description are preserved even on navigation or modal reopen
+  // Sync draft to localStorage and pinnedTitleRef so title is permanently protected
   const updateItemTitle = (val: string) => {
+    pinnedTitleRef.current = val;
     setItemTitle(val);
     try {
       if (!editingItem) {
@@ -1417,6 +1422,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
 
     xhr.onload = () => {
       setIsUploadingServerFile(false);
+      // Ensure title is strictly preserved and never wiped
+      if (pinnedTitleRef.current && (!itemTitle || !itemTitle.trim())) {
+        setItemTitle(pinnedTitleRef.current);
+      }
       if (xhr.status >= 200 && xhr.status < 300) {
         try {
           const res = JSON.parse(xhr.responseText);
@@ -1523,8 +1532,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
 
       if (importedQuestions.length > 0) {
         setExamQuestions(importedQuestions);
-        if (!itemTitle.trim()) {
+        if (!itemTitle.trim() && !pinnedTitleRef.current.trim()) {
           updateItemTitle(file.name.replace(/\.[^/.]+$/, ''));
+        } else if (pinnedTitleRef.current.trim() && !itemTitle.trim()) {
+          setItemTitle(pinnedTitleRef.current.trim());
         }
         notifySave(`تم استيراد ${importedQuestions.length} سؤال من ملف الاختبار (${file.name}) بنجاح ✓`);
       } else {
@@ -1577,7 +1588,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
 
   const handleSaveContentItem = async (e: React.FormEvent) => {
     e.preventDefault();
-    let targetResId = modalResourceId || selectedResourceId || effectiveResourceId;
+    let targetResId = modalResourceId || (editingItem ? editingItem.resourceId : '') || selectedResourceId || effectiveResourceId;
     if (!targetResId) {
       const secId = modalSectionId || selectedSectionId || effectiveSectionId;
       if (secId) {
@@ -1602,8 +1613,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       }
     }
 
-    if (!itemTitle.trim() || !targetResId) {
-      notifySave('يرجى تحديد المصدر وكتابة عنوان العنصر');
+    const resolvedTitle = (
+      itemTitle.trim() ||
+      pinnedTitleRef.current.trim() ||
+      (typeof window !== 'undefined' ? (localStorage.getItem('admin_draft_item_title') || '') : '') ||
+      (editingItem ? editingItem.title : '')
+    ).trim();
+
+    if (!resolvedTitle || !targetResId) {
+      notifySave('يرجى كتابة عنوان العنصر وتحديد المصدر');
       return;
     }
 
@@ -1614,9 +1632,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         id: targetId,
         resourceId: targetResId,
         type: itemType,
-        title: itemTitle.trim(),
+        title: resolvedTitle,
         description: itemDesc.trim(),
-        createdAt: editingItem ? editingItem.createdAt : new Date().toISOString(),
+        createdAt: editingItem ? (editingItem.createdAt || new Date().toISOString()) : new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
 
@@ -1632,6 +1650,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         }
         basePayload.fileName = itemFileName || (editingItem ? editingItem.fileName : '') || 'video.mp4';
         basePayload.fileSize = itemFileSize || (editingItem ? editingItem.fileSize : '') || '';
+        basePayload.durationMinutes = Number(itemDurationMinutes) || editingItem?.durationMinutes || 15;
         basePayload.linkedExamIds = linkedExamIds;
         basePayload.linkedFileIds = linkedFileIds;
       } else if (itemType === 'file') {
@@ -1704,18 +1723,31 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         }
       }
 
-      // Optimistic local state update for instant UI feedback without waiting
+      // 1. Immediately switch active selectedResourceId and section so user views the saved item right away
+      setSelectedResourceId(targetResId);
+      const parentRes = resources.find((r) => r.id === targetResId);
+      if (parentRes?.sectionId) {
+        setSelectedSectionId(parentRes.sectionId);
+      }
+
+      // 2. Instant optimistic local state update for zero-delay UI feedback
       setItems((prev) => {
         const index = prev.findIndex((i) => i.id === targetId);
+        let updatedList: ContentItem[];
         if (index >= 0) {
           const next = [...prev];
           next[index] = { ...prev[index], ...basePayload };
-          return next;
+          updatedList = next;
+        } else {
+          updatedList = [basePayload, ...prev];
         }
-        return [basePayload, ...prev];
+        try {
+          localStorage.setItem('raad_cached_content_items', JSON.stringify(updatedList));
+        } catch (e) {}
+        return updatedList;
       });
 
-      // Persist to Firestore
+      // 3. Persist to Firestore with merge: true
       await setDoc(doc(db, 'content_items', targetId), basePayload, { merge: true });
 
       try {
@@ -1723,6 +1755,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         localStorage.removeItem('admin_draft_item_desc');
       } catch (e) {}
 
+      pinnedTitleRef.current = '';
       setIsAddingItem(false);
       setEditingItem(null);
       setItemTitle('');
@@ -1730,6 +1763,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       setItemUrl('');
       setItemFileData('');
       setItemFileName('');
+      setItemDurationMinutes(15);
       setExamDurationMinutes(15);
       setExamTargetPercentage(90);
       setLinkedExamIds([]);
@@ -1747,8 +1781,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       ]);
       notifySave(
         editingItem
-          ? 'تم حفظ التعديلات فوراً بنجاح ✓'
-          : 'تم الرفع وحفظ المحتوى على المنصة فوراً بنجاح ✓'
+          ? `تم حفظ تعديلات (${resolvedTitle}) فوراً بنجاح ✓`
+          : `تم نشر وحفظ (${resolvedTitle}) فوراً بنجاح ✓`
       );
     } catch (err) {
       console.error(err);
@@ -1818,16 +1852,23 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     const savedDraftTitle = (typeof window !== 'undefined' ? localStorage.getItem('admin_draft_item_title') : '') || '';
     const savedDraftDesc = (typeof window !== 'undefined' ? localStorage.getItem('admin_draft_item_desc') : '') || '';
     if (savedDraftTitle) {
+      pinnedTitleRef.current = savedDraftTitle;
       setItemTitle(savedDraftTitle);
+    } else {
+      pinnedTitleRef.current = '';
+      setItemTitle('');
     }
     if (savedDraftDesc) {
       setItemDesc(savedDraftDesc);
+    } else {
+      setItemDesc('');
     }
     setItemUrl('');
     setItemFileData('');
     setItemFileName('');
     setItemFileSize('');
     setIsExternalExam(false);
+    setItemDurationMinutes(15);
     setExamDurationMinutes(15);
     setExamTargetPercentage(90);
     setLinkedExamIds([]);
@@ -1848,6 +1889,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
 
   const handleOpenEditItem = (it: ContentItem) => {
     setEditingItem(it);
+    pinnedTitleRef.current = it.title;
     setItemType(it.type);
     setModalResourceId(it.resourceId);
     const chosenRes = resources.find((r) => r.id === it.resourceId);
@@ -1859,6 +1901,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     setItemFileName(it.fileName || '');
     setItemFileSize(it.fileSize || '');
     setIsExternalExam(it.isExternal || false);
+    setItemDurationMinutes(it.durationMinutes || 15);
     setExamDurationMinutes(it.durationMinutes || 15);
     setExamTargetPercentage(it.targetPercentage || 90);
     setLinkedExamIds(it.linkedExamIds || []);
@@ -5762,7 +5805,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       {/* ================= MODAL: ADD / EDIT CONTENT ITEM ================= */}
       {isAddingItem && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 md:p-6 bg-black/85 backdrop-blur-md overflow-y-auto">
-          <form onSubmit={handleSaveContentItem} className="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-2xl w-full my-auto space-y-4 max-h-[90vh] overflow-y-auto">
+          <form onSubmit={handleSaveContentItem} autoComplete="off" noValidate className="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-2xl w-full my-auto space-y-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between pb-3 border-b border-slate-800">
               <h3 className="text-lg font-black text-white flex items-center gap-2">
                 {itemType === 'video' ? (
@@ -5894,7 +5937,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
 
             {/* Basic Info */}
             <div>
-              <div className="flex items-center justify-between mb-1.5">
+              <div className="flex items-center justify-between mb-1.5 flex-wrap gap-2">
                 <label className="text-xs font-black text-slate-200 flex items-center gap-1.5">
                   <span>
                     {itemType === 'video' ? 'اسم / عنوان الفيديو:' : itemType === 'exam' ? 'اسم / عنوان الاختبار:' : 'اسم / عنوان الملف أو المستند:'}
@@ -5902,23 +5945,34 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                   <span className="text-rose-400">*</span>
                 </label>
                 {itemTitle.trim().length > 0 ? (
-                  <span className="text-[11px] font-black text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 px-2 py-0.5 rounded-full flex items-center gap-1 animate-in fade-in duration-150">
+                  <span className="text-[11px] font-black text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 px-2.5 py-0.5 rounded-full flex items-center gap-1.5 shadow-sm animate-in fade-in duration-150">
                     <Check className="w-3.5 h-3.5 text-emerald-400 stroke-[3]" />
-                    <span>تم حفظ الاسم ✓</span>
+                    <span>الاسم مثبت ومحفوظ ✓ ({itemTitle.trim()})</span>
                   </span>
                 ) : (
                   <span className="text-[10px] text-slate-500 font-bold">
-                    (اكتب الاسم هنا وسيتم تثبيته تلقائياً)
+                    (اكتب الاسم هنا وسيتم تثبيته تلقائياً ✓)
                   </span>
                 )}
               </div>
               <div className="relative">
                 <input
                   type="text"
+                  name="itemTitleField"
+                  id="item-title-field"
+                  autoComplete="off"
                   required
                   placeholder={itemType === 'video' ? 'مثال: شرح درس التناظر اللفظي 1...' : itemType === 'exam' ? 'مثال: اختبار القدرات العام...' : 'مثال: ملخص ومذكرة القوانين...'}
                   value={itemTitle}
                   onChange={(e) => updateItemTitle(e.target.value)}
+                  onBlur={() => {
+                    if (itemTitle.trim()) {
+                      pinnedTitleRef.current = itemTitle.trim();
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') e.preventDefault();
+                  }}
                   className={`w-full py-2.5 px-3.5 text-xs rounded-xl bg-slate-800 border text-white focus:outline-none font-bold transition ${
                     itemTitle.trim().length > 0
                       ? 'border-emerald-500/60 focus:border-emerald-400 pl-9'
@@ -5931,15 +5985,46 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                   </div>
                 )}
               </div>
+              {itemTitle.trim().length > 0 && (
+                <div className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-400/90 mt-1">
+                  <Check className="w-3 h-3 stroke-[3]" />
+                  <span>هذا الاسم مثبت ومحمي ولن يتغير أو يختفي عند لصق الرابط أو رفع الملف وسيتم الحفظ والنشر به مباشرة ✓</span>
+                </div>
+              )}
             </div>
+
+            {/* Video Duration Input */}
+            {itemType === 'video' && (
+              <div className="p-3 bg-slate-800/60 rounded-2xl border border-slate-700 flex items-center justify-between gap-3">
+                <label className="text-xs font-bold text-blue-300 flex items-center gap-1.5">
+                  <Clock className="w-4 h-4 text-blue-400" />
+                  <span>مدة الفيديو التقديرية بالدقائق:</span>
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={1}
+                    max={600}
+                    value={itemDurationMinutes}
+                    onChange={(e) => setItemDurationMinutes(Number(e.target.value) || 15)}
+                    className="w-20 px-2.5 py-1.5 text-xs rounded-lg bg-slate-900 border border-slate-700 text-white font-mono text-center font-bold"
+                  />
+                  <span className="text-xs text-slate-400">دقيقة</span>
+                </div>
+              </div>
+            )}
 
             <div>
               <label className="text-xs font-bold text-slate-400 block mb-1">الوصف والملاحظات:</label>
               <input
                 type="text"
+                autoComplete="off"
                 placeholder="وصف مختصر اختياري..."
                 value={itemDesc}
                 onChange={(e) => updateItemDesc(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') e.preventDefault();
+                }}
                 className="w-full px-3.5 py-2 text-xs rounded-xl bg-slate-800 border border-slate-700 text-white focus:outline-none focus:border-blue-500"
               />
             </div>
@@ -5964,9 +6049,29 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                   </label>
                   <input
                     type="url"
+                    name="itemUrlField"
+                    id="item-url-field"
+                    autoComplete="off"
                     placeholder="https://drive.google.com/... أو https://..."
                     value={itemUrl}
-                    onChange={(e) => setItemUrl(e.target.value)}
+                    onChange={(e) => {
+                      setItemUrl(e.target.value);
+                      if (pinnedTitleRef.current && (!itemTitle || !itemTitle.trim())) {
+                        setItemTitle(pinnedTitleRef.current);
+                      }
+                    }}
+                    onPaste={() => {
+                      if (pinnedTitleRef.current) {
+                        setTimeout(() => {
+                          if (!itemTitle || !itemTitle.trim()) {
+                            setItemTitle(pinnedTitleRef.current);
+                          }
+                        }, 20);
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') e.preventDefault();
+                    }}
                     className="w-full px-3 py-2 text-xs rounded-xl bg-slate-900 border border-slate-700 text-white font-mono"
                   />
                   <p className="text-[10px] text-slate-400 mt-1">
@@ -6283,9 +6388,29 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                     <label className="text-xs font-bold text-slate-400 block mb-1">رابط الاختبار الخارجي:</label>
                     <input
                       type="url"
+                      name="externalExamUrlField"
+                      id="external-exam-url-field"
+                      autoComplete="off"
                       placeholder="https://forms.gle/..."
                       value={itemUrl}
-                      onChange={(e) => setItemUrl(e.target.value)}
+                      onChange={(e) => {
+                        setItemUrl(e.target.value);
+                        if (pinnedTitleRef.current && (!itemTitle || !itemTitle.trim())) {
+                          setItemTitle(pinnedTitleRef.current);
+                        }
+                      }}
+                      onPaste={() => {
+                        if (pinnedTitleRef.current) {
+                          setTimeout(() => {
+                            if (!itemTitle || !itemTitle.trim()) {
+                              setItemTitle(pinnedTitleRef.current);
+                            }
+                          }, 20);
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') e.preventDefault();
+                      }}
                       className="w-full px-3 py-2 text-xs rounded-xl bg-slate-800 border border-slate-700 text-white font-mono"
                     />
                   </div>
