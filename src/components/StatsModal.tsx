@@ -137,6 +137,7 @@ export const StatsModal: React.FC<StatsModalProps> = ({
         id: vId,
         title: foundItem?.title || `فيديو تعليمي #${vId.slice(0, 8)}`,
         durationMinutes: foundItem?.durationMinutes,
+        showAsEducationalVideo: foundItem?.showAsEducationalVideo,
         description: foundItem?.description,
         resourceTitle: resObj?.title,
         sectionTitle: secObj?.title,
@@ -577,7 +578,7 @@ export const StatsModal: React.FC<StatsModalProps> = ({
                                   <span>•</span>
                                   <span className="flex items-center gap-1 font-mono">
                                     <Clock className="w-3 h-3 text-slate-400" />
-                                    {vid.durationMinutes} دقيقة
+                                    {vid.showAsEducationalVideo ? 'فيديو تعليمي' : `${vid.durationMinutes} دقيقة`}
                                   </span>
                                 </>
                               )}

@@ -1794,7 +1794,7 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                               <div>
                                 <div className={`text-xs font-bold ${isDarkMode ? 'text-white' : 'text-slate-950'}`}>{v.title}</div>
                                 <div className={`text-[10px] ${isDarkMode ? 'text-slate-400' : 'text-slate-600 font-medium'}`}>
-                                  {v.durationMinutes ? `${v.durationMinutes} دقيقة` : 'فيديو تعليمي'}
+                                  {v.showAsEducationalVideo ? 'فيديو تعليمي' : (v.durationMinutes ? `${v.durationMinutes} دقيقة` : 'فيديو تعليمي')}
                                 </div>
                               </div>
                             </div>

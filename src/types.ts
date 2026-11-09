@@ -116,6 +116,7 @@ export interface ContentItem {
   isExternal?: boolean;
   questions?: ExamQuestion[];
   durationMinutes?: number;
+  showAsEducationalVideo?: boolean;
   targetPercentage?: number;
   linkedExamIds?: string[];
   linkedFileIds?: string[];

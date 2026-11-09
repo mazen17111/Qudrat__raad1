@@ -284,19 +284,24 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
   const [isUploadingServerFile, setIsUploadingServerFile] = useState<boolean>(false);
   const [serverUploadProgress, setServerUploadProgress] = useState<number>(0);
   const [isSavingItem, setIsSavingItem] = useState<boolean>(false);
+  const [isConfirmSaveOpen, setIsConfirmSaveOpen] = useState<boolean>(false);
   const [itemDurationMinutes, setItemDurationMinutes] = useState<number>(15);
+  const [showAsEducationalVideo, setShowAsEducationalVideo] = useState<boolean>(false);
+  const itemTitleRef = useRef<string>(
+    typeof window !== 'undefined' ? (localStorage.getItem('admin_draft_item_title') || sessionStorage.getItem('admin_active_item_title') || '') : ''
+  );
   const pinnedTitleRef = useRef<string>(
-    typeof window !== 'undefined' ? (localStorage.getItem('admin_draft_item_title') || '') : ''
+    typeof window !== 'undefined' ? (localStorage.getItem('admin_draft_item_title') || sessionStorage.getItem('admin_active_item_title') || '') : ''
   );
 
-  // Sync draft to localStorage and pinnedTitleRef so title is permanently protected
+  // Sync draft to localStorage, sessionStorage, and refs so title is permanently protected
   const updateItemTitle = (val: string) => {
+    itemTitleRef.current = val;
     pinnedTitleRef.current = val;
     setItemTitle(val);
     try {
-      if (!editingItem) {
-        localStorage.setItem('admin_draft_item_title', val);
-      }
+      localStorage.setItem('admin_draft_item_title', val);
+      sessionStorage.setItem('admin_active_item_title', val);
     } catch (e) {}
   };
 
@@ -1628,8 +1633,29 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     reader.readAsDataURL(file);
   };
 
-  const handleSaveContentItem = async (e?: React.FormEvent) => {
+  // Request to Save: opens confirmation modal "هل فعلاً تريد حفظ التعديلات؟"
+  const handleRequestSaveItem = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
+    const resolvedTitle = (
+      itemTitle.trim() ||
+      itemTitleRef.current.trim() ||
+      pinnedTitleRef.current.trim() ||
+      (editingItem ? editingItem.title : '') ||
+      (typeof window !== 'undefined' ? (localStorage.getItem('admin_draft_item_title') || '') : '')
+    ).trim();
+
+    if (!resolvedTitle) {
+      notifySave('يرجى كتابة عنوان العنصر أولاً');
+      return;
+    }
+
+    setIsConfirmSaveOpen(true);
+  };
+
+  const handleSaveContentItem = handleRequestSaveItem;
+
+  // Execute Save: persists to Firestore and updates all state
+  const executeSaveContentItem = async () => {
     let targetResId = modalResourceId || (editingItem ? editingItem.resourceId : '') || selectedResourceId || effectiveResourceId;
     if (!targetResId) {
       const secId = modalSectionId || selectedSectionId || effectiveSectionId;
@@ -1657,6 +1683,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
 
     const resolvedTitle = (
       itemTitle.trim() ||
+      itemTitleRef.current.trim() ||
       pinnedTitleRef.current.trim() ||
       (editingItem ? editingItem.title : '') ||
       (typeof window !== 'undefined' ? (localStorage.getItem('admin_draft_item_title') || '') : '')
@@ -1664,6 +1691,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
 
     if (!resolvedTitle || !targetResId) {
       notifySave('يرجى كتابة عنوان العنصر وتحديد المصدر');
+      setIsConfirmSaveOpen(false);
       return;
     }
 
@@ -1691,8 +1719,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
           basePayload.fileData = finalFileData;
         }
         basePayload.fileName = itemFileName || (editingItem ? editingItem.fileName : '') || 'video.mp4';
-        basePayload.fileSize = itemFileSize || (editingItem ? editingItem.fileSize : '') || '';
         basePayload.durationMinutes = Number(itemDurationMinutes) || editingItem?.durationMinutes || 15;
+        basePayload.showAsEducationalVideo = Boolean(showAsEducationalVideo);
         basePayload.linkedExamIds = linkedExamIds;
         basePayload.linkedFileIds = linkedFileIds;
       } else if (itemType === 'file') {
@@ -1801,15 +1829,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         return updatedList;
       });
 
-      // 3. Persist to Firestore with merge: true
+      // 3. Persist to Firestore with merge: true (and updateDoc if editing)
       await setDoc(doc(db, 'content_items', targetId), sanitizedPayload, { merge: true });
+      if (editingItem) {
+        await updateDoc(doc(db, 'content_items', targetId), sanitizedPayload).catch(() => {});
+      }
 
       try {
         localStorage.removeItem('admin_draft_item_title');
         localStorage.removeItem('admin_draft_item_desc');
+        sessionStorage.removeItem('admin_active_item_title');
       } catch (e) {}
 
+      itemTitleRef.current = '';
       pinnedTitleRef.current = '';
+      setIsConfirmSaveOpen(false);
       setIsAddingItem(false);
       setEditingItem(null);
       setItemTitle('');
@@ -1818,6 +1852,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       setItemFileData('');
       setItemFileName('');
       setItemDurationMinutes(15);
+      setShowAsEducationalVideo(false);
       setExamDurationMinutes(15);
       setExamTargetPercentage(90);
       setLinkedExamIds([]);
@@ -1835,12 +1870,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       ]);
       notifySave(
         editingItem
-          ? `تم حفظ وتطبيق تعديلات (${resolvedTitle}) فوراً بنجاح ✓`
-          : `تم نشر وحفظ (${resolvedTitle}) فوراً بنجاح ✓`
+          ? `تم تأكيد وحفظ كافة تعديلات (${resolvedTitle}) في Firebase فوراً بنجاح ✓`
+          : `تم نشر وحفظ (${resolvedTitle}) في Firebase فوراً بنجاح ✓`
       );
     } catch (err) {
-      console.error(err);
-      notifySave('حدث خطأ أثناء حفظ المحتوى، يرجى المحاولة مرة أخرى');
+      console.error('Error saving to Firebase:', err);
+      notifySave('حدث خطأ أثناء حفظ المحتوى في Firebase، يرجى المحاولة مرة أخرى');
     } finally {
       setIsSavingItem(false);
     }
@@ -1903,12 +1938,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     setModalResourceId(chosenResId);
     const chosenRes = resources.find((r) => r.id === chosenResId);
     setModalSectionId(chosenRes?.sectionId || selectedSectionId || effectiveSectionId || '');
-    const savedDraftTitle = (typeof window !== 'undefined' ? localStorage.getItem('admin_draft_item_title') : '') || '';
+    const savedDraftTitle = (typeof window !== 'undefined' ? (localStorage.getItem('admin_draft_item_title') || sessionStorage.getItem('admin_active_item_title') || '') : '') || '';
     const savedDraftDesc = (typeof window !== 'undefined' ? localStorage.getItem('admin_draft_item_desc') : '') || '';
     if (savedDraftTitle) {
+      itemTitleRef.current = savedDraftTitle;
       pinnedTitleRef.current = savedDraftTitle;
       setItemTitle(savedDraftTitle);
     } else {
+      itemTitleRef.current = '';
       pinnedTitleRef.current = '';
       setItemTitle('');
     }
@@ -1923,6 +1960,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     setItemFileSize('');
     setIsExternalExam(false);
     setItemDurationMinutes(15);
+    setShowAsEducationalVideo(false);
     setExamDurationMinutes(15);
     setExamTargetPercentage(90);
     setLinkedExamIds([]);
@@ -1938,11 +1976,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         explanation: '',
       },
     ]);
+    setIsConfirmSaveOpen(false);
     setIsAddingItem(true);
   };
 
   const handleOpenEditItem = (it: ContentItem) => {
     setEditingItem(it);
+    itemTitleRef.current = it.title;
     pinnedTitleRef.current = it.title;
     setItemType(it.type);
     setModalResourceId(it.resourceId);
@@ -1956,6 +1996,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     setItemFileSize(it.fileSize || '');
     setIsExternalExam(it.isExternal || false);
     setItemDurationMinutes(it.durationMinutes || 15);
+    setShowAsEducationalVideo(Boolean(it.showAsEducationalVideo));
     setExamDurationMinutes(it.durationMinutes || 15);
     setExamTargetPercentage(it.targetPercentage || 90);
     setLinkedExamIds(it.linkedExamIds || []);
@@ -4297,7 +4338,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                                   <div className="font-bold text-white truncate">{v.title}</div>
                                   <div className="text-[10px] text-slate-400 flex flex-wrap items-center gap-2 mt-0.5">
                                     <span className="font-bold text-blue-300">
-                                      🎥 مدة الفيديو: {v.durationMinutes || 15} دقيقة
+                                      {v.showAsEducationalVideo ? '🎥 فيديو تعليمي' : `🎥 مدة الفيديو: ${v.durationMinutes || 15} دقيقة`}
                                     </span>
                                     {v.createdAt && (
                                       <span className="text-[9px] text-slate-500 font-mono">
@@ -6012,15 +6053,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
               <div className="relative">
                 <input
                   type="text"
-                  name="itemTitleField"
+                  name="custom_content_title_protect"
                   id="item-title-field"
                   autoComplete="off"
+                  spellCheck={false}
+                  data-lpignore="true"
+                  data-1p-ignore="true"
                   required
                   placeholder={itemType === 'video' ? 'مثال: شرح درس التناظر اللفظي 1...' : itemType === 'exam' ? 'مثال: اختبار القدرات العام...' : 'مثال: ملخص ومذكرة القوانين...'}
                   value={itemTitle}
                   onChange={(e) => updateItemTitle(e.target.value)}
                   onBlur={() => {
                     if (itemTitle.trim()) {
+                      itemTitleRef.current = itemTitle.trim();
                       pinnedTitleRef.current = itemTitle.trim();
                     }
                   }}
@@ -6053,77 +6098,123 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <label className="text-xs font-black text-blue-300 flex items-center gap-1.5">
                     <Clock className="w-4 h-4 text-blue-400" />
-                    <span>مدة الفيديو بالدقائق (اكتب المدة بحرية أو اختر زر سريع):</span>
+                    <span>عرض مدة الفيديو أو عبارة "فيديو تعليمي" تحته:</span>
                   </label>
-                  <span className="text-xs font-mono font-black text-blue-300 bg-blue-500/20 px-2.5 py-1 rounded-xl border border-blue-500/40">
-                    ⏱️ المدة الحالية: {itemDurationMinutes || 15} دقيقة
-                  </span>
+                  <div>
+                    {showAsEducationalVideo ? (
+                      <span className="text-xs font-mono font-black text-emerald-300 bg-emerald-500/20 px-2.5 py-1 rounded-xl border border-emerald-500/40 flex items-center gap-1.5">
+                        <Check className="w-3.5 h-3.5 text-emerald-400 stroke-[3]" />
+                        <span>سيظهر تحت الفيديو: <strong>"فيديو تعليمي"</strong> (تم الاختيار ✓)</span>
+                      </span>
+                    ) : (
+                      <span className="text-xs font-mono font-black text-blue-300 bg-blue-500/20 px-2.5 py-1 rounded-xl border border-blue-500/40">
+                        ⏱️ سيظهر تحت الفيديو: {itemDurationMinutes || 15} دقيقة
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 <div className="flex items-center gap-2.5 flex-wrap">
+                  {/* كتابة عدد الدقائق */}
                   <div className="flex items-center gap-2 bg-slate-900 px-3 py-1.5 rounded-xl border border-blue-500/40">
-                    <span className="text-xs text-slate-300 font-bold">كتابة المدة:</span>
+                    <span className="text-xs text-slate-300 font-bold">عدد الدقائق:</span>
                     <input
                       type="number"
                       min={1}
                       max={600}
                       value={itemDurationMinutes}
-                      onChange={(e) => setItemDurationMinutes(Math.max(1, Number(e.target.value) || 15))}
+                      onChange={(e) => {
+                        setItemDurationMinutes(Math.max(1, Number(e.target.value) || 15));
+                        setShowAsEducationalVideo(false);
+                      }}
                       placeholder="15"
                       className="w-20 px-2 py-1 text-xs rounded-lg bg-slate-800 border border-slate-700 text-white font-mono text-center font-black focus:outline-none focus:border-blue-400"
                     />
                     <span className="text-xs text-slate-400 font-bold">دقيقة</span>
                   </div>
 
-                  {/* Quick Preset Buttons */}
+                  {/* كلمة "فيديو تعليمي" بجانب عدد دقائق الفيديو مباشرة */}
                   <button
                     type="button"
-                    onClick={() => setItemDurationMinutes(15)}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-black transition flex items-center gap-1.5 border cursor-pointer ${
-                      itemDurationMinutes === 15
+                    onClick={() => setShowAsEducationalVideo(!showAsEducationalVideo)}
+                    className={`px-3.5 py-2 rounded-xl text-xs font-black transition flex items-center gap-1.5 border cursor-pointer ${
+                      showAsEducationalVideo
+                        ? 'bg-emerald-600 text-white border-emerald-400 shadow-lg shadow-emerald-600/30 ring-2 ring-emerald-400/50 scale-[1.02]'
+                        : 'bg-slate-900 hover:bg-slate-800 text-emerald-400 border-emerald-500/40 hover:border-emerald-400'
+                    }`}
+                    title="الضغط هنا يظهر عبارة 'فيديو تعليمي' تحت الفيديو بدلاً من عدد الدقائق"
+                  >
+                    <Video className="w-4 h-4 text-emerald-300" />
+                    <span>فيديو تعليمي</span>
+                    {showAsEducationalVideo ? (
+                      <span className="bg-emerald-500 text-slate-950 rounded-full px-1.5 py-0.2 text-[10px] font-black">
+                        ✓ مفعل للظهور
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-emerald-400/80 font-bold">(اضغط هنا لاختيارها)</span>
+                    )}
+                  </button>
+
+                  {/* Quick Preset Buttons (دقائق سريعة) */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setItemDurationMinutes(15);
+                      setShowAsEducationalVideo(false);
+                    }}
+                    className={`px-2.5 py-1.5 rounded-xl text-xs font-black transition flex items-center gap-1 border cursor-pointer ${
+                      !showAsEducationalVideo && itemDurationMinutes === 15
                         ? 'bg-blue-600 text-white border-blue-400 shadow-md shadow-blue-600/30 ring-2 ring-blue-400/50'
                         : 'bg-slate-900/90 hover:bg-slate-800 text-blue-300 border-blue-500/30'
                     }`}
                   >
-                    <Video className="w-3.5 h-3.5" />
-                    <span>فيديو تعليمي (15 دقيقة) ⭐</span>
+                    <span>15 دقيقة</span>
                   </button>
 
                   <button
                     type="button"
-                    onClick={() => setItemDurationMinutes(30)}
+                    onClick={() => {
+                      setItemDurationMinutes(30);
+                      setShowAsEducationalVideo(false);
+                    }}
                     className={`px-2.5 py-1.5 rounded-xl text-xs font-black transition flex items-center gap-1 border cursor-pointer ${
-                      itemDurationMinutes === 30
+                      !showAsEducationalVideo && itemDurationMinutes === 30
                         ? 'bg-blue-600 text-white border-blue-400 shadow-md shadow-blue-600/30 ring-2 ring-blue-400/50'
                         : 'bg-slate-900/90 hover:bg-slate-800 text-blue-300 border-blue-500/30'
                     }`}
                   >
                     <Clock className="w-3.5 h-3.5" />
-                    <span>شرح مكثف (30 دقيقة)</span>
+                    <span>30 دقيقة</span>
                   </button>
 
                   <button
                     type="button"
-                    onClick={() => setItemDurationMinutes(45)}
+                    onClick={() => {
+                      setItemDurationMinutes(45);
+                      setShowAsEducationalVideo(false);
+                    }}
                     className={`px-2.5 py-1.5 rounded-xl text-xs font-black transition flex items-center gap-1 border cursor-pointer ${
-                      itemDurationMinutes === 45
+                      !showAsEducationalVideo && itemDurationMinutes === 45
                         ? 'bg-blue-600 text-white border-blue-400 shadow-md shadow-blue-600/30 ring-2 ring-blue-400/50'
                         : 'bg-slate-900/90 hover:bg-slate-800 text-blue-300 border-blue-500/30'
                     }`}
                   >
-                    <span>تأسيسي (45 دقيقة)</span>
+                    <span>45 دقيقة</span>
                   </button>
 
                   <button
                     type="button"
-                    onClick={() => setItemDurationMinutes(60)}
+                    onClick={() => {
+                      setItemDurationMinutes(60);
+                      setShowAsEducationalVideo(false);
+                    }}
                     className={`px-2.5 py-1.5 rounded-xl text-xs font-black transition flex items-center gap-1 border cursor-pointer ${
-                      itemDurationMinutes === 60
+                      !showAsEducationalVideo && itemDurationMinutes === 60
                         ? 'bg-blue-600 text-white border-blue-400 shadow-md shadow-blue-600/30 ring-2 ring-blue-400/50'
                         : 'bg-slate-900/90 hover:bg-slate-800 text-blue-300 border-blue-500/30'
                     }`}
                   >
-                    <span>حصة كاملة (60 دقيقة)</span>
+                    <span>60 دقيقة</span>
                   </button>
                 </div>
               </div>
@@ -6163,25 +6254,35 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                     رابط مباشر أو رابط Google Drive / Dropbox (URL):
                   </label>
                   <input
-                    type="url"
-                    name="itemUrlField"
+                    type="text"
+                    name="custom_content_url_protect"
                     id="item-url-field"
                     autoComplete="off"
+                    spellCheck={false}
+                    data-lpignore="true"
+                    data-1p-ignore="true"
                     placeholder="https://drive.google.com/... أو https://..."
                     value={itemUrl}
                     onChange={(e) => {
                       setItemUrl(e.target.value);
-                      if (pinnedTitleRef.current && (!itemTitle || !itemTitle.trim())) {
-                        setItemTitle(pinnedTitleRef.current);
+                      const preserved = itemTitle.trim() || itemTitleRef.current.trim() || pinnedTitleRef.current.trim() || (editingItem ? editingItem.title : '');
+                      if (preserved && (!itemTitle || !itemTitle.trim())) {
+                        setItemTitle(preserved);
+                        itemTitleRef.current = preserved;
+                        pinnedTitleRef.current = preserved;
                       }
                     }}
-                    onPaste={() => {
-                      if (pinnedTitleRef.current) {
-                        setTimeout(() => {
-                          if (!itemTitle || !itemTitle.trim()) {
-                            setItemTitle(pinnedTitleRef.current);
-                          }
-                        }, 20);
+                    onPaste={(e) => {
+                      const pasted = e.clipboardData.getData('text')?.trim();
+                      if (pasted) {
+                        e.preventDefault();
+                        setItemUrl(pasted);
+                      }
+                      const preserved = itemTitle.trim() || itemTitleRef.current.trim() || pinnedTitleRef.current.trim() || (editingItem ? editingItem.title : '');
+                      if (preserved) {
+                        setItemTitle(preserved);
+                        itemTitleRef.current = preserved;
+                        pinnedTitleRef.current = preserved;
                       }
                     }}
                     onKeyDown={(e) => {
@@ -6502,25 +6603,35 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                   <div>
                     <label className="text-xs font-bold text-slate-400 block mb-1">رابط الاختبار الخارجي:</label>
                     <input
-                      type="url"
-                      name="externalExamUrlField"
+                      type="text"
+                      name="custom_external_exam_url_protect"
                       id="external-exam-url-field"
                       autoComplete="off"
+                      spellCheck={false}
+                      data-lpignore="true"
+                      data-1p-ignore="true"
                       placeholder="https://forms.gle/..."
                       value={itemUrl}
                       onChange={(e) => {
                         setItemUrl(e.target.value);
-                        if (pinnedTitleRef.current && (!itemTitle || !itemTitle.trim())) {
-                          setItemTitle(pinnedTitleRef.current);
+                        const preserved = itemTitle.trim() || itemTitleRef.current.trim() || pinnedTitleRef.current.trim() || (editingItem ? editingItem.title : '');
+                        if (preserved && (!itemTitle || !itemTitle.trim())) {
+                          setItemTitle(preserved);
+                          itemTitleRef.current = preserved;
+                          pinnedTitleRef.current = preserved;
                         }
                       }}
-                      onPaste={() => {
-                        if (pinnedTitleRef.current) {
-                          setTimeout(() => {
-                            if (!itemTitle || !itemTitle.trim()) {
-                              setItemTitle(pinnedTitleRef.current);
-                            }
-                          }, 20);
+                      onPaste={(e) => {
+                        const pasted = e.clipboardData.getData('text')?.trim();
+                        if (pasted) {
+                          e.preventDefault();
+                          setItemUrl(pasted);
+                        }
+                        const preserved = itemTitle.trim() || itemTitleRef.current.trim() || pinnedTitleRef.current.trim() || (editingItem ? editingItem.title : '');
+                        if (preserved) {
+                          setItemTitle(preserved);
+                          itemTitleRef.current = preserved;
+                          pinnedTitleRef.current = preserved;
                         }
                       }}
                       onKeyDown={(e) => {
@@ -6875,7 +6986,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                 </button>
                 <button
                   type="button"
-                  onClick={() => handleSaveContentItem()}
+                  onClick={() => handleRequestSaveItem()}
                   disabled={isSavingItem}
                   className="px-6 py-2.5 text-xs bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-black rounded-xl shadow-lg shadow-emerald-600/30 transition flex items-center gap-1.5 cursor-pointer"
                 >
@@ -6889,6 +7000,92 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                   )}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= MODAL: CONFIRM SAVE CHANGES (تأكيد حفظ التعديلات) ================= */}
+      {isConfirmSaveOpen && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="bg-slate-900 border-2 border-emerald-500/70 rounded-3xl p-6 max-w-md w-full space-y-5 shadow-2xl shadow-emerald-500/25">
+            <div className="flex items-center gap-3 pb-3 border-b border-slate-800">
+              <div className="p-3 rounded-2xl bg-emerald-500/20 text-emerald-400">
+                <ShieldCheck className="w-6 h-6 stroke-[2.5]" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-white">
+                  تأكيد حفظ التعديلات في Firebase ⚡
+                </h3>
+                <p className="text-xs text-emerald-400 font-bold">
+                  {editingItem ? 'تحديث وتعديل المحتوى فورياً' : 'نشر وحفظ جديد'}
+                </p>
+              </div>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-slate-950/90 border border-slate-800 space-y-3">
+              <p className="text-sm font-black text-slate-100 text-center leading-relaxed">
+                هل فعلاً تريد حفظ التعديلات؟
+              </p>
+              <div className="text-xs space-y-2.5 pt-2 border-t border-slate-800/80">
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-slate-400 font-bold">العنوان:</span>
+                  <span className="text-white font-black truncate max-w-[210px]">
+                    {itemTitle.trim() || itemTitleRef.current.trim() || pinnedTitleRef.current.trim() || (editingItem ? editingItem.title : '') || 'بدون عنوان'}
+                  </span>
+                </div>
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-slate-400 font-bold">نوع المحتوى:</span>
+                  <span className="text-emerald-400 font-black">
+                    {itemType === 'video' ? '🎥 فيديو تعليمي' : itemType === 'exam' ? '📝 اختبار تفاعلي' : '📁 ملف / مستند'}
+                  </span>
+                </div>
+                {itemType === 'video' && (
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="text-slate-400 font-bold">العرض تحت الفيديو:</span>
+                    <span className="text-emerald-400 font-black">
+                      {showAsEducationalVideo ? 'فيديو تعليمي ✓' : `${itemDurationMinutes || 15} دقيقة`}
+                    </span>
+                  </div>
+                )}
+                {(itemUrl || itemFileName) && (
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="text-slate-400 font-bold">الرابط / الملف:</span>
+                    <span className="text-blue-300 font-mono text-[10px] truncate max-w-[210px]" dir="ltr">
+                      {itemFileName || itemUrl}
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsConfirmSaveOpen(false)}
+                disabled={isSavingItem}
+                className="px-4 py-2.5 text-xs text-slate-400 hover:text-white font-bold rounded-xl transition cursor-pointer"
+              >
+                إلغاء وتراجع
+              </button>
+              <button
+                type="button"
+                onClick={executeSaveContentItem}
+                disabled={isSavingItem}
+                className="px-6 py-2.5 text-xs bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-black rounded-xl shadow-lg shadow-emerald-600/30 transition flex items-center gap-2 cursor-pointer"
+              >
+                {isSavingItem ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>جاري الحفظ في Firebase...</span>
+                  </>
+                ) : (
+                  <>
+                    <Check className="w-4 h-4 stroke-[3]" />
+                    <span>نعم، احفظ التعديلات فوراً ✓</span>
+                  </>
+                )}
+              </button>
             </div>
           </div>
         </div>
