@@ -83,26 +83,35 @@ export const TelegramLoginCard: React.FC<TelegramLoginCardProps> = ({
     try {
       const resp = await fetch('/api/telegram/send-otp', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
         body: JSON.stringify({ phone: phone.trim() }),
       });
-      const data = await resp.json();
 
-      if (data.success && data.linked) {
+      let data: any = null;
+      try {
+        data = await resp.json();
+      } catch (jsonErr) {
+        throw new Error(`استجابة غير متوقعة من السيرفر (كود ${resp.status})`);
+      }
+
+      if (data && data.success && data.linked) {
         setStatusMessage(data.message || 'تم إرسال كود التحقق بنجاح إلى حسابك في تليجرام!');
         setStep('otp');
         setResendCountdown(60);
-      } else if (data.notLinked) {
+      } else if (data && data.notLinked) {
         setNotLinkedWarning(true);
         setBotDeepLink(data.botUrl || `https://t.me/Ra3d6_bot?start=link_${data.cleanDigits || phone}`);
         setLocalError(data.message || 'رقم هاتفك غير مربوط بالبوت بعد. اضغط على الزر أدناه لربطه بنقرة واحدة.');
-        // Also allow moving to OTP in case they open bot and get code
         setStep('otp');
       } else {
-        setLocalError(data.error || 'فشل إرسال كود التحقق. يرجى التأكد من الرقم والمحاولة مجدداً.');
+        setLocalError(data?.error || data?.message || 'فشل إرسال كود التحقق. يرجى التأكد من الرقم والمحاولة مجدداً.');
       }
     } catch (err: any) {
-      setLocalError('تعذر الاتصال بالخادم. يرجى التحقق من اتصالك بالإنترنت.');
+      console.error('Send OTP Error:', err);
+      setLocalError(err.message || 'تعذر إرسال الطلب إلى السيرفر. يرجى إعادة المحاولة.');
     } finally {
       setIsSubmitting(false);
     }
@@ -122,12 +131,21 @@ export const TelegramLoginCard: React.FC<TelegramLoginCardProps> = ({
     try {
       const resp = await fetch('/api/telegram/verify-otp', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
         body: JSON.stringify({ phone: phone.trim(), code: otp.trim() }),
       });
-      const data = await resp.json();
 
-      if (data.success && data.user) {
+      let data: any = null;
+      try {
+        data = await resp.json();
+      } catch (jsonErr) {
+        throw new Error(`استجابة غير متوقعة من السيرفر (كود ${resp.status})`);
+      }
+
+      if (data && data.success && data.user) {
         setStatusMessage('تم التحقق بنجاح! جاري تسجيل الدخول...');
         if (onLoginSuccess) {
           onLoginSuccess(data.user);
@@ -135,10 +153,11 @@ export const TelegramLoginCard: React.FC<TelegramLoginCardProps> = ({
           window.location.reload();
         }
       } else {
-        setLocalError(data.error || 'كود التحقق غير صحيح أو انتهت صلاحيته.');
+        setLocalError(data?.error || data?.message || 'كود التحقق غير صحيح أو انتهت صلاحيته.');
       }
     } catch (err: any) {
-      setLocalError('حدث خطأ أثناء تأكيد الكود. يرجى المحاولة ثانية.');
+      console.error('Verify OTP Error:', err);
+      setLocalError(err.message || 'حدث خطأ أثناء تأكيد الكود. يرجى المحاولة ثانية.');
     } finally {
       setIsSubmitting(false);
     }
@@ -148,7 +167,7 @@ export const TelegramLoginCard: React.FC<TelegramLoginCardProps> = ({
   const handleVerifyDirectCode = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!directCode || directCode.trim().length < 4) {
-      setLocalError('يرجى إدخال الكود المباشر المستلم من البوت');
+      setLocalError('يرجى إدخال الكود المباشر المستلم من البوت (6 أرقام)');
       return;
     }
 
@@ -158,12 +177,21 @@ export const TelegramLoginCard: React.FC<TelegramLoginCardProps> = ({
     try {
       const resp = await fetch('/api/telegram/verify-direct-code', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
         body: JSON.stringify({ code: directCode.trim() }),
       });
-      const data = await resp.json();
 
-      if (data.success && data.user) {
+      let data: any = null;
+      try {
+        data = await resp.json();
+      } catch (jsonErr) {
+        throw new Error(`استجابة غير متوقعة من السيرفر (كود ${resp.status})`);
+      }
+
+      if (data && data.success && data.user) {
         setStatusMessage('تم التحقق بنجاح! جاري تسجيل الدخول...');
         if (onLoginSuccess) {
           onLoginSuccess(data.user);
@@ -171,10 +199,11 @@ export const TelegramLoginCard: React.FC<TelegramLoginCardProps> = ({
           window.location.reload();
         }
       } else {
-        setLocalError(data.error || 'كود الدخول غير صحيح أو منتهي الصلاحية.');
+        setLocalError(data?.error || data?.message || 'كود الدخول غير صحيح أو منتهي الصلاحية.');
       }
     } catch (err: any) {
-      setLocalError('حدث خطأ أثناء التحقق. يرجى المحاولة ثانية.');
+      console.error('Verify Direct Code Error:', err);
+      setLocalError(err.message || 'حدث خطأ أثناء التحقق. يرجى المحاولة ثانية.');
     } finally {
       setIsSubmitting(false);
     }
@@ -301,6 +330,20 @@ export const TelegramLoginCard: React.FC<TelegramLoginCardProps> = ({
                   </>
                 )}
               </button>
+
+              <div className="pt-1 text-center">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('direct');
+                    setLocalError('');
+                  }}
+                  className="text-[11px] text-sky-400 hover:text-sky-300 font-bold flex items-center justify-center gap-1.5 mx-auto cursor-pointer transition"
+                >
+                  <Bot className="w-3.5 h-3.5" />
+                  <span>طريقة أسرع: الدخول المباشر عبر [كود البوت السريع] 🔑</span>
+                </button>
+              </div>
             </form>
           ) : (
             /* STEP 2: OTP ENTRY */

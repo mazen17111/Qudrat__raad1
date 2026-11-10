@@ -62,6 +62,17 @@ const upload = multer({
   },
 });
 
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, Range');
+  res.header('Access-Control-Expose-Headers', 'Content-Range, Accept-Ranges, Content-Length');
+  if (req.method === 'OPTIONS') {
+    res.sendStatus(200);
+    return;
+  }
+  next();
+});
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
@@ -597,25 +608,35 @@ interface OtpRecord {
 }
 
 const activeOtps = new Map<string, OtpRecord>();
-const directBotCodes = new Map<string, { code: string; chatId: string | number; expiresAt: number }>();
+const directBotCodes = new Map<
+  string,
+  {
+    code: string;
+    chatId: string | number;
+    telegramId?: string | number;
+    username?: string;
+    name?: string;
+    expiresAt: number;
+  }
+>();
 
-// Endpoint: Send OTP to user's Telegram
-app.post('/api/telegram/send-otp', async (req: Request, res: Response) => {
+// Endpoint: Send OTP to user's Telegram (supports both POST and GET)
+app.all('/api/telegram/send-otp', async (req: Request, res: Response) => {
   try {
-    const { phone } = req.body;
-    if (!phone) {
+    const rawInputPhone = req.body?.phone || req.query?.phone;
+    if (!rawInputPhone) {
       res.status(400).json({ success: false, error: 'الرجاء إدخال رقم الهاتف' });
       return;
     }
 
-    const { normalized, cleanDigits, aliases } = normalizePhoneNumber(phone);
+    const { normalized, cleanDigits, aliases } = normalizePhoneNumber(String(rawInputPhone));
     if (!cleanDigits || cleanDigits.length < 8) {
       res.status(400).json({ success: false, error: 'رقم الهاتف المدخل غير مكتمل أو غير صحيح' });
       return;
     }
 
-    console.log(`[Send OTP] Request for phone: ${phone} (normalized: ${normalized}, cleanDigits: ${cleanDigits})`);
-    const linked = await findChatIdByPhone(phone);
+    console.log(`[Send OTP] Request for phone: ${rawInputPhone} (normalized: ${normalized}, cleanDigits: ${cleanDigits})`);
+    const linked = await findChatIdByPhone(String(rawInputPhone));
 
     if (!linked || !linked.chatId) {
       const botUrl = `https://t.me/Ra3d6_bot?start=link_${cleanDigits}`;
@@ -649,9 +670,27 @@ app.post('/api/telegram/send-otp', async (req: Request, res: Response) => {
     activeOtps.set(normalized, otpData);
     aliases.forEach((a) => activeOtps.set(a.toLowerCase(), otpData));
 
+    // Save direct code as well so both verification routes work
+    directBotCodes.set(code, {
+      code,
+      chatId: linked.chatId,
+      telegramId: linked.telegramId,
+      username: linked.username,
+      name: linked.name,
+      expiresAt,
+    });
+
     if (telegramDb) {
       try {
         await setDoc(doc(telegramDb, 'telegram_otp_codes', `otp_${cleanDigits}`), otpData);
+        await setDoc(doc(telegramDb, 'telegram_direct_codes', code), {
+          code,
+          phone: normalized,
+          chatId: String(linked.chatId),
+          telegramId: linked.telegramId ? String(linked.telegramId) : '',
+          expiresAt,
+          createdAt: new Date().toISOString(),
+        });
       } catch (e) {}
     }
 
@@ -673,17 +712,19 @@ app.post('/api/telegram/send-otp', async (req: Request, res: Response) => {
   }
 });
 
-// Endpoint: Verify OTP and log in student
-app.post('/api/telegram/verify-otp', async (req: Request, res: Response) => {
+// Endpoint: Verify OTP and log in student (supports both POST and GET)
+app.all('/api/telegram/verify-otp', async (req: Request, res: Response) => {
   try {
-    const { phone, code } = req.body;
-    if (!phone || !code) {
+    const rawPhone = req.body?.phone || req.query?.phone;
+    const rawCode = req.body?.code || req.query?.code;
+
+    if (!rawPhone || !rawCode) {
       res.status(400).json({ success: false, error: 'الرجاء إدخال رقم الهاتف وكود التحقق' });
       return;
     }
 
-    const { normalized, cleanDigits, aliases } = normalizePhoneNumber(phone);
-    const trimmedCode = code.toString().trim();
+    const { normalized, cleanDigits, aliases } = normalizePhoneNumber(String(rawPhone));
+    const trimmedCode = String(rawCode).trim();
 
     // 1. Check in-memory
     let otpRecord = activeOtps.get(cleanDigits) || activeOtps.get(normalized);
@@ -704,6 +745,21 @@ app.post('/api/telegram/verify-otp', async (req: Request, res: Response) => {
           otpRecord = snap.data() as OtpRecord;
         }
       } catch (e) {}
+    }
+
+    // Also check directBotCodes
+    if (!otpRecord && directBotCodes.has(trimmedCode)) {
+      const d = directBotCodes.get(trimmedCode)!;
+      if (Date.now() < d.expiresAt) {
+        otpRecord = {
+          phone: normalized,
+          cleanDigits,
+          code: trimmedCode,
+          chatId: d.chatId,
+          expiresAt: d.expiresAt,
+          createdAt: new Date().toISOString(),
+        };
+      }
     }
 
     if (!otpRecord) {
@@ -822,15 +878,15 @@ app.post('/api/telegram/verify-otp', async (req: Request, res: Response) => {
   }
 });
 
-// Endpoint: Verify direct bot code
-app.post('/api/telegram/verify-direct-code', async (req: Request, res: Response) => {
+// Endpoint: Verify direct bot code (supports both POST and GET)
+app.all('/api/telegram/verify-direct-code', async (req: Request, res: Response) => {
   try {
-    const { code } = req.body;
-    if (!code) {
+    const rawCode = req.body?.code || req.query?.code;
+    if (!rawCode) {
       res.status(400).json({ success: false, error: 'الرجاء إدخال كود الدخول' });
       return;
     }
-    const cleanCode = code.toString().trim();
+    const cleanCode = String(rawCode).trim();
 
     let record = directBotCodes.get(cleanCode);
     if (!record && telegramDb) {
@@ -842,6 +898,7 @@ app.post('/api/telegram/verify-direct-code', async (req: Request, res: Response)
       } catch (e) {}
     }
 
+    // Also search activeOtps by code value
     if (!record) {
       for (const [, val] of activeOtps.entries()) {
         if (val.code === cleanCode && Date.now() < val.expiresAt) {
@@ -877,270 +934,15 @@ app.post('/api/telegram/verify-direct-code', async (req: Request, res: Response)
           });
         } else {
           const newUserData = {
-            name: 'طالب رعد',
-            email: `tg_${chatId}@raad.platform`,
+            name: record.name || 'طالب رعد',
+            email: record.username ? `${record.username.toLowerCase()}@telegram.user` : `tg_${chatId}@raad.platform`,
             password: `auto_tg_${chatId}`,
             daysAllowed: 30,
             isUnlimited: false,
             enrolledCourseIds: [],
             telegramChatId: String(chatId),
-            createdAt: new Date().toISOString(),
-            lastLoginAt: new Date().toISOString(),
-          };
-          const newDocRef = doc(collection(telegramDb, 'users'));
-          await setDoc(newDocRef, newUserData);
-          authenticatedUser = { id: newDocRef.id, ...newUserData };
-        }
-      } catch (e) {}
-    }
-
-    if (!authenticatedUser) {
-      authenticatedUser = {
-        id: `tg_${chatId}`,
-        name: 'طالب رعد',
-        email: `tg_${chatId}@raad.platform`,
-        daysAllowed: 30,
-        telegramChatId: String(chatId),
-        createdAt: new Date().toISOString(),
-        lastLoginAt: new Date().toISOString(),
-      };
-    }
-
-    await sendTelegramMessage(chatId, '✅ <b>تم تسجيل دخولك بنجاح إلى منصة أقسام رعد!</b>\nنتمنى لك دراسة موفقة 🎯');
-
-    res.json({
-      success: true,
-      user: authenticatedUser,
-      message: 'تم تسجيل الدخول بنجاح!',
-    });
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: 'حدث خطأ: ' + err.message });
-  }
-});
-
-// Main Telegram Webhook endpoint for @Ra3d6_bot
-app.post('/api/telegram/webhook', async (req: Request, res: Response) => {
-  try {
-    const update = req.body;
-    console.log('[Telegram Webhook] Received update:', JSON.stringify(update));
-
-    const message = update?.message || update?.edited_message || update?.callback_query?.message;
-    if (!message) {
-      res.json({ ok: true, ignored: 'No message object' });
-      return;
-    }
-
-    const text = (message.text || update?.callback_query?.data || '').trim();
-    const chatId = message.chat?.id || update?.callback_query?.from?.id;
-    const from = update?.callback_query?.from || message.from;
-
-    if (!from || !chatId) {
-      res.json({ ok: true, ignored: 'No from/chat' });
-      return;
-    }
-
-    const telegramId = from.id;
-    const firstName = from.first_name || 'طالب';
-    const lastName = from.last_name || '';
-    const fullName = [firstName, lastName].filter(Boolean).join(' ') || 'طالب رعد';
-    const username = from.username || '';
-
-    // Keyboard for Bot
-    const botKeyboard = {
-      keyboard: [
-        [{ text: '📱 مشاركة رقم هاتفي للربط وتفعيل الرمز ✈️', request_contact: true }],
-        [{ text: '🔑 كود تسجيل الدخول السريع (OTP)' }],
-      ],
-      resize_keyboard: true,
-      one_time_keyboard: false,
-    };
-
-    // CASE 1: Student shared their contact card
-    if (message.contact && message.contact.phone_number) {
-      const contactPhone = message.contact.phone_number;
-      console.log(`[Telegram Webhook] Contact received: ${contactPhone} from chatId: ${chatId}`);
-
-      const linkRec = await savePhoneLink(contactPhone, chatId, {
-        telegramId,
-        username,
-        name: fullName,
-      });
-
-      const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-      const otpExpires = Date.now() + 10 * 60 * 1000;
-      const otpData: OtpRecord = {
-        phone: linkRec.phone,
-        cleanDigits: linkRec.cleanDigits,
-        code: otpCode,
-        chatId,
-        expiresAt: otpExpires,
-        createdAt: new Date().toISOString(),
-      };
-      activeOtps.set(linkRec.cleanDigits, otpData);
-      activeOtps.set(linkRec.phone, otpData);
-
-      if (telegramDb) {
-        try {
-          await setDoc(doc(telegramDb, 'telegram_otp_codes', `otp_${linkRec.cleanDigits}`), otpData);
-        } catch (e) {}
-      }
-
-      const replyText = `✅ <b>تم ربط رقم هاتفك بنجاح!</b>\n\n📱 الرقم المربوط: <code>${linkRec.phone}</code>\n\n🔐 <b>كود تسجيل الدخول الخاص بك:</b>\n<code>${otpCode}</code>\n\n⏱ الرمز صالح لمدة 10 دقائق.\nيمكنك إدخال هذا الكود الآن في صفحة تسجيل الدخول بالموقع.`;
-      await sendTelegramMessage(chatId, replyText, botKeyboard);
-      res.json({ ok: true, linkedPhone: linkRec.phone, otpGenerated: true });
-      return;
-    }
-
-    // CASE 2: Deep Link /start link_<PHONE>
-    if (text.startsWith('/start link_')) {
-      const rawPhoneParam = text.replace('/start link_', '').trim();
-      console.log(`[Telegram Webhook] Deep-link linking: ${rawPhoneParam} from chatId: ${chatId}`);
-
-      const linkRec = await savePhoneLink(rawPhoneParam, chatId, {
-        telegramId,
-        username,
-        name: fullName,
-      });
-
-      const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-      const otpExpires = Date.now() + 10 * 60 * 1000;
-      const otpData: OtpRecord = {
-        phone: linkRec.phone,
-        cleanDigits: linkRec.cleanDigits,
-        code: otpCode,
-        chatId,
-        expiresAt: otpExpires,
-        createdAt: new Date().toISOString(),
-      };
-      activeOtps.set(linkRec.cleanDigits, otpData);
-      activeOtps.set(linkRec.phone, otpData);
-
-      if (telegramDb) {
-        try {
-          await setDoc(doc(telegramDb, 'telegram_otp_codes', `otp_${linkRec.cleanDigits}`), otpData);
-        } catch (e) {}
-      }
-
-      const replyText = `✅ <b>أهلاً بك! تم ربط رقم هاتفك بنجاح ⚡</b>\n\n📱 الرقم المربوط: <code>${linkRec.phone}</code>\n\n🔐 <b>كود التحقق الخاص بك لتسجيل الدخول:</b>\n<code>${otpCode}</code>\n\n⏱ الرمز صالح لمدة 10 دقائق.\nارجع الآن لصفحة تسجيل الدخول وأدخل هذا الكود للمتابعة!`;
-      await sendTelegramMessage(chatId, replyText, botKeyboard);
-      res.json({ ok: true, deepLinked: true, phone: linkRec.phone });
-      return;
-    }
-
-    // CASE 3: Text message is a phone number (e.g. 05..., +966..., 01...)
-    const isPhoneNumber = /^(\+?[0-9\s-]{9,15})$/.test(text.replace(/[\s-]/g, ''));
-    if (isPhoneNumber && text.length >= 9) {
-      console.log(`[Telegram Webhook] Phone text received: ${text} from chatId: ${chatId}`);
-      const linkRec = await savePhoneLink(text, chatId, {
-        telegramId,
-        username,
-        name: fullName,
-      });
-
-      const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-      const otpExpires = Date.now() + 10 * 60 * 1000;
-      const otpData: OtpRecord = {
-        phone: linkRec.phone,
-        cleanDigits: linkRec.cleanDigits,
-        code: otpCode,
-        chatId,
-        expiresAt: otpExpires,
-        createdAt: new Date().toISOString(),
-      };
-      activeOtps.set(linkRec.cleanDigits, otpData);
-      activeOtps.set(linkRec.phone, otpData);
-
-      if (telegramDb) {
-        try {
-          await setDoc(doc(telegramDb, 'telegram_otp_codes', `otp_${linkRec.cleanDigits}`), otpData);
-        } catch (e) {}
-      }
-
-      const replyText = `✅ <b>تم ربط رقم هاتفك بنجاح!</b>\n\n📱 الرقم المربوط: <code>${linkRec.phone}</code>\n\n🔐 <b>كود تسجيل الدخول الخاص بك:</b>\n<code>${otpCode}</code>\n\n⏱ صالح لمدة 10 دقائق. أدخل هذا الكود الآن في الموقع لتسجيل الدخول.`;
-      await sendTelegramMessage(chatId, replyText, botKeyboard);
-      res.json({ ok: true, phoneLinkedByText: true });
-      return;
-    }
-
-    // CASE 4: Quick Login Code button or /code /otp command
-    if (text === '🔑 كود تسجيل الدخول السريع (OTP)' || text.startsWith('/code') || text.startsWith('/otp')) {
-      const code = Math.floor(100000 + Math.random() * 900000).toString();
-      const expiresAt = Date.now() + 10 * 60 * 1000;
-
-      directBotCodes.set(code, {
-        code,
-        chatId,
-        expiresAt,
-      });
-
-      if (telegramDb) {
-        try {
-          await setDoc(doc(telegramDb, 'telegram_direct_codes', code), {
-            code,
-            chatId: String(chatId),
-            expiresAt,
-            createdAt: new Date().toISOString(),
-          });
-        } catch (e) {}
-      }
-
-      const replyText = `🔑 <b>كود تسجيل الدخول السريع</b>\n\nرمزك المباشر هو:\n<code>${code}</code>\n\n⏱ صالح لمدة 10 دقائق.\nأدخل هذا الرمز مباشرة في شاشة الدخول بالموقع.`;
-      await sendTelegramMessage(chatId, replyText, botKeyboard);
-      res.json({ ok: true, directCode: code });
-      return;
-    }
-
-    // CASE 5: General /start or session-based login
-    const isStartCommand = text.startsWith('/start') || text.toLowerCase().includes('start') || text === 'ابدأ' || text === 'بدء';
-    const parts = text.split(' ');
-    const startParam = parts[1] || '';
-
-    let targetSessionId = '';
-    if (startParam.startsWith('login_')) {
-      targetSessionId = startParam.replace('login_', '').trim();
-    } else if (startParam === 'login' || !startParam || isStartCommand) {
-      targetSessionId = latestPendingSessionId || 'default';
-    }
-
-    let authenticatedUser: any = null;
-
-    if (telegramDb) {
-      try {
-        const qNum = query(collection(telegramDb, 'users'), where('telegramId', '==', Number(telegramId)));
-        let userSnap = await getDocs(qNum);
-        if (userSnap.empty) {
-          const qStr = query(collection(telegramDb, 'users'), where('telegramId', '==', String(telegramId)));
-          userSnap = await getDocs(qStr);
-        }
-
-        if (!userSnap.empty) {
-          const userDoc = userSnap.docs[0];
-          const existingData = userDoc.data();
-          authenticatedUser = {
-            ...existingData,
-            id: userDoc.id,
-            name: existingData.name || fullName,
-            telegramUsername: username || existingData.telegramUsername || '',
-            telegramChatId: String(chatId),
-            lastLoginAt: new Date().toISOString(),
-          };
-          await updateDoc(doc(telegramDb, 'users', userDoc.id), {
-            lastLoginAt: new Date().toISOString(),
-            telegramUsername: username || existingData.telegramUsername || '',
-            telegramChatId: String(chatId),
-          });
-        } else {
-          const newUserData = {
-            name: fullName,
-            email: username ? `${username.toLowerCase()}@telegram.user` : `tg_${telegramId}@raad.platform`,
-            password: `auto_tg_${telegramId}`,
-            daysAllowed: 30,
-            isUnlimited: false,
-            enrolledCourseIds: [],
-            telegramId: String(telegramId),
-            telegramChatId: String(chatId),
-            telegramUsername: username,
-            photoUrl: '',
+            telegramId: record.telegramId ? String(record.telegramId) : '',
+            telegramUsername: record.username || '',
             createdAt: new Date().toISOString(),
             lastLoginAt: new Date().toISOString(),
           };
@@ -1155,72 +957,473 @@ app.post('/api/telegram/webhook', async (req: Request, res: Response) => {
               isDefaultMistakesFolder: true,
               createdAt: new Date().toISOString(),
             });
-          } catch (fErr) {}
+          } catch (e) {}
 
-          authenticatedUser = {
-            ...newUserData,
-            id: newDocRef.id,
-          };
+          authenticatedUser = { id: newDocRef.id, ...newUserData };
         }
-
-        const sessionPayload = {
-          sessionId: targetSessionId || 'default',
-          status: 'authenticated',
-          telegramId: String(telegramId),
-          telegramChatId: String(chatId),
-          user: authenticatedUser,
-          createdAt: new Date().toISOString(),
-          authenticatedAt: new Date().toISOString(),
-        };
-
-        await Promise.all([
-          targetSessionId ? setDoc(doc(telegramDb, 'telegram_login_sessions', targetSessionId), sessionPayload) : Promise.resolve(),
-          setDoc(doc(telegramDb, 'telegram_login_sessions', 'global_latest'), sessionPayload),
-          setDoc(doc(telegramDb, 'telegram_login_sessions', 'default'), sessionPayload),
-        ]);
-      } catch (dbErr) {
-        console.error('[Telegram Webhook] Firestore error:', dbErr);
-      }
+      } catch (e) {}
     }
 
     if (!authenticatedUser) {
       authenticatedUser = {
-        id: `tg_${telegramId}`,
-        name: fullName,
-        email: `tg_${telegramId}@raad.platform`,
+        id: `tg_${chatId}`,
+        name: record.name || 'طالب رعد',
+        email: `tg_${chatId}@raad.platform`,
         daysAllowed: 30,
-        telegramId: String(telegramId),
         telegramChatId: String(chatId),
-        telegramUsername: username,
         createdAt: new Date().toISOString(),
         lastLoginAt: new Date().toISOString(),
       };
     }
 
-    const sessionRecord: TelegramSessionData = {
-      sessionId: targetSessionId || 'default',
-      status: 'authenticated',
+    await sendTelegramMessage(chatId, `✅ <b>تم تسجيل دخولك بنجاح إلى منصة أقسام رعد!</b>\nنتمنى لك دراسة موفقة يا ${authenticatedUser.name} 🎯`);
+
+    res.json({
+      success: true,
       user: authenticatedUser,
-      telegramId,
-      telegramChatId: chatId,
-      createdAt: new Date().toISOString(),
-      authenticatedAt: new Date().toISOString(),
+      message: 'تم تسجيل الدخول بنجاح!',
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: 'حدث خطأ: ' + err.message });
+  }
+});
+
+// Centralized Telegram update handler (used by both Long Polling and Webhook)
+async function handleTelegramUpdate(update: any): Promise<void> {
+  try {
+    const message = update?.message || update?.edited_message || update?.callback_query?.message;
+    if (!message) return;
+
+    const rawText = (message.text || update?.callback_query?.data || '').trim();
+    const text = rawText.toLowerCase();
+    const chatId = message.chat?.id || update?.callback_query?.from?.id;
+    const from = update?.callback_query?.from || message.from;
+
+    if (!from || !chatId) return;
+
+    const telegramId = from.id;
+    const firstName = from.first_name || 'طالب';
+    const lastName = from.last_name || '';
+    const fullName = [firstName, lastName].filter(Boolean).join(' ') || 'طالب رعد';
+    const username = from.username || '';
+
+    console.log(`[Telegram Bot] Message from ${fullName} (@${username || 'no_user'}, chat: ${chatId}): "${rawText}"`);
+
+    const botKeyboard = {
+      keyboard: [
+        [{ text: '📱 مشاركة رقم هاتفي للربط وتفعيل الرمز ✈️', request_contact: true }],
+        [{ text: '🔑 كود تسجيل الدخول السريع (OTP)' }],
+      ],
+      resize_keyboard: true,
+      one_time_keyboard: false,
     };
-    if (targetSessionId) activeTelegramSessions.set(targetSessionId, sessionRecord);
-    if (latestPendingSessionId) activeTelegramSessions.set(latestPendingSessionId, sessionRecord);
-    activeTelegramSessions.set('global_latest', sessionRecord);
-    activeTelegramSessions.set('default', sessionRecord);
 
-    const welcomeMsg = `👋 <b>أهلاً بك يا ${fullName} في منصة أقسام رعد التعليمية! ⚡</b>\n\nلربط رقم هاتفك واستلام رمز التحقق (OTP):\n1️⃣ اضغط على زر "📱 مشاركة رقم هاتفي" أدناه.\n2️⃣ أو أرسل رقم هاتفك في رسالة.\n3️⃣ أو اضغط على "🔑 كود تسجيل الدخول السريع".\n\nتم تسجيل دخولك بنجاح! يمكنك العودة للموقع الآن.`;
-    await sendTelegramMessage(chatId, welcomeMsg, botKeyboard);
+    // 1. Contact shared:
+    if (message.contact && message.contact.phone_number) {
+      const contactPhone = message.contact.phone_number;
+      console.log(`[Telegram Bot] Contact card received: ${contactPhone} from chatId ${chatId}`);
+      const linkRec = await savePhoneLink(contactPhone, chatId, {
+        telegramId,
+        username,
+        name: fullName,
+      });
 
-    res.json({ ok: true, authenticated: true, sessionId: targetSessionId, chatId });
-    return;
+      const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+      const expiresAt = Date.now() + 10 * 60 * 1000;
+      const otpData: OtpRecord = {
+        phone: linkRec.phone,
+        cleanDigits: linkRec.cleanDigits,
+        code: otpCode,
+        chatId,
+        expiresAt,
+        createdAt: new Date().toISOString(),
+      };
+      activeOtps.set(linkRec.cleanDigits, otpData);
+      activeOtps.set(linkRec.phone, otpData);
+
+      directBotCodes.set(otpCode, {
+        code: otpCode,
+        chatId,
+        telegramId,
+        username,
+        name: fullName,
+        expiresAt,
+      });
+
+      if (telegramDb) {
+        try {
+          await setDoc(doc(telegramDb, 'telegram_otp_codes', `otp_${linkRec.cleanDigits}`), otpData);
+          await setDoc(doc(telegramDb, 'telegram_direct_codes', otpCode), {
+            code: otpCode,
+            phone: linkRec.phone,
+            chatId: String(chatId),
+            telegramId: String(telegramId),
+            name: fullName,
+            username,
+            expiresAt,
+            createdAt: new Date().toISOString(),
+          });
+        } catch (e) {}
+      }
+
+      const reply = `✅ <b>تم ربط رقم هاتفك بنجاح!</b>\n\n📱 الرقم المربوط: <code>${linkRec.phone}</code>\n\n🔐 <b>كود تسجيل الدخول الخاص بك:</b>\n<code>${otpCode}</code>\n\n⏱ الرمز صالح لمدة 10 دقائق.\nيمكنك إدخال هذا الكود الآن في صفحة تسجيل الدخول بالموقع.`;
+      await sendTelegramMessage(chatId, reply, botKeyboard);
+      return;
+    }
+
+    // 2. /code or code or quick login requested (Handles /code, code, \code, /otp, كود, etc.)
+    const isCodeCommand =
+      rawText === '🔑 كود تسجيل الدخول السريع (OTP)' ||
+      text === '/code' ||
+      text.startsWith('/code') ||
+      text === 'code' ||
+      text === '\\code' ||
+      text === '/otp' ||
+      text.startsWith('/otp') ||
+      text === 'otp' ||
+      text === 'كود' ||
+      text === 'كود الدخول' ||
+      text === 'الرمز' ||
+      text === 'رمز الدخول' ||
+      text.includes('كود') ||
+      text.includes('رمز');
+
+    if (isCodeCommand) {
+      const code = Math.floor(100000 + Math.random() * 900000).toString();
+      const expiresAt = Date.now() + 10 * 60 * 1000;
+
+      directBotCodes.set(code, {
+        code,
+        chatId,
+        telegramId,
+        username,
+        name: fullName,
+        expiresAt,
+      });
+
+      if (telegramDb) {
+        try {
+          await setDoc(doc(telegramDb, 'telegram_direct_codes', code), {
+            code,
+            chatId: String(chatId),
+            telegramId: String(telegramId),
+            name: fullName,
+            username,
+            expiresAt,
+            createdAt: new Date().toISOString(),
+          });
+
+          await setDoc(doc(telegramDb, 'telegram_otp_codes', `code_${code}`), {
+            code,
+            chatId: String(chatId),
+            telegramId: String(telegramId),
+            expiresAt,
+            createdAt: new Date().toISOString(),
+          });
+
+          const qChat = query(collection(telegramDb, 'users'), where('telegramChatId', '==', String(chatId)));
+          const snapChat = await getDocs(qChat);
+          if (snapChat.empty) {
+            const newUserData = {
+              name: fullName,
+              email: username ? `${username.toLowerCase()}@telegram.user` : `tg_${telegramId}@raad.platform`,
+              password: `auto_tg_${telegramId}`,
+              daysAllowed: 30,
+              isUnlimited: false,
+              enrolledCourseIds: [],
+              telegramId: String(telegramId),
+              telegramChatId: String(chatId),
+              telegramUsername: username,
+              photoUrl: '',
+              createdAt: new Date().toISOString(),
+              lastLoginAt: new Date().toISOString(),
+            };
+            const newDocRef = doc(collection(telegramDb, 'users'));
+            await setDoc(newDocRef, newUserData);
+
+            try {
+              await addDoc(collection(telegramDb, 'folders'), {
+                userId: newDocRef.id,
+                courseId: 'course_default_1',
+                title: 'مجلد الاخطاء',
+                isDefaultMistakesFolder: true,
+                createdAt: new Date().toISOString(),
+              });
+            } catch (e) {}
+          }
+        } catch (dbErr: any) {
+          console.warn('[Telegram Bot] Firestore save error for /code:', dbErr.message);
+        }
+      }
+
+      console.log(`[Telegram Bot] Generated code ${code} for user ${fullName} (chat: ${chatId})`);
+
+      const reply = `🔑 <b>كود تسجيل الدخول السريع الخاص بك:</b>\n\n<code>${code}</code>\n\n⏱ <b>صالح لمدة 10 دقائق.</b>\n📌 انسخ الكود أعلاه واكتبه في خانة "كود البوت السريع" في صفحة تسجيل الدخول بالموقع وسيتم تسجيل دخولك فوراً! ⚡`;
+      await sendTelegramMessage(chatId, reply, botKeyboard);
+      return;
+    }
+
+    // 3. Deep link /start link_<PHONE>
+    if (text.startsWith('/start link_')) {
+      const rawPhoneParam = rawText.replace(/\/start link_/i, '').trim();
+      console.log(`[Telegram Bot] Deep link: ${rawPhoneParam} from chat ${chatId}`);
+      const linkRec = await savePhoneLink(rawPhoneParam, chatId, {
+        telegramId,
+        username,
+        name: fullName,
+      });
+
+      const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+      const expiresAt = Date.now() + 10 * 60 * 1000;
+      const otpData: OtpRecord = {
+        phone: linkRec.phone,
+        cleanDigits: linkRec.cleanDigits,
+        code: otpCode,
+        chatId,
+        expiresAt,
+        createdAt: new Date().toISOString(),
+      };
+      activeOtps.set(linkRec.cleanDigits, otpData);
+      activeOtps.set(linkRec.phone, otpData);
+
+      directBotCodes.set(otpCode, {
+        code: otpCode,
+        chatId,
+        telegramId,
+        username,
+        name: fullName,
+        expiresAt,
+      });
+
+      if (telegramDb) {
+        try {
+          await setDoc(doc(telegramDb, 'telegram_otp_codes', `otp_${linkRec.cleanDigits}`), otpData);
+          await setDoc(doc(telegramDb, 'telegram_direct_codes', otpCode), {
+            code: otpCode,
+            phone: linkRec.phone,
+            chatId: String(chatId),
+            telegramId: String(telegramId),
+            name: fullName,
+            username,
+            expiresAt,
+            createdAt: new Date().toISOString(),
+          });
+        } catch (e) {}
+      }
+
+      const reply = `✅ <b>أهلاً بك! تم ربط رقم هاتفك بنجاح ⚡</b>\n\n📱 الرقم المربوط: <code>${linkRec.phone}</code>\n\n🔐 <b>كود التحقق الخاص بك لتسجيل الدخول:</b>\n<code>${otpCode}</code>\n\n⏱ الرمز صالح لمدة 10 دقائق.\nارجع الآن لصفحة تسجيل الدخول وأدخل هذا الكود للمتابعة!`;
+      await sendTelegramMessage(chatId, reply, botKeyboard);
+      return;
+    }
+
+    // 4. Plain text phone number
+    const isPhoneNumber = /^(\+?[0-9\s-]{9,15})$/.test(rawText.replace(/[\s-]/g, ''));
+    if (isPhoneNumber && rawText.length >= 9) {
+      console.log(`[Telegram Bot] Phone text received: ${rawText} from chat ${chatId}`);
+      const linkRec = await savePhoneLink(rawText, chatId, {
+        telegramId,
+        username,
+        name: fullName,
+      });
+
+      const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+      const expiresAt = Date.now() + 10 * 60 * 1000;
+      const otpData: OtpRecord = {
+        phone: linkRec.phone,
+        cleanDigits: linkRec.cleanDigits,
+        code: otpCode,
+        chatId,
+        expiresAt,
+        createdAt: new Date().toISOString(),
+      };
+      activeOtps.set(linkRec.cleanDigits, otpData);
+      activeOtps.set(linkRec.phone, otpData);
+
+      directBotCodes.set(otpCode, {
+        code: otpCode,
+        chatId,
+        telegramId,
+        username,
+        name: fullName,
+        expiresAt,
+      });
+
+      if (telegramDb) {
+        try {
+          await setDoc(doc(telegramDb, 'telegram_otp_codes', `otp_${linkRec.cleanDigits}`), otpData);
+          await setDoc(doc(telegramDb, 'telegram_direct_codes', otpCode), {
+            code: otpCode,
+            phone: linkRec.phone,
+            chatId: String(chatId),
+            telegramId: String(telegramId),
+            name: fullName,
+            username,
+            expiresAt,
+            createdAt: new Date().toISOString(),
+          });
+        } catch (e) {}
+      }
+
+      const reply = `✅ <b>تم ربط رقم هاتفك بنجاح!</b>\n\n📱 الرقم المربوط: <code>${linkRec.phone}</code>\n\n🔐 <b>كود تسجيل الدخول الخاص بك:</b>\n<code>${otpCode}</code>\n\n⏱ صالح لمدة 10 دقائق. أدخل هذا الكود الآن في الموقع لتسجيل الدخول.`;
+      await sendTelegramMessage(chatId, reply, botKeyboard);
+      return;
+    }
+
+    // 5. Standard /start or general greeting
+    const isStart = text.startsWith('/start') || text === 'ابدأ' || text === 'بدء' || text === 'مرحبا' || text === 'السلام عليكم';
+    if (isStart) {
+      let targetSessionId = latestPendingSessionId || 'default';
+      const parts = rawText.split(' ');
+      if (parts[1] && parts[1].startsWith('login_')) {
+        targetSessionId = parts[1].replace('login_', '').trim();
+      }
+
+      let authenticatedUser: any = null;
+      if (telegramDb) {
+        try {
+          const qNum = query(collection(telegramDb, 'users'), where('telegramId', '==', Number(telegramId)));
+          let userSnap = await getDocs(qNum);
+          if (userSnap.empty) {
+            const qStr = query(collection(telegramDb, 'users'), where('telegramId', '==', String(telegramId)));
+            userSnap = await getDocs(qStr);
+          }
+
+          if (!userSnap.empty) {
+            const userDoc = userSnap.docs[0];
+            const existingData = userDoc.data();
+            authenticatedUser = {
+              ...existingData,
+              id: userDoc.id,
+              name: existingData.name || fullName,
+              telegramUsername: username || existingData.telegramUsername || '',
+              telegramChatId: String(chatId),
+              lastLoginAt: new Date().toISOString(),
+            };
+            await updateDoc(doc(telegramDb, 'users', userDoc.id), {
+              lastLoginAt: new Date().toISOString(),
+              telegramUsername: username || existingData.telegramUsername || '',
+              telegramChatId: String(chatId),
+            });
+          } else {
+            const newUserData = {
+              name: fullName,
+              email: username ? `${username.toLowerCase()}@telegram.user` : `tg_${telegramId}@raad.platform`,
+              password: `auto_tg_${telegramId}`,
+              daysAllowed: 30,
+              isUnlimited: false,
+              enrolledCourseIds: [],
+              telegramId: String(telegramId),
+              telegramChatId: String(chatId),
+              telegramUsername: username,
+              photoUrl: '',
+              createdAt: new Date().toISOString(),
+              lastLoginAt: new Date().toISOString(),
+            };
+            const newDocRef = doc(collection(telegramDb, 'users'));
+            await setDoc(newDocRef, newUserData);
+            authenticatedUser = { id: newDocRef.id, ...newUserData };
+          }
+
+          const sessionPayload = {
+            sessionId: targetSessionId,
+            status: 'authenticated',
+            telegramId: String(telegramId),
+            telegramChatId: String(chatId),
+            user: authenticatedUser,
+            createdAt: new Date().toISOString(),
+            authenticatedAt: new Date().toISOString(),
+          };
+          await Promise.all([
+            setDoc(doc(telegramDb, 'telegram_login_sessions', targetSessionId), sessionPayload),
+            setDoc(doc(telegramDb, 'telegram_login_sessions', 'global_latest'), sessionPayload),
+            setDoc(doc(telegramDb, 'telegram_login_sessions', 'default'), sessionPayload),
+          ]);
+        } catch (e) {}
+      }
+
+      const welcomeMsg = `👋 <b>أهلاً بك يا ${fullName} في بوت منصة أقسام رعد التعليمية! ⚡</b>\n\nللحصول على كود الدخول إلى المنصة:\n1️⃣ اضغط على زر <b>"🔑 كود تسجيل الدخول السريع (OTP)"</b> بالأسفل.\n2️⃣ أو أرسل كلمة <b>/code</b> في أي وقت لتوليد كود فوري.\n3️⃣ أو شارك رقم هاتفك لتسجيل الدخول برقم الجوال.`;
+      await sendTelegramMessage(chatId, welcomeMsg, botKeyboard);
+      return;
+    }
+
+    // Default reply if any other text sent
+    const fallbackMsg = `مرحباً يا ${fullName} ⚡\n\nاضغط على <b>"🔑 كود تسجيل الدخول السريع (OTP)"</b> أدناه أو أرسل <b>/code</b> للحصول على رمز تسجيل الدخول في الموقع فوراً!`;
+    await sendTelegramMessage(chatId, fallbackMsg, botKeyboard);
+  } catch (err: any) {
+    console.error('[Telegram Bot] Error in handleTelegramUpdate:', err);
+  }
+}
+
+// Webhook endpoint (still available if called)
+app.post('/api/telegram/webhook', async (req: Request, res: Response) => {
+  try {
+    const update = req.body;
+    console.log('[Telegram Webhook] Received update via HTTP POST:', JSON.stringify(update));
+    await handleTelegramUpdate(update);
+    res.json({ ok: true });
   } catch (err: any) {
     console.error('[Telegram Webhook] Uncaught error:', err);
     res.status(500).json({ ok: false, error: err.message });
   }
 });
+
+// Telegram Long Polling Engine (guarantees reception even if webhooks fail or are blocked by cloud proxy)
+let isTelegramPolling = false;
+let lastUpdateId = 0;
+
+async function startTelegramPolling() {
+  if (isTelegramPolling) return;
+  isTelegramPolling = true;
+
+  const botToken = await getTelegramBotToken();
+  if (!botToken) {
+    console.log('[Telegram Polling] Bot token not set. Poller will retry in 5s.');
+    isTelegramPolling = false;
+    setTimeout(startTelegramPolling, 5000);
+    return;
+  }
+
+  // Remove webhook so getUpdates works smoothly
+  try {
+    await fetch(`https://api.telegram.org/bot${botToken}/deleteWebhook?drop_pending_updates=false`);
+    console.log('[Telegram Polling] Webhook disabled. Long-Polling listener active for @Ra3d6_bot.');
+  } catch (e: any) {
+    console.warn('[Telegram Polling] Notice removing webhook:', e.message);
+  }
+
+  const pollLoop = async () => {
+    while (isTelegramPolling) {
+      try {
+        const token = await getTelegramBotToken();
+        if (!token) {
+          await new Promise((r) => setTimeout(r, 4000));
+          continue;
+        }
+
+        const url = `https://api.telegram.org/bot${token}/getUpdates?offset=${lastUpdateId + 1}&timeout=15&limit=25`;
+        const res = await fetch(url);
+        const data: any = await res.json();
+
+        if (data.ok && Array.isArray(data.result)) {
+          for (const update of data.result) {
+            lastUpdateId = Math.max(lastUpdateId, update.update_id);
+            await handleTelegramUpdate(update);
+          }
+        } else if (!data.ok) {
+          await new Promise((r) => setTimeout(r, 2000));
+        }
+      } catch (err: any) {
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+    }
+  };
+
+  pollLoop().catch((err) => {
+    console.error('[Telegram Polling] Poller crashed, restarting:', err);
+    isTelegramPolling = false;
+    setTimeout(startTelegramPolling, 3000);
+  });
+}
 
 // Setup webhook helper endpoint: sets token, calls Telegram API, saves to Firestore
 app.all('/api/telegram/setup-webhook', async (req: Request, res: Response) => {
@@ -1415,7 +1618,9 @@ async function startServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running at http://0.0.0.0:${PORT}`);
-    autoConfigureTelegramWebhook().catch(() => {});
+    startTelegramPolling().catch((e) => {
+      console.warn('Error starting telegram polling:', e);
+    });
   });
 }
 
