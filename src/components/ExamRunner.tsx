@@ -28,6 +28,13 @@ import {
   FileText,
   Calculator,
   BookOpen,
+  Star,
+  Trophy,
+  Medal,
+  Sparkles,
+  Hourglass,
+  ShieldAlert,
+  ShieldCheck,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { StudentUser, ExamQuestion, FolderItem, ExamSystemType } from '../types';
@@ -79,6 +86,342 @@ interface ExamRunnerProps {
   courseId?: string;
   courseTitle?: string;
 }
+
+export type StudentLevelKey = 'excellent' | 'very_good' | 'good' | 'acceptable' | 'weak';
+
+export interface StudentLevelData {
+  key: StudentLevelKey;
+  title: string; // ممتاز / جيد جداً / جيد / مقبول / ضعيف
+  statusTitle: string; // مجتاز بالاختبار / غير مجتاز بالاختبار
+  isPassed: boolean;
+  stars: number;
+  badgeGradient: string;
+  badgeTextColor: string;
+  badgeBorderColor: string;
+  glowColor: string;
+  quote: string;
+}
+
+export const getStudentLevelData = (percentage: number): StudentLevelData => {
+  if (percentage >= 90) {
+    return {
+      key: 'excellent',
+      title: 'ممتاز',
+      statusTitle: 'مجتاز بالاختبار بتفوق',
+      isPassed: true,
+      stars: 5,
+      badgeGradient: 'from-amber-400 via-yellow-500 to-amber-600',
+      badgeTextColor: 'text-amber-500',
+      badgeBorderColor: 'border-amber-400/50',
+      glowColor: 'from-amber-500/20 via-yellow-500/10 to-transparent',
+      quote: 'أداء استثنائي وتفوق باهر! حققت مرتبة الشرف والامتياز بكل جدارة 🌟',
+    };
+  } else if (percentage >= 80) {
+    return {
+      key: 'very_good',
+      title: 'جيد جداً',
+      statusTitle: 'مجتاز بالاختبار بتميز',
+      isPassed: true,
+      stars: 4,
+      badgeGradient: 'from-blue-500 via-indigo-600 to-sky-500',
+      badgeTextColor: 'text-blue-500',
+      badgeBorderColor: 'border-blue-400/50',
+      glowColor: 'from-blue-500/20 via-indigo-500/10 to-transparent',
+      quote: 'مستوى رائع ومتقن! واصل الإبداع، أنت على بُعد خطوات بسيطة جداً من الدرجة الكاملة 🥈',
+    };
+  } else if (percentage >= 70) {
+    return {
+      key: 'good',
+      title: 'جيد',
+      statusTitle: 'مجتاز بالاختبار بنجاح',
+      isPassed: true,
+      stars: 3,
+      badgeGradient: 'from-emerald-500 via-teal-600 to-green-500',
+      badgeTextColor: 'text-emerald-500',
+      badgeBorderColor: 'border-emerald-400/50',
+      glowColor: 'from-emerald-500/20 via-teal-500/10 to-transparent',
+      quote: 'أداء طيب وناجح! استمر في حل التمارين لتصل إلى أعلى مراتب التميز والامتياز 🥉',
+    };
+  } else if (percentage >= 60) {
+    return {
+      key: 'acceptable',
+      title: 'مقبول',
+      statusTitle: 'مجتاز بالاختبار',
+      isPassed: true,
+      stars: 2,
+      badgeGradient: 'from-amber-600 via-orange-500 to-yellow-600',
+      badgeTextColor: 'text-amber-600',
+      badgeBorderColor: 'border-amber-400/50',
+      glowColor: 'from-amber-500/20 via-orange-500/10 to-transparent',
+      quote: 'تم اجتياز الاختبار بنجاح! راجع أخطاءك في مجلد الأخطاء لترتقي بمستواك نحو الامتياز 🎯',
+    };
+  } else {
+    return {
+      key: 'weak',
+      title: 'ضعيف',
+      statusTitle: 'غير مجتاز بالاختبار',
+      isPassed: false,
+      stars: 1,
+      badgeGradient: 'from-rose-500 via-red-600 to-rose-700',
+      badgeTextColor: 'text-rose-500',
+      badgeBorderColor: 'border-rose-400/50',
+      glowColor: 'from-rose-500/20 via-red-500/10 to-transparent',
+      quote: 'فرصة للتعلم والتطوير! تم حفظ جميع أخطائك في مجلد الأخطاء لتتدرب عليها وتعاود المحاولة بقوة 🚀',
+    };
+  }
+};
+
+export const formatDigitalTime = (secs: number) => {
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+};
+
+export const formatArabicTime = (secs: number) => {
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  if (m === 0) {
+    return `${s} ثانية`;
+  }
+  if (s === 0) {
+    if (m === 1) return 'دقيقة واحدة';
+    if (m === 2) return 'دقيقتان';
+    if (m >= 3 && m <= 10) return `${m} دقائق`;
+    return `${m} دقيقة`;
+  }
+  let mStr = `${m} دقيقة`;
+  if (m === 1) mStr = 'دقيقة واحدة';
+  else if (m === 2) mStr = 'دقيقتان';
+  else if (m >= 3 && m <= 10) mStr = `${m} دقائق`;
+
+  return `${mStr} و ${s} ثانية`;
+};
+
+const StudentLevelIllustration: React.FC<{
+  levelKey: StudentLevelKey;
+  isDarkMode: boolean;
+}> = ({ levelKey }) => {
+  if (levelKey === 'excellent') {
+    return (
+      <svg className="w-32 h-32 md:w-40 md:h-40 drop-shadow-2xl" viewBox="0 0 160 160" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#FEF08A" />
+            <stop offset="50%" stopColor="#F59E0B" />
+            <stop offset="100%" stopColor="#B45309" />
+          </linearGradient>
+          <linearGradient id="glowGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#FDE68A" stopOpacity="0.6" />
+            <stop offset="100%" stopColor="#F59E0B" stopOpacity="0.0" />
+          </linearGradient>
+        </defs>
+        <circle cx="80" cy="80" r="68" fill="url(#glowGrad)" />
+        <circle cx="80" cy="80" r="54" fill="#FEF3C7" fillOpacity="0.25" stroke="#F59E0B" strokeWidth="2" strokeDasharray="4 3" />
+        
+        {/* Base */}
+        <rect x="56" y="118" width="48" height="10" rx="3" fill="#92400E" />
+        <path d="M62 118 L68 98 L92 98 L98 118 Z" fill="url(#goldGrad)" />
+        <rect x="73" y="94" width="14" height="6" fill="#F59E0B" />
+        
+        {/* Trophy Cup */}
+        <path d="M50 48 Q50 94 80 94 Q110 94 110 48 Z" fill="url(#goldGrad)" />
+        <path d="M54 52 Q54 88 80 88 Q106 88 106 52 Z" fill="#FBBF24" fillOpacity="0.4" />
+        
+        {/* Handles */}
+        <path d="M50 54 C34 54 34 76 52 78" stroke="url(#goldGrad)" strokeWidth="6" strokeLinecap="round" fill="none" />
+        <path d="M110 54 C126 54 126 76 108 78" stroke="url(#goldGrad)" strokeWidth="6" strokeLinecap="round" fill="none" />
+        
+        {/* Crown on top */}
+        <path d="M64 42 L68 28 L80 36 L92 28 L96 42 Z" fill="#F59E0B" stroke="#B45309" strokeWidth="1.5" />
+        <circle cx="68" cy="27" r="2.5" fill="#EF4444" />
+        <circle cx="80" cy="35" r="3" fill="#3B82F6" />
+        <circle cx="92" cy="27" r="2.5" fill="#10B981" />
+        
+        {/* Star in Cup */}
+        <path d="M80 58 L82.5 64 L89 65 L84 69.5 L85.5 76 L80 72.5 L74.5 76 L76 69.5 L71 65 L77.5 64 Z" fill="#FEF08A" stroke="#B45309" strokeWidth="1" />
+        
+        {/* Laurels */}
+        <path d="M40 106 Q36 84 46 68" stroke="#D97706" strokeWidth="3" strokeLinecap="round" />
+        <path d="M120 106 Q124 84 114 68" stroke="#D97706" strokeWidth="3" strokeLinecap="round" />
+        
+        {/* 5 Stars */}
+        <g fill="#F59E0B">
+          <circle cx="34" cy="46" r="3" />
+          <circle cx="54" cy="22" r="3" />
+          <circle cx="80" cy="14" r="3.5" fill="#EF4444" stroke="#F59E0B" strokeWidth="1.5" />
+          <circle cx="106" cy="22" r="3" />
+          <circle cx="126" cy="46" r="3" />
+        </g>
+      </svg>
+    );
+  }
+
+  if (levelKey === 'very_good') {
+    return (
+      <svg className="w-32 h-32 md:w-40 md:h-40 drop-shadow-2xl" viewBox="0 0 160 160" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="blueGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#93C5FD" />
+            <stop offset="50%" stopColor="#3B82F6" />
+            <stop offset="100%" stopColor="#1E40AF" />
+          </linearGradient>
+          <linearGradient id="silverGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#F8FAFC" />
+            <stop offset="50%" stopColor="#CBD5E1" />
+            <stop offset="100%" stopColor="#64748B" />
+          </linearGradient>
+          <linearGradient id="blueGlow" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#BFDBFE" stopOpacity="0.5" />
+            <stop offset="100%" stopColor="#3B82F6" stopOpacity="0.0" />
+          </linearGradient>
+        </defs>
+        <circle cx="80" cy="80" r="68" fill="url(#blueGlow)" />
+        
+        {/* Ribbon */}
+        <path d="M62 40 L50 96 L66 88 L80 102 L70 40 Z" fill="#2563EB" />
+        <path d="M98 40 L110 96 L94 88 L80 102 L90 40 Z" fill="#1D4ED8" />
+        <path d="M66 40 L58 84 L70 78 Z" fill="#60A5FA" />
+        <path d="M94 40 L102 84 L90 78 Z" fill="#3B82F6" />
+        
+        {/* Medallion Outer */}
+        <circle cx="80" cy="74" r="38" fill="url(#silverGrad)" stroke="#475569" strokeWidth="2" />
+        <circle cx="80" cy="74" r="32" fill="url(#blueGrad)" />
+        <circle cx="80" cy="74" r="28" stroke="#93C5FD" strokeWidth="1.5" strokeDasharray="3 3" />
+        
+        {/* Central Star */}
+        <path d="M80 54 L84 66 L96 68 L86 76 L89 88 L80 81 L71 88 L74 76 L64 68 L76 66 Z" fill="#FFFFFF" />
+        
+        {/* Laurels */}
+        <path d="M42 98 Q36 76 46 60" stroke="#3B82F6" strokeWidth="2.5" strokeLinecap="round" />
+        <path d="M118 98 Q124 76 114 60" stroke="#3B82F6" strokeWidth="2.5" strokeLinecap="round" />
+        
+        {/* 4 Stars banner */}
+        <g fill="#F59E0B">
+          <circle cx="52" cy="120" r="3" />
+          <circle cx="70" cy="124" r="3.5" />
+          <circle cx="90" cy="124" r="3.5" />
+          <circle cx="108" cy="120" r="3" />
+        </g>
+      </svg>
+    );
+  }
+
+  if (levelKey === 'good') {
+    return (
+      <svg className="w-32 h-32 md:w-40 md:h-40 drop-shadow-2xl" viewBox="0 0 160 160" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="emeraldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#6EE7B7" />
+            <stop offset="50%" stopColor="#10B981" />
+            <stop offset="100%" stopColor="#047857" />
+          </linearGradient>
+          <linearGradient id="emeraldGlow" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#A7F3D0" stopOpacity="0.5" />
+            <stop offset="100%" stopColor="#10B981" stopOpacity="0.0" />
+          </linearGradient>
+        </defs>
+        <circle cx="80" cy="80" r="68" fill="url(#emeraldGlow)" />
+        
+        {/* Shield */}
+        <path d="M80 32 L116 46 C116 82 98 108 80 122 C62 108 44 82 44 46 Z" fill="url(#emeraldGrad)" stroke="#065F46" strokeWidth="2.5" />
+        <path d="M80 40 L108 51 C108 80 94 100 80 112 C66 100 52 80 52 51 Z" fill="#34D399" fillOpacity="0.25" stroke="#A7F3D0" strokeWidth="1.5" />
+        
+        {/* Checkmark in shield */}
+        <path d="M68 76 L76 84 L94 64" stroke="#FFFFFF" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
+        
+        {/* Top ribbon / crown */}
+        <path d="M62 30 L80 20 L98 30 Z" fill="#F59E0B" />
+        <circle cx="80" cy="20" r="2.5" fill="#EF4444" />
+        
+        {/* 3 Stars */}
+        <g fill="#F59E0B">
+          <circle cx="64" cy="132" r="3" />
+          <circle cx="80" cy="134" r="3.5" />
+          <circle cx="96" cy="132" r="3" />
+        </g>
+      </svg>
+    );
+  }
+
+  if (levelKey === 'acceptable') {
+    return (
+      <svg className="w-32 h-32 md:w-40 md:h-40 drop-shadow-2xl" viewBox="0 0 160 160" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="amberGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#FCD34D" />
+            <stop offset="50%" stopColor="#F59E0B" />
+            <stop offset="100%" stopColor="#D97706" />
+          </linearGradient>
+          <linearGradient id="amberGlow" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#FDE68A" stopOpacity="0.5" />
+            <stop offset="100%" stopColor="#F59E0B" stopOpacity="0.0" />
+          </linearGradient>
+        </defs>
+        <circle cx="80" cy="80" r="68" fill="url(#amberGlow)" />
+        
+        {/* Target Rings */}
+        <circle cx="80" cy="80" r="46" fill="#FEF3C7" stroke="#F59E0B" strokeWidth="3" />
+        <circle cx="80" cy="80" r="34" fill="#FDE68A" stroke="#D97706" strokeWidth="2.5" />
+        <circle cx="80" cy="80" r="22" fill="url(#amberGrad)" stroke="#B45309" strokeWidth="2" />
+        
+        {/* Bullseye check */}
+        <path d="M72 80 L78 86 L90 74" stroke="#FFFFFF" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+        
+        {/* Compass Crosshairs */}
+        <line x1="80" y1="26" x2="80" y2="38" stroke="#D97706" strokeWidth="3" strokeLinecap="round" />
+        <line x1="80" y1="122" x2="80" y2="134" stroke="#D97706" strokeWidth="3" strokeLinecap="round" />
+        <line x1="26" y1="80" x2="38" y2="80" stroke="#D97706" strokeWidth="3" strokeLinecap="round" />
+        <line x1="122" y1="80" x2="134" y2="80" stroke="#D97706" strokeWidth="3" strokeLinecap="round" />
+        
+        {/* 2 Stars */}
+        <g fill="#F59E0B">
+          <circle cx="70" cy="138" r="3.5" />
+          <circle cx="90" cy="138" r="3.5" />
+        </g>
+      </svg>
+    );
+  }
+
+  // weak (ضعيف / غير مجتاز)
+  return (
+    <svg className="w-32 h-32 md:w-40 md:h-40 drop-shadow-2xl" viewBox="0 0 160 160" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="roseGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#FDA4AF" />
+          <stop offset="50%" stopColor="#F43F5E" />
+          <stop offset="100%" stopColor="#BE123C" />
+        </linearGradient>
+        <linearGradient id="roseGlow" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#FECDD3" stopOpacity="0.5" />
+          <stop offset="100%" stopColor="#F43F5E" stopOpacity="0.0" />
+        </linearGradient>
+      </defs>
+      <circle cx="80" cy="80" r="68" fill="url(#roseGlow)" />
+      
+      {/* Target Base / Launchpad */}
+      <circle cx="80" cy="80" r="48" fill="#FFF1F2" stroke="#F43F5E" strokeWidth="2" strokeDasharray="4 3" />
+      
+      {/* Training Rocket Preparing to launch */}
+      <path d="M80 34 C88 44 94 62 94 84 L66 84 C66 62 72 44 80 34 Z" fill="url(#roseGrad)" stroke="#9F1239" strokeWidth="1.5" />
+      <circle cx="80" cy="58" r="6" fill="#FFFFFF" stroke="#BE123C" strokeWidth="1.5" />
+      <circle cx="80" cy="58" r="3" fill="#38BDF8" />
+      
+      {/* Fins */}
+      <path d="M66 74 L52 88 L66 88 Z" fill="#E11D48" />
+      <path d="M94 74 L108 88 L94 88 Z" fill="#E11D48" />
+      
+      {/* Launch Thruster Flames */}
+      <path d="M72 86 L80 102 L88 86 Z" fill="#F59E0B" />
+      <path d="M75 86 L80 96 L85 86 Z" fill="#FEF08A" />
+      
+      {/* Alert badge at bottom */}
+      <rect x="46" y="112" width="68" height="20" rx="10" fill="#FFE4E6" stroke="#F43F5E" strokeWidth="1.5" />
+      <text x="80" y="126" textAnchor="middle" fill="#E11D48" fontSize="10" fontWeight="900" fontFamily="sans-serif">
+        فرصة للتعلم 🚀
+      </text>
+    </svg>
+  );
+};
 
 export const ExamRunner: React.FC<ExamRunnerProps> = ({
   examTitle,
@@ -145,6 +488,8 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
   const [currentIdx, setCurrentIdx] = useState(0);
   const [selectedAnswers, setSelectedAnswers] = useState<Record<number, number>>({});
   const [isFinished, setIsFinished] = useState(false);
+  const [examStartTime, setExamStartTime] = useState<number>(() => Date.now());
+  const [timeSpentSeconds, setTimeSpentSeconds] = useState<number>(0);
   const [isTimed] = useState(isTimedInitial);
   const [showMobileQuestionsList, setShowMobileQuestionsList] = useState(false);
 
@@ -492,6 +837,8 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
 
   const finishTest = async () => {
     setIsFinished(true);
+    const elapsed = Math.max(1, Math.round((Date.now() - examStartTime) / 1000));
+    setTimeSpentSeconds(elapsed);
     const score = calculateScore();
     const total = Math.max(1, safeQuestions.length);
     const percentage = Math.round((score / total) * 100);
@@ -550,7 +897,7 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
           totalQuestions: total,
           percentage,
           isTimed,
-          durationSeconds: isTimed ? (totalSeconds - timeLeft) : 0,
+          durationSeconds: elapsed,
           targetPercentage: targetPercentage || 90,
           createdAt: new Date().toISOString(),
         });
@@ -658,24 +1005,19 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
     const percentage = Math.round((score / total) * 100);
     const passedTarget = percentage >= (targetPercentage || 90);
     const wrongCount = safeQuestions.length - score;
+    const finalDuration = timeSpentSeconds > 0 ? timeSpentSeconds : Math.max(1, Math.round((Date.now() - examStartTime) / 1000));
+    const levelData = getStudentLevelData(percentage);
 
     return (
-      <div className={`p-4 md:p-8 max-w-4xl mx-auto space-y-6 ${isDarkMode ? 'text-white' : 'text-black'}`}>
-        <div className={`border rounded-3xl p-6 md:p-10 shadow-2xl backdrop-blur-xl ${
+      <div className={`p-4 md:p-8 max-w-5xl mx-auto space-y-6 ${isDarkMode ? 'text-white' : 'text-black'}`}>
+        <div className={`border rounded-3xl p-6 md:p-8 shadow-2xl backdrop-blur-xl ${
           isDarkMode ? 'bg-slate-900/90 border-slate-800' : 'bg-white border-slate-200'
         }`}>
-          <div className="text-center space-y-4">
-            <div className={`inline-flex p-4 rounded-3xl border ${
-              passedTarget ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-500' : 'bg-amber-500/10 border-amber-500/20 text-amber-500'
-            }`}>
-              <Award className="w-16 h-16 animate-bounce" />
-            </div>
-
-            <h2 className={`text-2xl md:text-4xl font-black ${isDarkMode ? 'text-white' : 'text-black'}`}>
+          {/* Header Title & Target Feedback */}
+          <div className="text-center pb-6 border-b border-slate-200 dark:border-slate-800/80 mb-6 space-y-2">
+            <h2 className={`text-2xl md:text-3xl font-black ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
               نتيجة الاختبار: {examTitle}
             </h2>
-
-            {/* Target percentage feedback badge */}
             <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border text-xs md:text-sm font-bold mx-auto">
               {passedTarget ? (
                 <span className="text-emerald-500 flex items-center gap-1.5 font-black">
@@ -689,109 +1031,274 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
                 </span>
               )}
             </div>
+          </div>
 
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-2xl mx-auto pt-4">
-              <div className={`p-4 rounded-2xl border ${
-                isDarkMode ? 'bg-slate-800/80 border-slate-700/60' : 'bg-slate-50 border-slate-200'
-              }`}>
-                <span className={`text-xs block ${isDarkMode ? 'text-slate-400' : 'text-black font-bold'}`}>النسبة المئوية</span>
-                <span className={`text-2xl md:text-3xl font-black ${
-                  percentage >= (targetPercentage || 90)
-                    ? 'text-emerald-500'
-                    : percentage >= 60
-                    ? 'text-amber-500'
-                    : 'text-rose-500'
-                }`}>
-                  %{percentage}
-                </span>
-              </div>
-              <div className={`p-4 rounded-2xl border ${
-                isDarkMode ? 'bg-slate-800/80 border-slate-700/60' : 'bg-slate-50 border-slate-200'
-              }`}>
-                <span className={`text-xs block ${isDarkMode ? 'text-slate-400' : 'text-black font-bold'}`}>الإجابات الصحيحة</span>
-                <span className="text-2xl md:text-3xl font-black text-emerald-500">
-                  {score} / {total}
-                </span>
-              </div>
-              <div className={`p-4 rounded-2xl border ${
-                isDarkMode ? 'bg-slate-800/80 border-slate-700/60' : 'bg-slate-50 border-slate-200'
-              }`}>
-                <span className={`text-xs block ${isDarkMode ? 'text-slate-400' : 'text-black font-bold'}`}>الإجابات الخاطئة</span>
-                <span className="text-2xl md:text-3xl font-black text-rose-500">
-                  {wrongCount}
-                </span>
-              </div>
-              <div className={`p-4 rounded-2xl border ${
-                isDarkMode ? 'bg-slate-800/80 border-slate-700/60' : 'bg-slate-50 border-slate-200'
-              }`}>
-                <span className={`text-xs block ${isDarkMode ? 'text-slate-400' : 'text-black font-bold'}`}>نوع الاختبار</span>
-                <span className="text-base font-black text-blue-600 mt-1 block">
-                  {isTimed ? 'اختبار مؤقت ⏱️' : 'تدريب حر 🎯'}
-                </span>
-              </div>
-            </div>
+          {/* Main 2-Column Result Layout:
+              RIGHT SIDE (على اليمين): صورة لمستوى الطالب (ممتاز أو ضعيف أو جيد جداً أو مقبول أو مجتاز أو غير مجتاز بالاختبار)
+              LEFT SIDE (على اليسار): 4 قوائم بالترتيب الدقيق: أول قائمة الدرجة، ثاني قائمة الأسئلة الصحيحة، ثالث قائمة الأسئلة الخاطئة، رابع قائمة الوقت المستغرق */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
+            {/* RIGHT SIDE (على اليمين): صورة لمستوى الطالب وتقييمه */}
+            <div className={`lg:col-span-5 p-6 rounded-3xl border flex flex-col items-center justify-between text-center relative overflow-hidden shadow-lg ${
+              isDarkMode ? 'bg-slate-800/80 border-slate-700/80' : 'bg-slate-50/95 border-slate-200'
+            }`}>
+              {/* Background ambient glow */}
+              <div className={`absolute -top-16 -right-16 w-52 h-52 rounded-full blur-3xl opacity-35 bg-gradient-to-br ${levelData.glowColor} pointer-events-none`} />
 
-            {/* Prominent Mistake Transfer Announcement at end of exam */}
-            {wrongCount > 0 ? (
-              <div className={`mt-5 p-5 border-2 rounded-3xl text-right shadow-2xl ${
-                isDarkMode
-                  ? 'bg-gradient-to-r from-indigo-950/90 via-purple-950/70 to-slate-900 border-indigo-500/50'
-                  : 'bg-indigo-50/80 border-indigo-400 text-black'
-              }`}>
-                <div className="flex items-start gap-3.5">
-                  <div className="p-3 rounded-2xl bg-indigo-500/20 text-indigo-500 border border-indigo-500/40 shrink-0">
-                    <BookmarkPlus className="w-6 h-6 animate-pulse" />
+              <div className="w-full space-y-4 relative z-10">
+                {/* Header tag showing pass/fail status */}
+                <div className="flex items-center justify-between w-full pb-3 border-b border-slate-200 dark:border-slate-700/70">
+                  <span className="text-xs font-bold text-slate-400">تقييم مستوى الطالب</span>
+                  <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black border shadow-sm ${
+                    levelData.isPassed
+                      ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
+                      : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30'
+                  }`}>
+                    {levelData.isPassed ? <CheckCircle2 className="w-3.5 h-3.5" /> : <AlertCircle className="w-3.5 h-3.5" />}
+                    <span>{levelData.statusTitle}</span>
+                  </span>
+                </div>
+
+                {/* صورة لمستوى الطالب (SVG Illustration) */}
+                <div className="py-2 flex justify-center transform hover:scale-105 transition-transform duration-300">
+                  <StudentLevelIllustration levelKey={levelData.key} isDarkMode={isDarkMode} />
+                </div>
+
+                {/* Level Title, Stars, and Pass/Fail Explicit Label */}
+                <div className="space-y-2">
+                  <div className="inline-block">
+                    <span className={`text-2xl md:text-3xl font-black bg-gradient-to-r ${levelData.badgeGradient} bg-clip-text text-transparent`}>
+                      المستوى: {levelData.title}
+                    </span>
                   </div>
-                  <div className="space-y-1">
-                    <h4 className={`text-base font-black flex items-center gap-2 ${
-                      isDarkMode ? 'text-white' : 'text-indigo-950'
+
+                  <div className="flex items-center justify-center gap-1.5">
+                    {[1, 2, 3, 4, 5].map((s) => (
+                      <Star
+                        key={s}
+                        className={`w-5 h-5 ${
+                          s <= levelData.stars
+                            ? 'fill-amber-400 text-amber-400 filter drop-shadow'
+                            : isDarkMode
+                            ? 'text-slate-700'
+                            : 'text-slate-300'
+                        }`}
+                      />
+                    ))}
+                  </div>
+
+                  {/* Pass / Fail Explicit Label */}
+                  <div className="pt-1">
+                    <span className={`text-sm font-black px-4 py-1 rounded-xl inline-block ${
+                      levelData.isPassed
+                        ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
+                        : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20'
                     }`}>
-                      <span>📌 تنبيه تعليمي هام: تم نقل أخطائك إلى مجلد الأخطاء</span>
-                      <span className="text-xs px-2.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-600 border border-indigo-400/30 font-black">
-                        {wrongCount} أسئلة
-                      </span>
-                    </h4>
-                    <p className={`text-xs md:text-sm leading-relaxed font-semibold ${
-                      isDarkMode ? 'text-indigo-200' : 'text-slate-900'
-                    }`}>
-                      تم نقل جميع الأسئلة التي حدث بها خطأ تلقائياً إلى <strong>"مجلد الأخطاء"</strong> الثابت في حسابك، لتتمكن من مراجعتها لاحقاً والتدرّب عليها لضمان عدم تكرار الخطأ والوصول للمئوية بإذن الله!
-                    </p>
+                      {levelData.isPassed ? '✓ مجتاز بالاختبار' : '⚠️ غير مجتاز بالاختبار'}
+                    </span>
                   </div>
                 </div>
               </div>
-            ) : (
-              <div className="mt-5 p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-2xl text-emerald-600 text-xs md:text-sm font-black">
-                ✨ أداء أسطوري! لا توجد أخطاء في هذا الاختبار، درجتك كاملة 100%!
+
+              {/* Motivational feedback quote */}
+              <div className={`mt-5 pt-4 border-t border-slate-200 dark:border-slate-700/70 w-full relative z-10 text-xs md:text-sm font-semibold leading-relaxed ${
+                isDarkMode ? 'text-slate-300' : 'text-slate-700'
+              }`}>
+                {levelData.quote}
               </div>
-            )}
-
-            {/* Action Buttons */}
-            <div className="flex flex-wrap items-center justify-center gap-3 pt-6">
-              <button
-                onClick={() => {
-                  setSelectedAnswers({});
-                  setCurrentIdx(0);
-                  setIsFinished(false);
-                  setTimeLeft(totalSeconds);
-                }}
-                className={`flex items-center gap-2 px-6 py-3 rounded-2xl font-black text-xs md:text-sm transition border ${
-                  isDarkMode
-                    ? 'bg-slate-800 hover:bg-slate-700 text-white border-slate-700'
-                    : 'bg-slate-100 hover:bg-slate-200 text-black border-slate-300'
-                }`}
-              >
-                <RefreshCw className="w-4 h-4" />
-                <span>إعادة الاختبار</span>
-              </button>
-
-              <button
-                onClick={handleRequestExit}
-                className="flex items-center gap-2 px-8 py-3 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white font-black text-xs md:text-sm transition shadow-lg shadow-blue-600/30"
-              >
-                <Home className="w-4 h-4" />
-                <span>العودة للمنصة</span>
-              </button>
             </div>
+
+            {/* LEFT SIDE (على اليسار): البطاقات الإحصائية للنتيجة */}
+            <div className="lg:col-span-7 flex flex-col gap-3.5 justify-between">
+              {/* الدرجة */}
+              <div className={`p-4 md:p-5 rounded-2xl border transition shadow-sm ${
+                isDarkMode ? 'bg-slate-800/80 border-slate-700/80 hover:border-slate-600' : 'bg-slate-50/95 border-slate-200 hover:border-slate-300'
+              }`}>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-blue-500/10 text-blue-500 flex items-center justify-center border border-blue-500/20 shrink-0">
+                      <Award className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h4 className={`text-base md:text-lg font-black ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
+                        الدرجة
+                      </h4>
+                      <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+                        النسبة المئوية والنقاط المحققة
+                      </span>
+                    </div>
+                  </div>
+                  <span className={`text-2xl md:text-3xl font-black ${
+                    percentage >= 90
+                      ? 'text-amber-500'
+                      : percentage >= 60
+                      ? 'text-emerald-500'
+                      : 'text-rose-500'
+                  }`}>
+                    %{percentage}
+                  </span>
+                </div>
+                
+                <div className="flex items-center justify-between text-xs font-semibold mb-2 text-slate-500 dark:text-slate-400">
+                  <span>الدرجة: {score} من إجمالي {total}</span>
+                  <span>{passedTarget ? '🎯 حققت الهدف المحدد' : `الهدف المستهدف: %${targetPercentage || 90}`}</span>
+                </div>
+
+                <div className="w-full h-2.5 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-1000 ${
+                      percentage >= 90
+                        ? 'bg-gradient-to-r from-amber-500 to-yellow-400'
+                        : percentage >= 60
+                        ? 'bg-gradient-to-r from-emerald-500 to-teal-400'
+                        : 'bg-gradient-to-r from-rose-500 to-red-400'
+                    }`}
+                    style={{ width: `${Math.min(100, Math.max(4, percentage))}%` }}
+                  />
+                </div>
+              </div>
+
+              {/* الأسئلة الصحيحة */}
+              <div className={`p-4 md:p-5 rounded-2xl border transition shadow-sm ${
+                isDarkMode ? 'bg-slate-800/80 border-slate-700/80 hover:border-slate-600' : 'bg-slate-50/95 border-slate-200 hover:border-slate-300'
+              }`}>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-emerald-500/10 text-emerald-500 flex items-center justify-center border border-emerald-500/20 shrink-0">
+                      <CheckCircle2 className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h4 className={`text-base md:text-lg font-black ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
+                        الأسئلة الصحيحة
+                      </h4>
+                      <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+                        إجابات نموذجية تمت الإجابة عليها بنجاح
+                      </span>
+                    </div>
+                  </div>
+                  <span className="text-xl md:text-2xl font-black text-emerald-500">
+                    {score} <span className="text-xs font-bold text-slate-500 dark:text-slate-400">سؤالاً</span>
+                  </span>
+                </div>
+              </div>
+
+              {/* الأسئلة الخاطئة */}
+              <div className={`p-4 md:p-5 rounded-2xl border transition shadow-sm ${
+                isDarkMode ? 'bg-slate-800/80 border-slate-700/80 hover:border-slate-600' : 'bg-slate-50/95 border-slate-200 hover:border-slate-300'
+              }`}>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className={`w-9 h-9 rounded-xl flex items-center justify-center border shrink-0 ${
+                      wrongCount > 0
+                        ? 'bg-rose-500/10 text-rose-500 border-rose-500/20'
+                        : 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20'
+                    }`}>
+                      {wrongCount > 0 ? <XCircle className="w-5 h-5" /> : <CheckCircle2 className="w-5 h-5" />}
+                    </div>
+                    <div>
+                      <h4 className={`text-base md:text-lg font-black ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
+                        الأسئلة الخاطئة
+                      </h4>
+                      <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+                        {wrongCount > 0
+                          ? 'نُقلت تلقائياً إلى مجلد الأخطاء للمراجعة والتدريب'
+                          : 'لا توجد أخطاء — أداء متكامل 100%'}
+                      </span>
+                    </div>
+                  </div>
+                  <span className={`text-xl md:text-2xl font-black ${wrongCount > 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
+                    {wrongCount} <span className="text-xs font-bold text-slate-500 dark:text-slate-400">أسئلة</span>
+                  </span>
+                </div>
+              </div>
+
+              {/* الوقت المستغرق */}
+              <div className={`p-4 md:p-5 rounded-2xl border transition shadow-sm ${
+                isDarkMode ? 'bg-slate-800/80 border-slate-700/80 hover:border-slate-600' : 'bg-slate-50/95 border-slate-200 hover:border-slate-300'
+              }`}>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-indigo-500/10 text-indigo-500 flex items-center justify-center border border-indigo-500/20 shrink-0">
+                      <Clock className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h4 className={`text-base md:text-lg font-black ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
+                        الوقت المستغرق
+                      </h4>
+                      <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+                        {formatArabicTime(finalDuration)} ({isTimed ? 'اختبار مؤقت' : 'تدريب حر'})
+                      </span>
+                    </div>
+                  </div>
+                  <span className="text-xl md:text-2xl font-mono font-black text-indigo-500" dir="ltr">
+                    {formatDigitalTime(finalDuration)}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Prominent Mistake Transfer Announcement at end of exam */}
+          {wrongCount > 0 ? (
+            <div className={`mt-6 p-5 border-2 rounded-3xl text-right shadow-2xl ${
+              isDarkMode
+                ? 'bg-gradient-to-r from-indigo-950/90 via-purple-950/70 to-slate-900 border-indigo-500/50'
+                : 'bg-indigo-50/80 border-indigo-400 text-black'
+            }`}>
+              <div className="flex items-start gap-3.5">
+                <div className="p-3 rounded-2xl bg-indigo-500/20 text-indigo-500 border border-indigo-500/40 shrink-0">
+                  <BookmarkPlus className="w-6 h-6 animate-pulse" />
+                </div>
+                <div className="space-y-1">
+                  <h4 className={`text-base font-black flex items-center gap-2 ${
+                    isDarkMode ? 'text-white' : 'text-indigo-950'
+                  }`}>
+                    <span>📌 تنبيه تعليمي هام: تم نقل أخطائك إلى مجلد الأخطاء</span>
+                    <span className="text-xs px-2.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-600 border border-indigo-400/30 font-black">
+                      {wrongCount} أسئلة
+                    </span>
+                  </h4>
+                  <p className={`text-xs md:text-sm leading-relaxed font-semibold ${
+                    isDarkMode ? 'text-indigo-200' : 'text-slate-900'
+                  }`}>
+                    تم نقل جميع الأسئلة التي حدث بها خطأ تلقائياً إلى <strong>"مجلد الأخطاء"</strong> الثابت في حسابك، لتتمكن من مراجعتها لاحقاً والتدرّب عليها لضمان عدم تكرار الخطأ والوصول للمئوية بإذن الله!
+                  </p>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="mt-6 p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-2xl text-emerald-600 text-xs md:text-sm font-black text-center">
+              ✨ أداء أسطوري! لا توجد أخطاء في هذا الاختبار، درجتك كاملة 100%!
+            </div>
+          )}
+
+          {/* Action Buttons */}
+          <div className="flex flex-wrap items-center justify-center gap-3 pt-6 border-t border-slate-200 dark:border-slate-800/80 mt-6">
+            <button
+              onClick={() => {
+                setSelectedAnswers({});
+                setCurrentIdx(0);
+                setIsFinished(false);
+                setTimeLeft(totalSeconds);
+                setExamStartTime(Date.now());
+                setTimeSpentSeconds(0);
+              }}
+              className={`flex items-center gap-2 px-6 py-3 rounded-2xl font-black text-xs md:text-sm transition border ${
+                isDarkMode
+                  ? 'bg-slate-800 hover:bg-slate-700 text-white border-slate-700'
+                  : 'bg-slate-100 hover:bg-slate-200 text-black border-slate-300'
+              }`}
+            >
+              <RefreshCw className="w-4 h-4" />
+              <span>إعادة الاختبار</span>
+            </button>
+
+            <button
+              onClick={handleRequestExit}
+              className="flex items-center gap-2 px-8 py-3 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white font-black text-xs md:text-sm transition shadow-lg shadow-blue-600/30"
+            >
+              <Home className="w-4 h-4" />
+              <span>العودة للمنصة</span>
+            </button>
           </div>
         </div>
 
