@@ -41,6 +41,7 @@ export interface StudentUser {
   isRedMessageActive?: boolean; // حالة تفعيل أو إيقاف التنبيه الأحمر (تشغيل / إيقاف)
   certificateIssued?: CertificateData | null; // شهادة الطالب المعتمدة والمصدرة من الإدارة
   telegramId?: string | number;
+  telegramChatId?: string | number;
   telegramUsername?: string;
   photoUrl?: string;
   avatarUrl?: string;
