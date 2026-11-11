@@ -21,15 +21,12 @@ interface TelegramLoginCardProps {
   onBotLoginClick?: () => void;
   isWaitingForBotAuth?: boolean;
   onCancelWaitingBotAuth?: () => void;
-  onQuickLogin?: () => void;
 }
 
 export const TelegramLoginCard: React.FC<TelegramLoginCardProps> = ({
   widgetNode,
   errorMessage,
-  isLoading,
   onSwitchToEmail,
-  onQuickLogin,
 }) => {
   return (
     <div
@@ -48,7 +45,7 @@ export const TelegramLoginCard: React.FC<TelegramLoginCardProps> = ({
             تسجيل الدخول بتليجرام
           </h2>
           <p className="text-xs sm:text-sm text-slate-400 font-medium leading-relaxed max-w-xs mx-auto">
-            سجل دخولك عبر ويدجت تيليجرام الرسمي وانتقل مباشرة لواجهة الكورسات
+            اضغط على زر تليجرام أدناه للمتابعة وتسجيل الدخول الفوري.
           </p>
         </div>
       </div>
@@ -61,34 +58,16 @@ export const TelegramLoginCard: React.FC<TelegramLoginCardProps> = ({
         </div>
       )}
 
-      {/* ================= 2. زر تسجيل الدخول بتليجرام الرسمي ================= */}
-      <div className="my-5 p-5 rounded-2xl bg-slate-800/80 border border-slate-700/90 text-center space-y-4">
-        <div className="flex items-center justify-between text-xs text-slate-300 font-bold px-1">
-          <span>الويدجت الرسمي المعتمد:</span>
-          <span className="px-2 py-0.5 rounded-full text-[10px] bg-sky-500/15 text-sky-400 border border-sky-500/30 font-mono">
-            @Ra3d6_bot
-          </span>
-        </div>
+      {/* ================= 2. زر تسجيل الدخول بتليجرام فقط ================= */}
+      <div className="my-5 p-5 rounded-2xl bg-slate-800/70 border border-slate-700 text-center space-y-3">
+        <p className="text-xs text-slate-300 font-medium leading-relaxed">
+          تسجيل الدخول عبر تليجرام:
+        </p>
 
-        {/* زر ويدجت تليجرام الرسمي (telegram-widget.js?7) */}
-        <div className="flex justify-center items-center min-h-[48px] w-full pt-1">
+        {/* زر ويدجت تليجرام الرسمي */}
+        <div className="flex justify-center items-center min-h-[46px] w-full pt-1">
           {widgetNode}
         </div>
-
-        {/* خيار الدخول المباشر السريع كنسخة احتياطية فورية */}
-        {onQuickLogin && (
-          <div className="pt-2 border-t border-slate-700/60">
-            <button
-              type="button"
-              onClick={onQuickLogin}
-              disabled={isLoading}
-              className="w-full py-2.5 px-3 rounded-xl bg-sky-600/20 hover:bg-sky-600/30 border border-sky-500/30 text-sky-300 text-xs font-black transition flex items-center justify-center gap-2 cursor-pointer"
-            >
-              <Send className="w-3.5 h-3.5 fill-current" />
-              <span>دخول سريع مباشر بتليجرام ⚡</span>
-            </button>
-          </div>
-        )}
       </div>
 
       {/* التبديل للدخول بالبريد الإلكتروني */}

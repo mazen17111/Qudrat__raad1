@@ -1,10 +1,5 @@
 import {createRoot} from 'react-dom/client';
 import App from './App';
 import './index.css';
-import { ErrorBoundary } from './components/ErrorBoundary';
 
-createRoot(document.getElementById('root')!).render(
-  <ErrorBoundary fallbackTitle="منصة أقسام رعد">
-    <App />
-  </ErrorBoundary>
-);
+createRoot(document.getElementById('root')!).render(<App />);

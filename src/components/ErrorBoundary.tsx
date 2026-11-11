@@ -44,10 +44,10 @@ export class ErrorBoundary extends Component<Props, State> {
 
             <div className="space-y-2">
               <h3 className="text-lg sm:text-xl font-black text-white">
-                {this.props.fallbackTitle || 'جاري تحديث الصفحة...'}
+                {this.props.fallbackTitle || 'حدث تنبيه أثناء تشغيل هذه الصفحة'}
               </h3>
               <p className="text-xs text-slate-400 leading-relaxed font-bold">
-                اضغط على الزر أدناه لمتابعة تصفح الكورسات والمحتوى مباشرة.
+                تمت حماية بياناتك وتفادي توقف المنصة. يمكنك إعادة المحاولة فوراً وسيعمل كل شيء بسلاسة.
               </p>
             </div>
 

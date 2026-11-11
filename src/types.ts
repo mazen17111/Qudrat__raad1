@@ -257,7 +257,6 @@ export interface SystemSettings {
   subscriptionMessage?: string;
   whatsappNumber?: string;
   telegramUsername?: string;
-  telegramBotUsername?: string;
   announcement: SystemAnnouncement;
   liveStream: SystemLiveStream;
   activeTheme: ThemeConfig;
