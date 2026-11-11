@@ -15,19 +15,72 @@ const CACHED_SETTINGS_KEY = 'raad_cached_system_settings';
 const CACHED_COURSES_KEY = 'raad_cached_courses';
 const COURSE_THEME_STORAGE_KEY = 'raad_student_course_theme_color';
 
+// Parse Telegram callback parameters from current URL (e.g. /?id=... or /telegram/callback?id=...)
+function parseTelegramAuthFromUrl(): StudentUser | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get('id');
+    if (id) {
+      const firstName = params.get('first_name') || '';
+      const lastName = params.get('last_name') || '';
+      const username = params.get('username') || '';
+      const photoUrl = params.get('photo_url') || '';
+      const fullName = [firstName, lastName].filter(Boolean).join(' ') || username || `طالب_${id}`;
+      const telegramIdStr = String(id);
+
+      const student: StudentUser = {
+        id: `tg_${telegramIdStr}`,
+        name: fullName,
+        email: username ? `${username.toLowerCase()}@telegram.user` : `tg_${telegramIdStr}@raad.platform`,
+        password: `auto_tg_${telegramIdStr}`,
+        telegramId: telegramIdStr,
+        telegramUsername: username,
+        photoUrl: photoUrl,
+        daysAllowed: 365,
+        isUnlimited: true,
+        subscriptionStartDate: new Date().toISOString(),
+        subscriptionEndDate: '',
+        isIndividuallyBlocked: false,
+        isIndividuallyWhitelisted: true,
+        watchedVideoIds: [],
+        totalExamsTaken: 0,
+        averageScore: 0,
+        enrolledCourseIds: ['course_default_1'],
+        preferredThemeColor: 'default',
+        createdAt: new Date().toISOString(),
+        lastLoginAt: new Date().toISOString(),
+      };
+
+      // Clean query params from URL address bar without reloading
+      const cleanPath = window.location.pathname.replace(/\/callback|\/telegram\/callback/, '') || '/';
+      window.history.replaceState({}, document.title, cleanPath);
+
+      // Persist in localStorage
+      try {
+        localStorage.setItem(STUDENT_SESSION_KEY, JSON.stringify(student));
+        localStorage.setItem('raad_student_session', JSON.stringify(student));
+      } catch (e) {}
+
+      return student;
+    }
+  } catch (err) {
+    console.warn('Error parsing telegram params from URL:', err);
+  }
+  return null;
+}
+
 export default function App() {
   const [currentUser, setCurrentUser] = useState<StudentUser | null>(() => {
+    // 1. Direct Telegram Login URL Callback check
+    const fromUrl = parseTelegramAuthFromUrl();
+    if (fromUrl) return fromUrl;
+
+    // 2. Saved session in localStorage
     try {
       const saved = localStorage.getItem(STUDENT_SESSION_KEY) || localStorage.getItem('raad_student_session');
       if (saved) {
-        const parsed = JSON.parse(saved) as StudentUser;
-        if (parsed && parsed.id) {
-          return {
-            ...parsed,
-            enrolledCourseIds: Array.isArray(parsed.enrolledCourseIds) ? parsed.enrolledCourseIds : [],
-            watchedVideoIds: Array.isArray(parsed.watchedVideoIds) ? parsed.watchedVideoIds : [],
-          };
-        }
+        return JSON.parse(saved) as StudentUser;
       }
     } catch (e) {
       console.error('Failed to parse saved student session:', e);
@@ -181,30 +234,20 @@ export default function App() {
     const unsubUser = onSnapshot(
       doc(db, 'users', currentUser.id),
       (docSnap) => {
-        if (docSnap.exists()) {
-          const data = docSnap.data() as any;
-          if (data?.isDeleted) {
-            // Account was explicitly marked deleted by admin -> Log out
-            setCurrentUser(null);
-            try {
-              localStorage.removeItem(STUDENT_SESSION_KEY);
-              localStorage.removeItem('raad_student_session');
-            } catch (e) {}
-            return;
-          }
-
-          const updated: StudentUser = {
-            id: docSnap.id,
-            ...data,
-            enrolledCourseIds: Array.isArray(data.enrolledCourseIds) ? data.enrolledCourseIds : [],
-            watchedVideoIds: Array.isArray(data.watchedVideoIds) ? data.watchedVideoIds : [],
-          };
-          setCurrentUser(updated);
+        if (!docSnap.exists() || (docSnap.data() as any)?.isDeleted) {
+          // Account was deleted by admin (normal or permanent delete) -> Log out immediately so the platform is closed in real-time!
+          setCurrentUser(null);
           try {
-            localStorage.setItem(STUDENT_SESSION_KEY, JSON.stringify(updated));
-            localStorage.setItem('raad_student_session', JSON.stringify(updated));
+            localStorage.removeItem(STUDENT_SESSION_KEY);
           } catch (e) {}
+          return;
         }
+
+        const updated = { id: docSnap.id, ...docSnap.data() } as StudentUser;
+        setCurrentUser(updated);
+        try {
+          localStorage.setItem(STUDENT_SESSION_KEY, JSON.stringify(updated));
+        } catch (e) {}
       },
       (error) => {
         console.warn('Realtime user sync notice:', error);
@@ -246,7 +289,6 @@ export default function App() {
   const handleStudentLogout = () => {
     try {
       localStorage.removeItem(STUDENT_SESSION_KEY);
-      localStorage.removeItem('raad_student_session');
       localStorage.removeItem(COURSE_THEME_STORAGE_KEY);
     } catch (e) {}
     setCourseThemeColor('default');
@@ -256,22 +298,16 @@ export default function App() {
 
   // Student login success: save to state & localStorage
   const handleStudentLoginSuccess = (user: StudentUser) => {
-    const safeUser: StudentUser = {
-      ...user,
-      enrolledCourseIds: Array.isArray(user.enrolledCourseIds) ? user.enrolledCourseIds : [],
-      watchedVideoIds: Array.isArray(user.watchedVideoIds) ? user.watchedVideoIds : [],
-    };
     try {
-      localStorage.setItem(STUDENT_SESSION_KEY, JSON.stringify(safeUser));
-      localStorage.setItem('raad_student_session', JSON.stringify(safeUser));
+      localStorage.setItem(STUDENT_SESSION_KEY, JSON.stringify(user));
     } catch (e) {}
-    setCurrentUser(safeUser);
+    setCurrentUser(user);
     // Student always starts on the Courses Portal per request
     setActiveCourse(null);
 
     // Ensure every new account starts with 'default', or loads their own saved choice
-    const userColor = (safeUser.preferredThemeColor && ['default', 'red', 'green', 'blue', 'purple', 'pink'].includes(safeUser.preferredThemeColor))
-      ? safeUser.preferredThemeColor
+    const userColor = (user.preferredThemeColor && ['default', 'red', 'green', 'blue', 'purple', 'pink'].includes(user.preferredThemeColor))
+      ? user.preferredThemeColor
       : 'default';
     setCourseThemeColor(userColor);
     try {
@@ -357,6 +393,46 @@ export default function App() {
     setActiveCourse(course);
   };
 
+  // Set up global Telegram widget handlers so Telegram login works anywhere instantly
+  useEffect(() => {
+    (window as any).onTelegramAuth = (tgUser: any) => {
+      if (!tgUser || !tgUser.id) return;
+      const fullName = [tgUser.first_name, tgUser.last_name].filter(Boolean).join(' ') || tgUser.username || `طالب_${tgUser.id}`;
+      const telegramIdStr = String(tgUser.id);
+      const studentUser: StudentUser = {
+        id: `tg_${telegramIdStr}`,
+        name: fullName,
+        email: tgUser.username ? `${tgUser.username.toLowerCase()}@telegram.user` : `tg_${telegramIdStr}@raad.platform`,
+        password: `auto_tg_${telegramIdStr}`,
+        telegramId: telegramIdStr,
+        telegramUsername: tgUser.username || '',
+        photoUrl: tgUser.photo_url || '',
+        daysAllowed: 365,
+        isUnlimited: true,
+        subscriptionStartDate: new Date().toISOString(),
+        subscriptionEndDate: '',
+        isIndividuallyBlocked: false,
+        isIndividuallyWhitelisted: true,
+        watchedVideoIds: [],
+        totalExamsTaken: 0,
+        averageScore: 0,
+        enrolledCourseIds: ['course_default_1'],
+        preferredThemeColor: 'default',
+        createdAt: new Date().toISOString(),
+        lastLoginAt: new Date().toISOString(),
+      };
+      handleStudentLoginSuccess(studentUser);
+    };
+
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'TELEGRAM_AUTH_SUCCESS' && event.data.user) {
+        handleStudentLoginSuccess(event.data.user);
+      }
+    };
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
+
   return (
     <div className={isDarkMode ? 'dark min-h-screen bg-slate-950 text-white w-full max-w-full overflow-x-hidden' : 'light min-h-screen bg-white text-slate-900 w-full max-w-full overflow-x-hidden'} dir="rtl">
       {/* If Admin Panel is open */}
@@ -368,7 +444,7 @@ export default function App() {
       ) : currentUser ? (
         !activeCourse ? (
           /* Student Courses Portal (واجهة الكورسات) */
-          <ErrorBoundary fallbackTitle="تنبيه في واجهة الكورسات">
+          <ErrorBoundary fallbackTitle="واجهة الكورسات">
             <CoursesPortal
               currentUser={currentUser}
               courses={courses}
