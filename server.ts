@@ -415,6 +415,48 @@ async function sendTelegramMessage(chatId: number | string, text: string, replyM
   }
 }
 
+// Helper to fetch user profile photo from Telegram Bot API and save it locally
+async function fetchAndSaveTelegramAvatar(telegramUserId: string | number): Promise<string> {
+  const token = await getTelegramBotToken();
+  if (!token || !telegramUserId) return '';
+
+  try {
+    const photosResp = await fetch(
+      `https://api.telegram.org/bot${token}/getUserProfilePhotos?user_id=${telegramUserId}&limit=1`
+    );
+    const photosData: any = await photosResp.json();
+    if (!photosData?.ok || !photosData.result?.photos?.length) return '';
+
+    const photoSizes = photosData.result.photos[0];
+    if (!photoSizes || !photoSizes.length) return '';
+    const bestSize = photoSizes[photoSizes.length - 1];
+
+    const fileResp = await fetch(
+      `https://api.telegram.org/bot${token}/getFile?file_id=${bestSize.file_id}`
+    );
+    const fileData: any = await fileResp.json();
+    if (!fileData?.ok || !fileData.result?.file_path) return '';
+
+    const downloadUrl = `https://api.telegram.org/file/bot${token}/${fileData.result.file_path}`;
+    const imgResp = await fetch(downloadUrl);
+    if (!imgResp.ok) return '';
+
+    const arrayBuffer = await imgResp.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    const avatarFilename = `tg_${telegramUserId}.jpg`;
+    const avatarPath = path.join(imagesDir, avatarFilename);
+    fs.writeFileSync(avatarPath, buffer);
+
+    const relativeUrl = `/uploads/images/${avatarFilename}`;
+    console.log(`[Telegram Avatar] Successfully saved avatar for user ${telegramUserId} to ${relativeUrl}`);
+    return relativeUrl;
+  } catch (err: any) {
+    console.warn(`[Telegram Avatar] Notice fetching avatar for user ${telegramUserId}:`, err.message);
+    return '';
+  }
+}
+
 // ================= PHONE-TO-CHAT_ID & OTP SYSTEM =================
 function normalizePhoneNumber(rawPhone: string): { normalized: string; cleanDigits: string; aliases: string[] } {
   if (!rawPhone) return { normalized: '', cleanDigits: '', aliases: [] };
@@ -921,32 +963,62 @@ app.all('/api/telegram/verify-direct-code', async (req: Request, res: Response) 
 
     let authenticatedUser: any = null;
     const chatId = record.chatId;
+    const telegramId = (record as any).telegramId || chatId;
+
+    // Check / fetch user's real Telegram avatar if not present
+    let resolvedAvatar = (record as any).photoUrl || '';
+    if (!resolvedAvatar && telegramId) {
+      resolvedAvatar = await fetchAndSaveTelegramAvatar(telegramId);
+    }
 
     if (telegramDb) {
       try {
-        const q = query(collection(telegramDb, 'users'), where('telegramChatId', '==', String(chatId)));
-        const snap = await getDocs(q);
+        let snap = await getDocs(query(collection(telegramDb, 'users'), where('telegramChatId', '==', String(chatId))));
+        if (snap.empty && telegramId) {
+          snap = await getDocs(query(collection(telegramDb, 'users'), where('telegramId', '==', String(telegramId))));
+        }
+
         if (!snap.empty) {
           const uDoc = snap.docs[0];
-          authenticatedUser = { id: uDoc.id, ...uDoc.data() };
-          await updateDoc(doc(telegramDb, 'users', uDoc.id), {
+          const existingData = uDoc.data();
+          const finalPhoto = resolvedAvatar || existingData.photoUrl || '';
+
+          const updates: any = {
             lastLoginAt: new Date().toISOString(),
-          });
+          };
+          if (finalPhoto && (!existingData.photoUrl || existingData.photoUrl !== finalPhoto)) {
+            updates.photoUrl = finalPhoto;
+            updates.avatarUrl = finalPhoto;
+          }
+
+          await updateDoc(doc(telegramDb, 'users', uDoc.id), updates);
+
+          authenticatedUser = {
+            id: uDoc.id,
+            ...existingData,
+            ...updates,
+            photoUrl: finalPhoto,
+            avatarUrl: finalPhoto,
+          };
         } else {
+          const newDocRef = doc(collection(telegramDb, 'users'));
           const newUserData = {
-            name: record.name || 'طالب رعد',
-            email: record.username ? `${record.username.toLowerCase()}@telegram.user` : `tg_${chatId}@raad.platform`,
+            name: (record as any).name || 'طالب رعد',
+            email: (record as any).username ? `${(record as any).username.toLowerCase()}@telegram.user` : `tg_${chatId}@raad.platform`,
             password: `auto_tg_${chatId}`,
             daysAllowed: 30,
             isUnlimited: false,
             enrolledCourseIds: [],
+            watchedVideoIds: [],
             telegramChatId: String(chatId),
-            telegramId: record.telegramId ? String(record.telegramId) : '',
-            telegramUsername: record.username || '',
+            telegramId: telegramId ? String(telegramId) : '',
+            telegramUsername: (record as any).username || '',
+            photoUrl: resolvedAvatar || '',
+            avatarUrl: resolvedAvatar || '',
+            preferredThemeColor: 'default',
             createdAt: new Date().toISOString(),
             lastLoginAt: new Date().toISOString(),
           };
-          const newDocRef = doc(collection(telegramDb, 'users'));
           await setDoc(newDocRef, newUserData);
 
           try {
@@ -961,31 +1033,79 @@ app.all('/api/telegram/verify-direct-code', async (req: Request, res: Response) 
 
           authenticatedUser = { id: newDocRef.id, ...newUserData };
         }
-      } catch (e) {}
+      } catch (e: any) {
+        console.warn('Firestore verify direct code error:', e.message);
+      }
     }
 
     if (!authenticatedUser) {
       authenticatedUser = {
-        id: `tg_${chatId}`,
-        name: record.name || 'طالب رعد',
+        id: `user_${chatId}`,
+        name: (record as any).name || 'طالب رعد',
         email: `tg_${chatId}@raad.platform`,
         daysAllowed: 30,
+        isUnlimited: false,
+        enrolledCourseIds: [],
+        watchedVideoIds: [],
+        preferredThemeColor: 'default',
+        photoUrl: resolvedAvatar || '',
+        avatarUrl: resolvedAvatar || '',
         telegramChatId: String(chatId),
         createdAt: new Date().toISOString(),
         lastLoginAt: new Date().toISOString(),
       };
     }
 
-    await sendTelegramMessage(chatId, `✅ <b>تم تسجيل دخولك بنجاح إلى منصة أقسام رعد!</b>\nنتمنى لك دراسة موفقة يا ${authenticatedUser.name} 🎯`);
+    // Complete StudentUser object guarantees no undefined fields that could crash the React dashboard
+    const safeUser: any = {
+      id: authenticatedUser.id,
+      name: authenticatedUser.name || 'طالب رعد',
+      email: authenticatedUser.email || `tg_${chatId}@raad.platform`,
+      password: authenticatedUser.password || `auto_${chatId}`,
+      daysAllowed: authenticatedUser.daysAllowed ?? 30,
+      isUnlimited: Boolean(authenticatedUser.isUnlimited),
+      enrolledCourseIds: Array.isArray(authenticatedUser.enrolledCourseIds) ? authenticatedUser.enrolledCourseIds : [],
+      watchedVideoIds: Array.isArray(authenticatedUser.watchedVideoIds) ? authenticatedUser.watchedVideoIds : [],
+      preferredThemeColor: authenticatedUser.preferredThemeColor || 'default',
+      photoUrl: authenticatedUser.photoUrl || resolvedAvatar || '',
+      avatarUrl: authenticatedUser.avatarUrl || authenticatedUser.photoUrl || resolvedAvatar || '',
+      telegramChatId: String(chatId),
+      telegramId: authenticatedUser.telegramId || (record as any)?.telegramId,
+      telegramUsername: authenticatedUser.telegramUsername || (record as any)?.username || '',
+      createdAt: authenticatedUser.createdAt || new Date().toISOString(),
+      lastLoginAt: new Date().toISOString(),
+    };
+
+    // Send confirmation in background
+    sendTelegramMessage(
+      chatId,
+      `✅ <b>تم تسجيل دخولك بنجاح إلى منصة أقسام رعد!</b>\nنتمنى لك دراسة موفقة وتحقيق نسبة 100% بإذن الله يا ${safeUser.name} 🎯`
+    ).catch(() => {});
 
     res.json({
       success: true,
-      user: authenticatedUser,
+      user: safeUser,
       message: 'تم تسجيل الدخول بنجاح!',
     });
   } catch (err: any) {
     res.status(500).json({ success: false, error: 'حدث خطأ: ' + err.message });
   }
+});
+
+// Avatar proxy endpoint
+app.get('/api/telegram/avatar/:userId', async (req: Request, res: Response) => {
+  const userId = String(req.params.userId);
+  const avatarPath = path.join(imagesDir, `tg_${userId}.jpg`);
+  if (fs.existsSync(avatarPath)) {
+    res.sendFile(avatarPath);
+    return;
+  }
+  const freshUrl = await fetchAndSaveTelegramAvatar(userId);
+  if (freshUrl && fs.existsSync(path.join(process.cwd(), freshUrl))) {
+    res.sendFile(path.join(process.cwd(), freshUrl));
+    return;
+  }
+  res.status(404).send('Avatar not found');
 });
 
 // Centralized Telegram update handler (used by both Long Polling and Webhook)
@@ -1011,67 +1131,13 @@ async function handleTelegramUpdate(update: any): Promise<void> {
 
     const botKeyboard = {
       keyboard: [
-        [{ text: '📱 مشاركة رقم هاتفي للربط وتفعيل الرمز ✈️', request_contact: true }],
         [{ text: '🔑 كود تسجيل الدخول السريع (OTP)' }],
       ],
       resize_keyboard: true,
       one_time_keyboard: false,
     };
 
-    // 1. Contact shared:
-    if (message.contact && message.contact.phone_number) {
-      const contactPhone = message.contact.phone_number;
-      console.log(`[Telegram Bot] Contact card received: ${contactPhone} from chatId ${chatId}`);
-      const linkRec = await savePhoneLink(contactPhone, chatId, {
-        telegramId,
-        username,
-        name: fullName,
-      });
-
-      const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-      const expiresAt = Date.now() + 10 * 60 * 1000;
-      const otpData: OtpRecord = {
-        phone: linkRec.phone,
-        cleanDigits: linkRec.cleanDigits,
-        code: otpCode,
-        chatId,
-        expiresAt,
-        createdAt: new Date().toISOString(),
-      };
-      activeOtps.set(linkRec.cleanDigits, otpData);
-      activeOtps.set(linkRec.phone, otpData);
-
-      directBotCodes.set(otpCode, {
-        code: otpCode,
-        chatId,
-        telegramId,
-        username,
-        name: fullName,
-        expiresAt,
-      });
-
-      if (telegramDb) {
-        try {
-          await setDoc(doc(telegramDb, 'telegram_otp_codes', `otp_${linkRec.cleanDigits}`), otpData);
-          await setDoc(doc(telegramDb, 'telegram_direct_codes', otpCode), {
-            code: otpCode,
-            phone: linkRec.phone,
-            chatId: String(chatId),
-            telegramId: String(telegramId),
-            name: fullName,
-            username,
-            expiresAt,
-            createdAt: new Date().toISOString(),
-          });
-        } catch (e) {}
-      }
-
-      const reply = `✅ <b>تم ربط رقم هاتفك بنجاح!</b>\n\n📱 الرقم المربوط: <code>${linkRec.phone}</code>\n\n🔐 <b>كود تسجيل الدخول الخاص بك:</b>\n<code>${otpCode}</code>\n\n⏱ الرمز صالح لمدة 10 دقائق.\nيمكنك إدخال هذا الكود الآن في صفحة تسجيل الدخول بالموقع.`;
-      await sendTelegramMessage(chatId, reply, botKeyboard);
-      return;
-    }
-
-    // 2. /code or code or quick login requested (Handles /code, code, \code, /otp, كود, etc.)
+    // 1. /code or code or quick login requested (Handles /code, code, \code, /otp, كود, etc.)
     const isCodeCommand =
       rawText === '🔑 كود تسجيل الدخول السريع (OTP)' ||
       text === '/code' ||
@@ -1092,6 +1158,159 @@ async function handleTelegramUpdate(update: any): Promise<void> {
       const code = Math.floor(100000 + Math.random() * 900000).toString();
       const expiresAt = Date.now() + 10 * 60 * 1000;
 
+      // FIRST: Reply IMMEDIATELY to Telegram user in <100ms! Zero delay!
+      const reply = `🔐 <b>كود تسجيل الدخول الخاص بك في منصة رعد:</b>\n\n<code>${code}</code>\n\n⏱ <b>صالح لمدة 10 دقائق.</b>\n📌 انسخ الكود أعلاه واكتبه في خانة كود تليجرام في شاشة تسجيل الدخول بالموقع وسيتم تسجيل دخولك فوراً! ⚡`;
+      sendTelegramMessage(chatId, reply, botKeyboard).catch((e) => console.warn('Send code msg error:', e));
+
+      // SECOND: Asynchronously in background: fetch avatar & persist user + code in Firestore
+      (async () => {
+        let avatarUrl = '';
+        if (telegramId) {
+          avatarUrl = await fetchAndSaveTelegramAvatar(telegramId);
+        }
+
+        directBotCodes.set(code, {
+          code,
+          chatId,
+          telegramId,
+          username,
+          name: fullName,
+          expiresAt,
+          photoUrl: avatarUrl,
+        } as any);
+
+        if (telegramDb) {
+          try {
+            await setDoc(doc(telegramDb, 'telegram_direct_codes', code), {
+              code,
+              chatId: String(chatId),
+              telegramId: String(telegramId),
+              name: fullName,
+              username,
+              photoUrl: avatarUrl,
+              expiresAt,
+              createdAt: new Date().toISOString(),
+            });
+
+            await setDoc(doc(telegramDb, 'telegram_otp_codes', `code_${code}`), {
+              code,
+              chatId: String(chatId),
+              telegramId: String(telegramId),
+              expiresAt,
+              createdAt: new Date().toISOString(),
+            });
+
+            const qChat = query(collection(telegramDb, 'users'), where('telegramChatId', '==', String(chatId)));
+            const snapChat = await getDocs(qChat);
+            if (!snapChat.empty) {
+              const uDoc = snapChat.docs[0];
+              const existingData = uDoc.data();
+              const updates: any = {
+                lastLoginAt: new Date().toISOString(),
+              };
+              if (avatarUrl && existingData.photoUrl !== avatarUrl) {
+                updates.photoUrl = avatarUrl;
+                updates.avatarUrl = avatarUrl;
+              }
+              await updateDoc(doc(telegramDb, 'users', uDoc.id), updates);
+            } else {
+              const newUserData = {
+                name: fullName,
+                email: username ? `${username.toLowerCase()}@telegram.user` : `tg_${telegramId}@raad.platform`,
+                password: `auto_tg_${telegramId}`,
+                daysAllowed: 30,
+                isUnlimited: false,
+                enrolledCourseIds: [],
+                watchedVideoIds: [],
+                telegramId: String(telegramId),
+                telegramChatId: String(chatId),
+                telegramUsername: username,
+                photoUrl: avatarUrl,
+                avatarUrl: avatarUrl,
+                preferredThemeColor: 'default',
+                createdAt: new Date().toISOString(),
+                lastLoginAt: new Date().toISOString(),
+              };
+              const newDocRef = doc(collection(telegramDb, 'users'));
+              await setDoc(newDocRef, newUserData);
+
+              try {
+                await addDoc(collection(telegramDb, 'folders'), {
+                  userId: newDocRef.id,
+                  courseId: 'course_default_1',
+                  title: 'مجلد الاخطاء',
+                  isDefaultMistakesFolder: true,
+                  createdAt: new Date().toISOString(),
+                });
+              } catch (e) {}
+            }
+          } catch (dbErr: any) {
+            console.warn('[Telegram Bot] Firestore save error for /code:', dbErr.message);
+          }
+        }
+      })().catch(console.error);
+
+      console.log(`[Telegram Bot] Instant code ${code} dispatched for ${fullName} (chat: ${chatId})`);
+      return;
+    }
+
+    // 2. Standard /start or general greeting
+    const isStart = text.startsWith('/start') || text === 'ابدأ' || text === 'بدء' || text === 'مرحبا' || text === 'السلام عليكم';
+    if (isStart) {
+      // Automatically generate code on start too!
+      const code = Math.floor(100000 + Math.random() * 900000).toString();
+      const expiresAt = Date.now() + 10 * 60 * 1000;
+
+      const welcomeMsg = `👋 <b>أهلاً بك يا ${fullName} في بوت منصة أقسام رعد التعليمية! ⚡</b>\n\n🔐 <b>كود تسجيل الدخول السريع الخاص بك:</b>\n<code>${code}</code>\n\n⏱ <b>صالح لمدة 10 دقائق.</b>\n📌 انسخ الكود أعلاه وأدخله في صفحة تسجيل الدخول بالموقع!\n💡 يمكنك أيضاً إرسال <b>/code</b> في أي وقت لتوليد كود جديد فوراً.`;
+      sendTelegramMessage(chatId, welcomeMsg, botKeyboard).catch((e) => console.warn('Send start msg error:', e));
+
+      // Asynchronously fetch avatar & save code
+      (async () => {
+        let avatarUrl = '';
+        if (telegramId) {
+          avatarUrl = await fetchAndSaveTelegramAvatar(telegramId);
+        }
+
+        directBotCodes.set(code, {
+          code,
+          chatId,
+          telegramId,
+          username,
+          name: fullName,
+          expiresAt,
+          photoUrl: avatarUrl,
+        } as any);
+
+        if (telegramDb) {
+          try {
+            await setDoc(doc(telegramDb, 'telegram_direct_codes', code), {
+              code,
+              chatId: String(chatId),
+              telegramId: String(telegramId),
+              name: fullName,
+              username,
+              photoUrl: avatarUrl,
+              expiresAt,
+              createdAt: new Date().toISOString(),
+            });
+          } catch (e) {}
+        }
+      })().catch(console.error);
+
+      return;
+    }
+
+    // Default reply if any other text sent: give them a code right away!
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = Date.now() + 10 * 60 * 1000;
+    const fallbackMsg = `مرحباً يا ${fullName} ⚡\n\n🔐 <b>كود الدخول السريع الخاص بك:</b>\n<code>${code}</code>\n\nأدخله في الموقع للدخول فوراً!`;
+    sendTelegramMessage(chatId, fallbackMsg, botKeyboard).catch((e) => console.warn('Send fallback msg error:', e));
+
+    (async () => {
+      let avatarUrl = '';
+      if (telegramId) {
+        avatarUrl = await fetchAndSaveTelegramAvatar(telegramId);
+      }
       directBotCodes.set(code, {
         code,
         chatId,
@@ -1099,256 +1318,9 @@ async function handleTelegramUpdate(update: any): Promise<void> {
         username,
         name: fullName,
         expiresAt,
-      });
-
-      if (telegramDb) {
-        try {
-          await setDoc(doc(telegramDb, 'telegram_direct_codes', code), {
-            code,
-            chatId: String(chatId),
-            telegramId: String(telegramId),
-            name: fullName,
-            username,
-            expiresAt,
-            createdAt: new Date().toISOString(),
-          });
-
-          await setDoc(doc(telegramDb, 'telegram_otp_codes', `code_${code}`), {
-            code,
-            chatId: String(chatId),
-            telegramId: String(telegramId),
-            expiresAt,
-            createdAt: new Date().toISOString(),
-          });
-
-          const qChat = query(collection(telegramDb, 'users'), where('telegramChatId', '==', String(chatId)));
-          const snapChat = await getDocs(qChat);
-          if (snapChat.empty) {
-            const newUserData = {
-              name: fullName,
-              email: username ? `${username.toLowerCase()}@telegram.user` : `tg_${telegramId}@raad.platform`,
-              password: `auto_tg_${telegramId}`,
-              daysAllowed: 30,
-              isUnlimited: false,
-              enrolledCourseIds: [],
-              telegramId: String(telegramId),
-              telegramChatId: String(chatId),
-              telegramUsername: username,
-              photoUrl: '',
-              createdAt: new Date().toISOString(),
-              lastLoginAt: new Date().toISOString(),
-            };
-            const newDocRef = doc(collection(telegramDb, 'users'));
-            await setDoc(newDocRef, newUserData);
-
-            try {
-              await addDoc(collection(telegramDb, 'folders'), {
-                userId: newDocRef.id,
-                courseId: 'course_default_1',
-                title: 'مجلد الاخطاء',
-                isDefaultMistakesFolder: true,
-                createdAt: new Date().toISOString(),
-              });
-            } catch (e) {}
-          }
-        } catch (dbErr: any) {
-          console.warn('[Telegram Bot] Firestore save error for /code:', dbErr.message);
-        }
-      }
-
-      console.log(`[Telegram Bot] Generated code ${code} for user ${fullName} (chat: ${chatId})`);
-
-      const reply = `🔑 <b>كود تسجيل الدخول السريع الخاص بك:</b>\n\n<code>${code}</code>\n\n⏱ <b>صالح لمدة 10 دقائق.</b>\n📌 انسخ الكود أعلاه واكتبه في خانة "كود البوت السريع" في صفحة تسجيل الدخول بالموقع وسيتم تسجيل دخولك فوراً! ⚡`;
-      await sendTelegramMessage(chatId, reply, botKeyboard);
-      return;
-    }
-
-    // 3. Deep link /start link_<PHONE>
-    if (text.startsWith('/start link_')) {
-      const rawPhoneParam = rawText.replace(/\/start link_/i, '').trim();
-      console.log(`[Telegram Bot] Deep link: ${rawPhoneParam} from chat ${chatId}`);
-      const linkRec = await savePhoneLink(rawPhoneParam, chatId, {
-        telegramId,
-        username,
-        name: fullName,
-      });
-
-      const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-      const expiresAt = Date.now() + 10 * 60 * 1000;
-      const otpData: OtpRecord = {
-        phone: linkRec.phone,
-        cleanDigits: linkRec.cleanDigits,
-        code: otpCode,
-        chatId,
-        expiresAt,
-        createdAt: new Date().toISOString(),
-      };
-      activeOtps.set(linkRec.cleanDigits, otpData);
-      activeOtps.set(linkRec.phone, otpData);
-
-      directBotCodes.set(otpCode, {
-        code: otpCode,
-        chatId,
-        telegramId,
-        username,
-        name: fullName,
-        expiresAt,
-      });
-
-      if (telegramDb) {
-        try {
-          await setDoc(doc(telegramDb, 'telegram_otp_codes', `otp_${linkRec.cleanDigits}`), otpData);
-          await setDoc(doc(telegramDb, 'telegram_direct_codes', otpCode), {
-            code: otpCode,
-            phone: linkRec.phone,
-            chatId: String(chatId),
-            telegramId: String(telegramId),
-            name: fullName,
-            username,
-            expiresAt,
-            createdAt: new Date().toISOString(),
-          });
-        } catch (e) {}
-      }
-
-      const reply = `✅ <b>أهلاً بك! تم ربط رقم هاتفك بنجاح ⚡</b>\n\n📱 الرقم المربوط: <code>${linkRec.phone}</code>\n\n🔐 <b>كود التحقق الخاص بك لتسجيل الدخول:</b>\n<code>${otpCode}</code>\n\n⏱ الرمز صالح لمدة 10 دقائق.\nارجع الآن لصفحة تسجيل الدخول وأدخل هذا الكود للمتابعة!`;
-      await sendTelegramMessage(chatId, reply, botKeyboard);
-      return;
-    }
-
-    // 4. Plain text phone number
-    const isPhoneNumber = /^(\+?[0-9\s-]{9,15})$/.test(rawText.replace(/[\s-]/g, ''));
-    if (isPhoneNumber && rawText.length >= 9) {
-      console.log(`[Telegram Bot] Phone text received: ${rawText} from chat ${chatId}`);
-      const linkRec = await savePhoneLink(rawText, chatId, {
-        telegramId,
-        username,
-        name: fullName,
-      });
-
-      const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-      const expiresAt = Date.now() + 10 * 60 * 1000;
-      const otpData: OtpRecord = {
-        phone: linkRec.phone,
-        cleanDigits: linkRec.cleanDigits,
-        code: otpCode,
-        chatId,
-        expiresAt,
-        createdAt: new Date().toISOString(),
-      };
-      activeOtps.set(linkRec.cleanDigits, otpData);
-      activeOtps.set(linkRec.phone, otpData);
-
-      directBotCodes.set(otpCode, {
-        code: otpCode,
-        chatId,
-        telegramId,
-        username,
-        name: fullName,
-        expiresAt,
-      });
-
-      if (telegramDb) {
-        try {
-          await setDoc(doc(telegramDb, 'telegram_otp_codes', `otp_${linkRec.cleanDigits}`), otpData);
-          await setDoc(doc(telegramDb, 'telegram_direct_codes', otpCode), {
-            code: otpCode,
-            phone: linkRec.phone,
-            chatId: String(chatId),
-            telegramId: String(telegramId),
-            name: fullName,
-            username,
-            expiresAt,
-            createdAt: new Date().toISOString(),
-          });
-        } catch (e) {}
-      }
-
-      const reply = `✅ <b>تم ربط رقم هاتفك بنجاح!</b>\n\n📱 الرقم المربوط: <code>${linkRec.phone}</code>\n\n🔐 <b>كود تسجيل الدخول الخاص بك:</b>\n<code>${otpCode}</code>\n\n⏱ صالح لمدة 10 دقائق. أدخل هذا الكود الآن في الموقع لتسجيل الدخول.`;
-      await sendTelegramMessage(chatId, reply, botKeyboard);
-      return;
-    }
-
-    // 5. Standard /start or general greeting
-    const isStart = text.startsWith('/start') || text === 'ابدأ' || text === 'بدء' || text === 'مرحبا' || text === 'السلام عليكم';
-    if (isStart) {
-      let targetSessionId = latestPendingSessionId || 'default';
-      const parts = rawText.split(' ');
-      if (parts[1] && parts[1].startsWith('login_')) {
-        targetSessionId = parts[1].replace('login_', '').trim();
-      }
-
-      let authenticatedUser: any = null;
-      if (telegramDb) {
-        try {
-          const qNum = query(collection(telegramDb, 'users'), where('telegramId', '==', Number(telegramId)));
-          let userSnap = await getDocs(qNum);
-          if (userSnap.empty) {
-            const qStr = query(collection(telegramDb, 'users'), where('telegramId', '==', String(telegramId)));
-            userSnap = await getDocs(qStr);
-          }
-
-          if (!userSnap.empty) {
-            const userDoc = userSnap.docs[0];
-            const existingData = userDoc.data();
-            authenticatedUser = {
-              ...existingData,
-              id: userDoc.id,
-              name: existingData.name || fullName,
-              telegramUsername: username || existingData.telegramUsername || '',
-              telegramChatId: String(chatId),
-              lastLoginAt: new Date().toISOString(),
-            };
-            await updateDoc(doc(telegramDb, 'users', userDoc.id), {
-              lastLoginAt: new Date().toISOString(),
-              telegramUsername: username || existingData.telegramUsername || '',
-              telegramChatId: String(chatId),
-            });
-          } else {
-            const newUserData = {
-              name: fullName,
-              email: username ? `${username.toLowerCase()}@telegram.user` : `tg_${telegramId}@raad.platform`,
-              password: `auto_tg_${telegramId}`,
-              daysAllowed: 30,
-              isUnlimited: false,
-              enrolledCourseIds: [],
-              telegramId: String(telegramId),
-              telegramChatId: String(chatId),
-              telegramUsername: username,
-              photoUrl: '',
-              createdAt: new Date().toISOString(),
-              lastLoginAt: new Date().toISOString(),
-            };
-            const newDocRef = doc(collection(telegramDb, 'users'));
-            await setDoc(newDocRef, newUserData);
-            authenticatedUser = { id: newDocRef.id, ...newUserData };
-          }
-
-          const sessionPayload = {
-            sessionId: targetSessionId,
-            status: 'authenticated',
-            telegramId: String(telegramId),
-            telegramChatId: String(chatId),
-            user: authenticatedUser,
-            createdAt: new Date().toISOString(),
-            authenticatedAt: new Date().toISOString(),
-          };
-          await Promise.all([
-            setDoc(doc(telegramDb, 'telegram_login_sessions', targetSessionId), sessionPayload),
-            setDoc(doc(telegramDb, 'telegram_login_sessions', 'global_latest'), sessionPayload),
-            setDoc(doc(telegramDb, 'telegram_login_sessions', 'default'), sessionPayload),
-          ]);
-        } catch (e) {}
-      }
-
-      const welcomeMsg = `👋 <b>أهلاً بك يا ${fullName} في بوت منصة أقسام رعد التعليمية! ⚡</b>\n\nللحصول على كود الدخول إلى المنصة:\n1️⃣ اضغط على زر <b>"🔑 كود تسجيل الدخول السريع (OTP)"</b> بالأسفل.\n2️⃣ أو أرسل كلمة <b>/code</b> في أي وقت لتوليد كود فوري.\n3️⃣ أو شارك رقم هاتفك لتسجيل الدخول برقم الجوال.`;
-      await sendTelegramMessage(chatId, welcomeMsg, botKeyboard);
-      return;
-    }
-
-    // Default reply if any other text sent
-    const fallbackMsg = `مرحباً يا ${fullName} ⚡\n\nاضغط على <b>"🔑 كود تسجيل الدخول السريع (OTP)"</b> أدناه أو أرسل <b>/code</b> للحصول على رمز تسجيل الدخول في الموقع فوراً!`;
-    await sendTelegramMessage(chatId, fallbackMsg, botKeyboard);
+        photoUrl: avatarUrl,
+      } as any);
+    })().catch(console.error);
   } catch (err: any) {
     console.error('[Telegram Bot] Error in handleTelegramUpdate:', err);
   }
@@ -1358,8 +1330,7 @@ async function handleTelegramUpdate(update: any): Promise<void> {
 app.post('/api/telegram/webhook', async (req: Request, res: Response) => {
   try {
     const update = req.body;
-    console.log('[Telegram Webhook] Received update via HTTP POST:', JSON.stringify(update));
-    await handleTelegramUpdate(update);
+    handleTelegramUpdate(update).catch((e) => console.warn('Webhook handle error:', e));
     res.json({ ok: true });
   } catch (err: any) {
     console.error('[Telegram Webhook] Uncaught error:', err);
@@ -1367,7 +1338,7 @@ app.post('/api/telegram/webhook', async (req: Request, res: Response) => {
   }
 });
 
-// Telegram Long Polling Engine (guarantees reception even if webhooks fail or are blocked by cloud proxy)
+// Telegram Long Polling Engine (instant response with 1-second timeout & non-blocking dispatch)
 let isTelegramPolling = false;
 let lastUpdateId = 0;
 
@@ -1386,7 +1357,7 @@ async function startTelegramPolling() {
   // Remove webhook so getUpdates works smoothly
   try {
     await fetch(`https://api.telegram.org/bot${botToken}/deleteWebhook?drop_pending_updates=false`);
-    console.log('[Telegram Polling] Webhook disabled. Long-Polling listener active for @Ra3d6_bot.');
+    console.log('[Telegram Polling] Webhook disabled. Ultra-fast Long-Polling active for @Ra3d6_bot.');
   } catch (e: any) {
     console.warn('[Telegram Polling] Notice removing webhook:', e.message);
   }
@@ -1396,32 +1367,34 @@ async function startTelegramPolling() {
       try {
         const token = await getTelegramBotToken();
         if (!token) {
-          await new Promise((r) => setTimeout(r, 4000));
+          await new Promise((r) => setTimeout(r, 3000));
           continue;
         }
 
-        const url = `https://api.telegram.org/bot${token}/getUpdates?offset=${lastUpdateId + 1}&timeout=15&limit=25`;
+        // Fast 1-second long-poll
+        const url = `https://api.telegram.org/bot${token}/getUpdates?offset=${lastUpdateId + 1}&timeout=1&limit=30`;
         const res = await fetch(url);
         const data: any = await res.json();
 
         if (data.ok && Array.isArray(data.result)) {
           for (const update of data.result) {
             lastUpdateId = Math.max(lastUpdateId, update.update_id);
-            await handleTelegramUpdate(update);
+            // Non-blocking invocation: execute immediately without waiting!
+            handleTelegramUpdate(update).catch((err) => console.warn('[Telegram Polling] Update handling error:', err));
           }
         } else if (!data.ok) {
-          await new Promise((r) => setTimeout(r, 2000));
+          await new Promise((r) => setTimeout(r, 1000));
         }
       } catch (err: any) {
-        await new Promise((r) => setTimeout(r, 2000));
+        await new Promise((r) => setTimeout(r, 1000));
       }
     }
   };
 
   pollLoop().catch((err) => {
-    console.error('[Telegram Polling] Poller crashed, restarting:', err);
+    console.error('[Telegram Polling] Poller crashed, restarting in 2s:', err);
     isTelegramPolling = false;
-    setTimeout(startTelegramPolling, 3000);
+    setTimeout(startTelegramPolling, 2000);
   });
 }
 

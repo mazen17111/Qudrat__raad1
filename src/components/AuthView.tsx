@@ -180,6 +180,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
 
       // 4. Save session in localStorage so student stays logged in
       try {
+        localStorage.setItem('raad_student_auth_session', JSON.stringify(authenticatedUser));
         localStorage.setItem('raad_student_session', JSON.stringify(authenticatedUser));
       } catch (e) {}
 
@@ -219,6 +220,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
   // Handle successful phone OTP login or direct bot code login
   const handlePhoneOtpLoginSuccess = (authenticatedUser: StudentUser) => {
     try {
+      localStorage.setItem('raad_student_auth_session', JSON.stringify(authenticatedUser));
       localStorage.setItem('raad_student_session', JSON.stringify(authenticatedUser));
     } catch (e) {}
 

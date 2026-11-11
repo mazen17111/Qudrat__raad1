@@ -18,9 +18,16 @@ const COURSE_THEME_STORAGE_KEY = 'raad_student_course_theme_color';
 export default function App() {
   const [currentUser, setCurrentUser] = useState<StudentUser | null>(() => {
     try {
-      const saved = localStorage.getItem(STUDENT_SESSION_KEY);
+      const saved = localStorage.getItem(STUDENT_SESSION_KEY) || localStorage.getItem('raad_student_session');
       if (saved) {
-        return JSON.parse(saved) as StudentUser;
+        const parsed = JSON.parse(saved) as StudentUser;
+        if (parsed && parsed.id) {
+          return {
+            ...parsed,
+            enrolledCourseIds: Array.isArray(parsed.enrolledCourseIds) ? parsed.enrolledCourseIds : [],
+            watchedVideoIds: Array.isArray(parsed.watchedVideoIds) ? parsed.watchedVideoIds : [],
+          };
+        }
       }
     } catch (e) {
       console.error('Failed to parse saved student session:', e);
@@ -229,6 +236,7 @@ export default function App() {
   const handleStudentLogout = () => {
     try {
       localStorage.removeItem(STUDENT_SESSION_KEY);
+      localStorage.removeItem('raad_student_session');
       localStorage.removeItem(COURSE_THEME_STORAGE_KEY);
     } catch (e) {}
     setCourseThemeColor('default');
@@ -238,16 +246,22 @@ export default function App() {
 
   // Student login success: save to state & localStorage
   const handleStudentLoginSuccess = (user: StudentUser) => {
+    const safeUser: StudentUser = {
+      ...user,
+      enrolledCourseIds: Array.isArray(user.enrolledCourseIds) ? user.enrolledCourseIds : [],
+      watchedVideoIds: Array.isArray(user.watchedVideoIds) ? user.watchedVideoIds : [],
+    };
     try {
-      localStorage.setItem(STUDENT_SESSION_KEY, JSON.stringify(user));
+      localStorage.setItem(STUDENT_SESSION_KEY, JSON.stringify(safeUser));
+      localStorage.setItem('raad_student_session', JSON.stringify(safeUser));
     } catch (e) {}
-    setCurrentUser(user);
+    setCurrentUser(safeUser);
     // Student always starts on the Courses Portal per request
     setActiveCourse(null);
 
     // Ensure every new account starts with 'default', or loads their own saved choice
-    const userColor = (user.preferredThemeColor && ['default', 'red', 'green', 'blue', 'purple', 'pink'].includes(user.preferredThemeColor))
-      ? user.preferredThemeColor
+    const userColor = (safeUser.preferredThemeColor && ['default', 'red', 'green', 'blue', 'purple', 'pink'].includes(safeUser.preferredThemeColor))
+      ? safeUser.preferredThemeColor
       : 'default';
     setCourseThemeColor(userColor);
     try {
@@ -344,19 +358,21 @@ export default function App() {
       ) : currentUser ? (
         !activeCourse ? (
           /* Student Courses Portal (واجهة الكورسات) */
-          <CoursesPortal
-            currentUser={currentUser}
-            courses={courses}
-            systemSettings={systemSettings}
-            isDarkMode={isDarkMode}
-            toggleDarkMode={toggleDarkMode}
-            onLogout={handleStudentLogout}
-            onSecretTriggerAdmin={handleSecretTriggerAdmin}
-            onActivateCourse={handleActivateCourse}
-            onSelectCourse={handleSelectCourse}
-            currentThemeColor={courseThemeColor}
-            onSelectThemeColor={handleSelectCourseThemeColor}
-          />
+          <ErrorBoundary fallbackTitle="تنبيه في واجهة الكورسات">
+            <CoursesPortal
+              currentUser={currentUser}
+              courses={courses}
+              systemSettings={systemSettings}
+              isDarkMode={isDarkMode}
+              toggleDarkMode={toggleDarkMode}
+              onLogout={handleStudentLogout}
+              onSecretTriggerAdmin={handleSecretTriggerAdmin}
+              onActivateCourse={handleActivateCourse}
+              onSelectCourse={handleSelectCourse}
+              currentThemeColor={courseThemeColor}
+              onSelectThemeColor={handleSelectCourseThemeColor}
+            />
+          </ErrorBoundary>
         ) : (
           /* Student Main Course Platform */
           <ErrorBoundary fallbackTitle="تنبيه في المنصة">
