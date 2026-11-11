@@ -110,9 +110,7 @@ export const TelegramLoginCard: React.FC<TelegramLoginCardProps> = ({
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value.replace(/\D/g, '').slice(0, 6);
     setDirectCode(val);
-    if (val.length === 6 && !isSubmitting) {
-      handleVerifyDirectCode(val);
-    }
+    setLocalError('');
   };
 
   const displayError = localError || errorMessage;
@@ -221,24 +219,24 @@ export const TelegramLoginCard: React.FC<TelegramLoginCardProps> = ({
               />
             </div>
             <p className="text-[11px] text-slate-400 mt-1">
-              يتم التحقق تلقائياً فور كتابة الـ 6 أرقام ⚡
+              ألصق أو اكتب الكود المكون من 6 أرقام ثم اضغط على زر [الدخول للمنصة] 👇
             </p>
           </div>
 
           <button
             type="submit"
             disabled={isSubmitting || directCode.trim().length < 4}
-            className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white text-xs sm:text-sm font-black flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/30 transition disabled:opacity-50 cursor-pointer"
+            className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 active:scale-[0.99] text-white text-sm sm:text-base font-black flex items-center justify-center gap-2 shadow-xl shadow-emerald-600/30 transition disabled:opacity-50 cursor-pointer"
           >
             {isSubmitting ? (
               <>
-                <RefreshCw className="w-4 h-4 animate-spin" />
-                <span>جاري التحقق والدخول...</span>
+                <RefreshCw className="w-5 h-5 animate-spin" />
+                <span>جاري التحقق والدخول للمنصة...</span>
               </>
             ) : (
               <>
-                <ShieldCheck className="w-4 h-4" />
-                <span>تأكيد الكود والدخول للمنصة 🚀</span>
+                <ShieldCheck className="w-5 h-5" />
+                <span>الدخول للمنصة 🚀</span>
               </>
             )}
           </button>

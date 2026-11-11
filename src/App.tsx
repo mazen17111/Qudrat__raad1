@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { StudentUser, SystemSettings, FeaturesConfig, IntroLessonConfig, CourseItem, CourseThemeColor } from './types';
 import { db, testConnection, seedInitialPlatformData, DEFAULT_SETTINGS, INITIAL_COURSES, restoreDefaultCoursesAndContent } from './firebase';
-import { doc, onSnapshot, collection, updateDoc, arrayUnion } from 'firebase/firestore';
+import { doc, onSnapshot, collection, updateDoc, arrayUnion, setDoc } from 'firebase/firestore';
 import { AuthView } from './components/AuthView';
 import { CoursesPortal } from './components/CoursesPortal';
 import { StudentHome } from './components/StudentHome';
@@ -181,20 +181,35 @@ export default function App() {
     const unsubUser = onSnapshot(
       doc(db, 'users', currentUser.id),
       (docSnap) => {
-        if (!docSnap.exists() || (docSnap.data() as any)?.isDeleted) {
-          // Account was deleted by admin (normal or permanent delete) -> Log out immediately so the platform is closed in real-time!
-          setCurrentUser(null);
-          try {
-            localStorage.removeItem(STUDENT_SESSION_KEY);
-          } catch (e) {}
-          return;
-        }
+        if (docSnap.exists()) {
+          const data = docSnap.data() as any;
+          if (data?.isDeleted) {
+            // Account was explicitly marked deleted by admin -> Log out
+            setCurrentUser(null);
+            try {
+              localStorage.removeItem(STUDENT_SESSION_KEY);
+              localStorage.removeItem('raad_student_session');
+            } catch (e) {}
+            return;
+          }
 
-        const updated = { id: docSnap.id, ...docSnap.data() } as StudentUser;
-        setCurrentUser(updated);
-        try {
-          localStorage.setItem(STUDENT_SESSION_KEY, JSON.stringify(updated));
-        } catch (e) {}
+          const updated: StudentUser = {
+            id: docSnap.id,
+            ...data,
+            enrolledCourseIds: Array.isArray(data.enrolledCourseIds) ? data.enrolledCourseIds : [],
+            watchedVideoIds: Array.isArray(data.watchedVideoIds) ? data.watchedVideoIds : [],
+          };
+          setCurrentUser(updated);
+          try {
+            localStorage.setItem(STUDENT_SESSION_KEY, JSON.stringify(updated));
+            localStorage.setItem('raad_student_session', JSON.stringify(updated));
+          } catch (e) {}
+        } else {
+          // Document does not exist in Firestore yet -> Provision it safely without logging out
+          try {
+            setDoc(doc(db, 'users', currentUser.id), currentUser, { merge: true }).catch(() => {});
+          } catch (e) {}
+        }
       },
       (error) => {
         console.warn('Realtime user sync notice:', error);

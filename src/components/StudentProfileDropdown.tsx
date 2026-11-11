@@ -83,15 +83,15 @@ export const StudentProfileDropdown: React.FC<StudentProfileDropdownProps> = ({
         title="اضغط لفتح القائمة وتخصيص الألوان"
       >
         {/* الصورة الدائرية */}
-        {currentUser.photoUrl ? (
+        {currentUser?.photoUrl ? (
           <img
             src={currentUser.photoUrl}
-            alt={currentUser.name}
+            alt={currentUser?.name || 'طالب'}
             className="w-8 h-8 rounded-full object-cover ring-2 ring-emerald-500/70 shadow-sm shrink-0"
           />
         ) : (
           <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-sky-500 to-blue-600 text-white font-black text-xs flex items-center justify-center ring-2 ring-sky-400/50 shadow-sm shrink-0">
-            {currentUser.name ? currentUser.name.trim().charAt(0) : 'ط'}
+            {currentUser?.name ? currentUser.name.trim().charAt(0) : 'ط'}
           </div>
         )}
 
@@ -100,9 +100,9 @@ export const StudentProfileDropdown: React.FC<StudentProfileDropdownProps> = ({
           <span className={`text-xs font-black truncate max-w-[130px] group-hover:text-sky-400 transition-colors ${
             isDarkMode ? 'text-white' : 'text-slate-900'
           }`}>
-            {currentUser.name}
+            {currentUser?.name || 'طالب رعد'}
           </span>
-          {currentUser.telegramUsername && (
+          {currentUser?.telegramUsername && (
             <span className="text-[10px] text-sky-400 font-bold truncate" dir="ltr">
               @{currentUser.telegramUsername}
             </span>
@@ -128,23 +128,23 @@ export const StudentProfileDropdown: React.FC<StudentProfileDropdownProps> = ({
         >
           {/* 1. ترويسة بيانات الطالب */}
           <div className="p-2 pb-3 mb-2 border-b border-slate-200 dark:border-slate-800 flex items-center gap-3">
-            {currentUser.photoUrl ? (
+            {currentUser?.photoUrl ? (
               <img
                 src={currentUser.photoUrl}
-                alt={currentUser.name}
+                alt={currentUser?.name || 'طالب'}
                 className="w-10 h-10 rounded-full object-cover ring-2 ring-emerald-500/70 shrink-0"
               />
             ) : (
               <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-sky-500 to-blue-600 text-white font-black text-sm flex items-center justify-center ring-2 ring-sky-400/50 shrink-0">
-                {currentUser.name ? currentUser.name.trim().charAt(0) : 'ط'}
+                {currentUser?.name ? currentUser.name.trim().charAt(0) : 'ط'}
               </div>
             )}
             <div className="min-w-0 flex-1 text-right">
               <div className="text-sm font-black truncate text-slate-900 dark:text-white">
-                {currentUser.name}
+                {currentUser?.name || 'طالب رعد'}
               </div>
               <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
-                {currentUser.telegramUsername ? `@${currentUser.telegramUsername}` : currentUser.email}
+                {currentUser?.telegramUsername ? `@${currentUser.telegramUsername}` : (currentUser?.email || '')}
               </div>
             </div>
           </div>

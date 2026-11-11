@@ -162,14 +162,14 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
 
   // Supervisor direct links
   const whatsappInquiryUrl = `https://wa.me/${whatsappNum}?text=${encodeURIComponent(
-    `السلام عليكم ورحمة الله، أستفسر بخصوص التسجيل في دورات منصة أقسام رعد التعليمية - الطالب: ${currentUser.name}`
+    `السلام عليكم ورحمة الله، أستفسر بخصوص التسجيل في دورات منصة أقسام رعد التعليمية - الطالب: ${currentUser?.name || 'طالب'}`
   )}`;
   const telegramInquiryUrl = `https://t.me/${cleanTelegram}`;
 
   // Course payment / transfer confirmation links
   const whatsappUrl = selectedCourse
     ? `https://wa.me/${whatsappNum}?text=${encodeURIComponent(
-        `السلام عليكم ورحمة الله، أرغب في تأكيد تحويل رسوم الاشتراك في ${selectedCourse.title} - الطالب: ${currentUser.name} - الإيميل: ${currentUser.email}`
+        `السلام عليكم ورحمة الله، أرغب في تأكيد تحويل رسوم الاشتراك في ${selectedCourse.title} - الطالب: ${currentUser?.name || 'طالب'} - الإيميل: ${currentUser?.email || ''}`
       )}`
     : `https://wa.me/${whatsappNum}`;
 
@@ -211,7 +211,7 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
               </span>
             </div>
             <p className={`text-[11px] font-bold ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
-              مرحباً بك: <strong className={isDarkMode ? 'text-white' : 'text-slate-950'}>{currentUser.name}</strong>
+              مرحباً بك: <strong className={isDarkMode ? 'text-white' : 'text-slate-950'}>{currentUser?.name || 'طالب'}</strong>
             </p>
           </div>
         </div>
