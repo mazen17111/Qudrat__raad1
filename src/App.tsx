@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { StudentUser, SystemSettings, FeaturesConfig, IntroLessonConfig, CourseItem, CourseThemeColor } from './types';
 import { db, testConnection, seedInitialPlatformData, DEFAULT_SETTINGS, INITIAL_COURSES, restoreDefaultCoursesAndContent } from './firebase';
-import { doc, onSnapshot, collection, updateDoc, arrayUnion, setDoc } from 'firebase/firestore';
+import { doc, onSnapshot, collection, updateDoc, arrayUnion } from 'firebase/firestore';
 import { AuthView } from './components/AuthView';
 import { CoursesPortal } from './components/CoursesPortal';
 import { StudentHome } from './components/StudentHome';
@@ -203,11 +203,6 @@ export default function App() {
           try {
             localStorage.setItem(STUDENT_SESSION_KEY, JSON.stringify(updated));
             localStorage.setItem('raad_student_session', JSON.stringify(updated));
-          } catch (e) {}
-        } else {
-          // Document does not exist in Firestore yet -> Provision it safely without logging out
-          try {
-            setDoc(doc(db, 'users', currentUser.id), currentUser, { merge: true }).catch(() => {});
           } catch (e) {}
         }
       },
