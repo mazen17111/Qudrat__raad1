@@ -216,38 +216,6 @@ export const AuthView: React.FC<AuthViewProps> = ({
     }
   };
 
-  // Handle successful phone OTP login or direct bot code login
-  const handlePhoneOtpLoginSuccess = (authenticatedUser: StudentUser) => {
-    try {
-      localStorage.setItem('raad_student_session', JSON.stringify(authenticatedUser));
-    } catch (e) {}
-
-    if (authenticatedUser.telegramId || authenticatedUser.phone) {
-      try {
-        const idKey = authenticatedUser.telegramId ? String(authenticatedUser.telegramId) : (authenticatedUser.phone || authenticatedUser.id);
-        const newAcc: TelegramAccount = {
-          id: idKey,
-          name: authenticatedUser.name,
-          username: authenticatedUser.telegramUsername || '',
-          photoUrl: authenticatedUser.photoUrl || '',
-        };
-        const currentList: TelegramAccount[] = (() => {
-          try {
-            const raw = localStorage.getItem('raad_saved_telegram_accounts');
-            return raw ? JSON.parse(raw) : [];
-          } catch {
-            return [];
-          }
-        })();
-        const updated = [newAcc, ...currentList.filter((a) => String(a.id) !== idKey)];
-        localStorage.setItem('raad_saved_telegram_accounts', JSON.stringify(updated));
-        setSavedTelegramAccounts(updated);
-      } catch (e) {}
-    }
-
-    onSuccessAuth(authenticatedUser);
-  };
-
   // Direct login with one of the saved Telegram accounts
   const handleSavedTelegramLogin = async (account: TelegramAccount) => {
     setTelegramLoading(true);
@@ -811,7 +779,6 @@ export const AuthView: React.FC<AuthViewProps> = ({
                   onBotLoginClick={handleBotLoginClick}
                   isWaitingForBotAuth={isWaitingForBotAuth}
                   onCancelWaitingBotAuth={() => setIsWaitingForBotAuth(false)}
-                  onLoginSuccess={handlePhoneOtpLoginSuccess}
                   widgetNode={
                     telegramLoading ? (
                       <div className="flex items-center gap-2 py-2 px-4 rounded-xl bg-sky-500/10 border border-sky-500/30 text-sky-400 text-xs font-black animate-pulse">
