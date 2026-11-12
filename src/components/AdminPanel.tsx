@@ -54,6 +54,8 @@ import {
   Printer,
   Pause,
   Play,
+  Crown,
+  Search,
 } from 'lucide-react';
 import {
   StudentUser,
@@ -71,7 +73,8 @@ import {
 } from '../types';
 import { BrandLogo } from './BrandLogo';
 import { CertificateModal } from './CertificateModal';
-import { db, THEME_PRESETS, DEFAULT_SETTINGS, INITIAL_COURSES, restoreDefaultCoursesAndContent } from '../firebase';
+import { SmartVideoPlayer } from './SmartVideoPlayer';
+import { db, THEME_PRESETS, DEFAULT_SETTINGS, INITIAL_COURSES, restoreDefaultCoursesAndContent, resolveVideoUrl } from '../firebase';
 import {
   collection,
   onSnapshot,
@@ -117,8 +120,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
   const [isSavingCourse, setIsSavingCourse] = useState(false);
   const [isRestoringCourses, setIsRestoringCourses] = useState(false);
 
-  // Students list from Firestore
-  const [students, setStudents] = useState<StudentUser[]>([]);
+  // Students list from Firestore with instant cached rendering
+  const [students, setStudents] = useState<StudentUser[]>(() => {
+    try {
+      const cached = localStorage.getItem('raad_cached_admin_students');
+      if (cached) return JSON.parse(cached);
+    } catch (e) {}
+    return [];
+  });
+  const [studentFilter, setStudentFilter] = useState<'all' | 'unspecified' | 'active' | 'vip' | 'paused' | 'blocked'>('all');
+  const [studentSearchQuery, setStudentSearchQuery] = useState<string>('');
+  const [isRefreshingData, setIsRefreshingData] = useState<boolean>(false);
   
   // Student Password View State
   const [showAllPasswords, setShowAllPasswords] = useState<boolean>(false);
@@ -217,12 +229,31 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
   );
   const [isSavingFeatures, setIsSavingFeatures] = useState(false);
 
-  // Content Management: Sections, Resources, Items
-  const [sections, setSections] = useState<SectionItem[]>([]);
-  const [resources, setResources] = useState<ResourceItem[]>([]);
-  const [items, setItems] = useState<ContentItem[]>([]);
+  // Content Management: Sections, Resources, Items with instant cached rendering
+  const [sections, setSections] = useState<SectionItem[]>(() => {
+    try {
+      const cached = localStorage.getItem('raad_cached_admin_sections');
+      if (cached) return JSON.parse(cached);
+    } catch (e) {}
+    return [];
+  });
+  const [resources, setResources] = useState<ResourceItem[]>(() => {
+    try {
+      const cached = localStorage.getItem('raad_cached_admin_resources');
+      if (cached) return JSON.parse(cached);
+    } catch (e) {}
+    return [];
+  });
+  const [items, setItems] = useState<ContentItem[]>(() => {
+    try {
+      const cached = localStorage.getItem('raad_cached_admin_items');
+      if (cached) return JSON.parse(cached);
+    } catch (e) {}
+    return [];
+  });
   const [selectedSectionId, setSelectedSectionId] = useState<string>('');
   const [selectedResourceId, setSelectedResourceId] = useState<string>('');
+  const [showAllPlatformContent, setShowAllPlatformContent] = useState<boolean>(false);
 
   // Section Add & Edit Modals
   const [isAddingSection, setIsAddingSection] = useState(false);
@@ -328,6 +359,72 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
 
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
 
+  // Manual Full Data Refresh with instant feedback
+  const handleManualRefreshAllData = async () => {
+    setIsRefreshingData(true);
+    try {
+      const [uSnap, sSnap, rSnap, iSnap, cSnap] = await Promise.all([
+        getDocs(collection(db, 'users')),
+        getDocs(collection(db, 'sections')),
+        getDocs(collection(db, 'resources')),
+        getDocs(collection(db, 'content_items')),
+        getDocs(collection(db, 'courses')),
+      ]);
+
+      const userList: StudentUser[] = [];
+      uSnap.forEach((d) => userList.push({ id: d.id, ...d.data() } as StudentUser));
+      userList.sort((a, b) => {
+        const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return tB - tA;
+      });
+      setStudents(userList);
+      try { localStorage.setItem('raad_cached_admin_students', JSON.stringify(userList)); } catch (e) {}
+
+      const secList: SectionItem[] = [];
+      sSnap.forEach((d) => secList.push({ id: d.id, ...d.data() } as SectionItem));
+      secList.sort((a, b) => (a.order || 0) - (b.order || 0));
+      setSections(secList);
+      try { localStorage.setItem('raad_cached_admin_sections', JSON.stringify(secList)); } catch (e) {}
+
+      const resList: ResourceItem[] = [];
+      rSnap.forEach((d) => resList.push({ id: d.id, ...d.data() } as ResourceItem));
+      resList.sort((a, b) => (a.order || 0) - (b.order || 0));
+      setResources(resList);
+      try { localStorage.setItem('raad_cached_admin_resources', JSON.stringify(resList)); } catch (e) {}
+
+      const itmList: ContentItem[] = [];
+      iSnap.forEach((d) => itmList.push({ id: d.id, ...d.data() } as ContentItem));
+      itmList.sort((a, b) => {
+        const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        if (tA !== tB) return tA - tB;
+        return (a.id || '').localeCompare(b.id || '');
+      });
+      setItems(itmList);
+      try { localStorage.setItem('raad_cached_admin_items', JSON.stringify(itmList)); } catch (e) {}
+
+      const crsList: CourseItem[] = [];
+      cSnap.forEach((d) => crsList.push({ id: d.id, ...d.data() } as CourseItem));
+      crsList.sort((a, b) => (a.order || 0) - (b.order || 0));
+      if (crsList.length > 0) {
+        setCourses(crsList);
+      }
+
+      notifySave(`تم التحديث بنجاح! متصل بـ ${userList.length} طالب و ${itmList.length} عنصر.`);
+    } catch (err: any) {
+      console.warn('Manual refresh error:', err);
+      notifySave('حدث خطأ أثناء جلب التحديثات');
+    } finally {
+      setIsRefreshingData(false);
+    }
+  };
+
+  // Run initial refresh on component mount
+  useEffect(() => {
+    handleManualRefreshAllData();
+  }, []);
+
   // Listen to students in real-time
   useEffect(() => {
     const unsub = onSnapshot(collection(db, 'users'), (snapshot) => {
@@ -335,8 +432,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       snapshot.forEach((d) => {
         list.push({ id: d.id, ...d.data() } as StudentUser);
       });
-      list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      list.sort((a, b) => {
+        const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return tB - tA;
+      });
       setStudents(list);
+      try { localStorage.setItem('raad_cached_admin_students', JSON.stringify(list)); } catch (e) {}
     });
     return () => unsub();
   }, []);
@@ -348,7 +450,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       snapshot.forEach((d) => {
         list.push({ id: d.id, ...d.data() } as ExamAttempt);
       });
-      list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      list.sort((a, b) => {
+        const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return tB - tA;
+      });
       setExamAttempts(list);
     });
     return () => unsubAttempts();
@@ -361,6 +467,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       snap.forEach((d) => list.push({ id: d.id, ...d.data() } as SectionItem));
       list.sort((a, b) => (a.order || 0) - (b.order || 0));
       setSections(list);
+      try { localStorage.setItem('raad_cached_admin_sections', JSON.stringify(list)); } catch (e) {}
       if (list.length > 0 && !selectedSectionId) {
         setSelectedSectionId(list[0].id);
       }
@@ -371,6 +478,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       snap.forEach((d) => list.push({ id: d.id, ...d.data() } as ResourceItem));
       list.sort((a, b) => (a.order || 0) - (b.order || 0));
       setResources(list);
+      try { localStorage.setItem('raad_cached_admin_resources', JSON.stringify(list)); } catch (e) {}
     });
 
     const unsubItems = onSnapshot(collection(db, 'content_items'), (snap) => {
@@ -384,6 +492,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         return (a.id || '').localeCompare(b.id || '');
       });
       setItems(list);
+      try { localStorage.setItem('raad_cached_admin_items', JSON.stringify(list)); } catch (e) {}
     });
 
     const unsubCourses = onSnapshot(collection(db, 'courses'), (snap) => {
@@ -460,16 +569,41 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     setTimeout(() => setSaveStatus(null), 3000);
   };
 
-  // 1. Set Subscription Days for student (with Quick buttons & Open Unlimited)
-  const handleSaveStudentDays = async (isUnlimited = false) => {
+  // Helper to check if student subscription is unspecified
+  const isStudentUnspecified = (st: StudentUser) => {
+    if (st.isVip || st.isUnlimited) return false;
+    if (st.isCounterPaused) return false;
+    if (!st.daysAllowed || st.daysAllowed <= 0) return true;
+    if (!st.subscriptionEndDate) return true;
+    return false;
+  };
+
+  // 1. Set Subscription Days, VIP, or Unlimited for student
+  const handleSaveStudentDays = async (isUnlimited = false, isVip = false) => {
     if (!studentForDaysModal) return;
     try {
-      if (isUnlimited) {
+      if (isVip) {
         await updateDoc(doc(db, 'users', studentForDaysModal.id), {
+          isVip: true,
           isUnlimited: true,
           daysAllowed: 0,
+          subscriptionStatus: 'vip',
           subscriptionStartDate: new Date().toISOString(),
           subscriptionEndDate: null,
+          isCounterPaused: false,
+          pausedRemainingDays: 0,
+        });
+        notifySave(`تمت ترقية حساب الطالب "${studentForDaysModal.name}" إلى VIP ماسي بنجاح 👑!`);
+      } else if (isUnlimited) {
+        await updateDoc(doc(db, 'users', studentForDaysModal.id), {
+          isUnlimited: true,
+          isVip: false,
+          daysAllowed: 0,
+          subscriptionStatus: 'active',
+          subscriptionStartDate: new Date().toISOString(),
+          subscriptionEndDate: null,
+          isCounterPaused: false,
+          pausedRemainingDays: 0,
         });
         notifySave(`تم إلغاء الاشتراك وفتح المنصة للطالب "${studentForDaysModal.name}" بشكل مفتوح دائم ⚡`);
       } else {
@@ -479,9 +613,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
 
         await updateDoc(doc(db, 'users', studentForDaysModal.id), {
           isUnlimited: false,
+          isVip: false,
           daysAllowed: days,
+          subscriptionStatus: 'active',
           subscriptionStartDate: startDate,
           subscriptionEndDate: endDate,
+          isCounterPaused: false,
+          pausedRemainingDays: 0,
         });
         notifySave(`تم تحديد ${days} يوماً للاشتراك للطالب "${studentForDaysModal.name}" بنجاح!`);
       }
@@ -490,6 +628,85 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     } catch (err) {
       console.error('Error updating days:', err);
       notifySave('حدث خطأ أثناء حفظ الأيام');
+    }
+  };
+
+  // Reset student back to "غير محدد"
+  const handleResetToUnspecified = async (studentId: string, studentName: string) => {
+    try {
+      await updateDoc(doc(db, 'users', studentId), {
+        daysAllowed: 0,
+        isUnlimited: false,
+        isVip: false,
+        subscriptionStatus: 'unspecified',
+        subscriptionStartDate: '',
+        subscriptionEndDate: '',
+        isCounterPaused: false,
+        pausedRemainingDays: 0,
+      });
+      notifySave(`تم إعادة حساب الطالب "${studentName}" لحالة "غير محدد" بنجاح ⏳`);
+      setStudentForDaysModal(null);
+    } catch (err) {
+      console.error(err);
+      notifySave('حدث خطأ أثناء تعديل الحساب');
+    }
+  };
+
+  // Toggle VIP directly
+  const handleToggleVip = async (student: StudentUser) => {
+    try {
+      const willBeVip = !student.isVip;
+      await updateDoc(doc(db, 'users', student.id), {
+        isVip: willBeVip,
+        isUnlimited: willBeVip,
+        subscriptionStatus: willBeVip ? 'vip' : 'unspecified',
+      });
+      notifySave(
+        willBeVip
+          ? `تمت ترقية الطالب "${student.name}" إلى VIP ماسي 👑!`
+          : `تم إلغاء وضع VIP للطالب "${student.name}" بنجاح.`
+      );
+    } catch (err) {
+      console.error(err);
+      notifySave('حدث خطأ أثناء تعديل وضع VIP');
+    }
+  };
+
+  // Freeze / Pause Counter & Resume Counter ("قفل العداد ويمكنني إرجاعه مرة أخرى")
+  const handleTogglePauseCounter = async (student: StudentUser) => {
+    try {
+      if (!student.isCounterPaused) {
+        // قفل وتجميد العداد وحفظ الأيام المتبقية
+        let remainingDays = 0;
+        if (student.subscriptionEndDate) {
+          const diff = new Date(student.subscriptionEndDate).getTime() - Date.now();
+          remainingDays = Math.max(0, Number((diff / (1000 * 60 * 60 * 24)).toFixed(2)));
+        } else if (student.daysAllowed) {
+          remainingDays = student.daysAllowed;
+        }
+
+        await updateDoc(doc(db, 'users', student.id), {
+          isCounterPaused: true,
+          pausedRemainingDays: remainingDays,
+          pausedAt: new Date().toISOString(),
+          subscriptionStatus: 'paused',
+        });
+        notifySave(`تم قفل وتجميد العداد للطالب "${student.name}" بنجاح ⏸️ (تبقى له ${remainingDays} يوم محفوظة)`);
+      } else {
+        // استئناف وإرجاع العداد
+        const daysToRestore = student.pausedRemainingDays || student.daysAllowed || 30;
+        const newEndDate = new Date(Date.now() + daysToRestore * 24 * 60 * 60 * 1000).toISOString();
+
+        await updateDoc(doc(db, 'users', student.id), {
+          isCounterPaused: false,
+          subscriptionEndDate: newEndDate,
+          subscriptionStatus: 'active',
+        });
+        notifySave(`تم استئناف وتشغيل العداد للطالب "${student.name}" بنجاح ▶️`);
+      }
+    } catch (err) {
+      console.error('Error toggling pause counter:', err);
+      notifySave('حدث خطأ أثناء تعديل العداد');
     }
   };
 
@@ -898,10 +1115,28 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
 
     setIsSavingIntroLesson(true);
     try {
+      let resolvedIntroUrl = resolveVideoUrl(introLessonState.videoUrl?.trim() || '');
+      let introBackupUrl = introLessonState.backupUrl || '';
+      if (resolvedIntroUrl && (resolvedIntroUrl.startsWith('http://') || resolvedIntroUrl.startsWith('https://'))) {
+        try {
+          const mirrorResp = await fetch('/api/mirror-video', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: resolvedIntroUrl }),
+          });
+          const mirrorData = await mirrorResp.json();
+          if (mirrorData?.success && mirrorData.savedInFirebase && mirrorData.playUrl) {
+            introBackupUrl = resolvedIntroUrl;
+            resolvedIntroUrl = mirrorData.playUrl;
+          }
+        } catch {}
+      }
+
       const cleanIntro: IntroLessonConfig = {
         isActive: introLessonState.isActive !== false,
         title: introLessonState.title?.trim() || `الحصة التعريفية - ${targetCourse.title}`,
-        videoUrl: introLessonState.videoUrl?.trim() || '',
+        videoUrl: resolvedIntroUrl,
+        ...(introBackupUrl ? { backupUrl: introBackupUrl } : {}),
         description: introLessonState.description?.trim() || '',
         updatedAt: new Date().toISOString(),
       };
@@ -960,21 +1195,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
           const res = JSON.parse(xhr.responseText);
           if (res.success && res.url) {
             setIntroLessonState((prev) => ({ ...prev, videoUrl: res.url }));
-            notifySave(`تم رفع وحفظ فيديو الحصة التعريفية "${file.name}" على الخادم بنجاح! لا تنس الضغط على حفظ ⚡`);
+            notifySave(
+              res.savedInFirebase
+                ? `تم رفع وحفظ فيديو الحصة التعريفية "${file.name}" في Firebase بنجاح! لا تنس الضغط على حفظ ⚡`
+                : `تم رفع وحفظ فيديو الحصة التعريفية "${file.name}" على الخادم بنجاح! لا تنس الضغط على حفظ ⚡`
+            );
             return;
           }
         } catch (e) {}
       }
-      const localUrl = URL.createObjectURL(file);
-      setIntroLessonState((prev) => ({ ...prev, videoUrl: localUrl }));
-      notifySave(`تم اختيار الفيديو "${file.name}"`);
+      notifySave(`تعذر رفع الفيديو "${file.name}" إلى الخادم. حاول مرة أخرى أو أضف رابط فيديو مباشر.`);
     };
 
     xhr.onerror = () => {
       setIsUploadingIntroVideo(false);
-      const localUrl = URL.createObjectURL(file);
-      setIntroLessonState((prev) => ({ ...prev, videoUrl: localUrl }));
-      notifySave(`تم اختيار الفيديو "${file.name}" محلياً`);
+      notifySave(`تعذر الاتصال بالخادم لرفع الفيديو "${file.name}". يرجى المحاولة مرة أخرى.`);
     };
 
     xhr.send(formData);
@@ -1404,11 +1639,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     const sizeMb = (file.size / (1024 * 1024)).toFixed(2);
     setItemFileSize(`${sizeMb} MB`);
 
-    // Immediate local preview URL for instant feedback
-    const localUrl = URL.createObjectURL(file);
-    setItemUrl(localUrl);
-
-    // Upload to server directly via /api/upload
+    // Upload to server / Firebase directly via /api/upload (do NOT inject temporary blob: URL into itemUrl)
     const formData = new FormData();
     formData.append('file', file);
 
@@ -1427,7 +1658,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
 
     xhr.onload = () => {
       setIsUploadingServerFile(false);
-      // Ensure title is strictly preserved and never wiped
       if (pinnedTitleRef.current && (!itemTitle || !itemTitle.trim())) {
         setItemTitle(pinnedTitleRef.current);
       }
@@ -1438,17 +1668,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
             setItemUrl(res.url);
             setItemFileName(res.fileName || file.name);
             setItemFileSize(res.fileSize || `${sizeMb} MB`);
-            notifySave(`تم رفع وحفظ ملف ${itemType === 'video' ? 'الفيديو' : 'المستند'} (${file.name}) على خادم المنصة بنجاح ⚡`);
+            notifySave(
+              res.savedInFirebase
+                ? `تم رفع وحفظ ${itemType === 'video' ? 'الفيديو' : 'الملف'} (${file.name}) في Firebase بنجاح ✓⚡`
+                : `تم رفع وحفظ ملف ${itemType === 'video' ? 'الفيديو' : 'المستند'} (${file.name}) على خادم المنصة بنجاح ⚡`
+            );
             return;
           }
         } catch (e) {}
       }
-      notifySave(`تم اختيار ملف ${itemType === 'video' ? 'الفيديو' : 'المستند'} (${file.name}) بنجاح ✓`);
+      notifySave(`تعذر رفع الملف (${file.name}) على الخادم. يرجى المحاولة مرة أخرى أو وضع رابط مباشر.`);
     };
 
     xhr.onerror = () => {
       setIsUploadingServerFile(false);
-      notifySave(`تم اختيار الملف (${file.name}) محلياً`);
+      notifySave(`حدث خطأ في الشبكة أثناء رفع (${file.name}). يرجى المحاولة مرة أخرى.`);
     };
 
     xhr.send(formData);
@@ -1709,10 +1943,39 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       };
 
       if (itemType === 'video') {
-        let finalUrl = itemUrl.trim() || itemFileData || (editingItem ? editingItem.url : '') || 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
-        if (finalUrl.startsWith('data:') && finalUrl.length > 750000) {
-          finalUrl = editingItem?.url || 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
+        let finalUrl = resolveVideoUrl(itemUrl.trim() || itemFileData || (editingItem ? editingItem.url : '') || '');
+        if (finalUrl.startsWith('blob:')) {
+          finalUrl = editingItem?.url ? resolveVideoUrl(editingItem.url) : '';
         }
+        if (finalUrl.startsWith('data:') && finalUrl.length > 750000) {
+          finalUrl = editingItem?.url ? resolveVideoUrl(editingItem.url) : '';
+        }
+        if (!finalUrl) {
+          notifySave('يرجى إدخال رابط الفيديو المباشر أو انتظار اكتمال رفع الفيديو قبل الحفظ');
+          setIsSavingItem(false);
+          setIsConfirmSaveOpen(false);
+          return;
+        }
+
+        // Preserve full original external URL and mirror +faststart on server / Firebase Firestore
+        if (finalUrl.startsWith('http://') || finalUrl.startsWith('https://')) {
+          basePayload.backupUrl = finalUrl;
+          try {
+            const mirrorResp = await fetch('/api/mirror-video', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ url: finalUrl }),
+            });
+            const mirrorData = await mirrorResp.json();
+            if (mirrorData?.success && mirrorData.savedInFirebase && mirrorData.playUrl) {
+              basePayload.backupUrl = finalUrl;
+              finalUrl = mirrorData.playUrl;
+            }
+          } catch {}
+        } else if (editingItem?.backupUrl) {
+          basePayload.backupUrl = resolveVideoUrl(editingItem.backupUrl);
+        }
+
         basePayload.url = finalUrl;
         const finalFileData = itemFileData || (editingItem ? (editingItem.fileData || '') : '');
         if (finalFileData && !finalFileData.startsWith('blob:') && finalFileData.length < 750000) {
@@ -1725,6 +1988,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         basePayload.linkedFileIds = linkedFileIds;
       } else if (itemType === 'file') {
         let finalUrl: string = (itemUrl.trim() || itemFileData || (editingItem ? editingItem.url : '') || '') as string;
+        if (finalUrl && finalUrl.startsWith('blob:')) {
+          finalUrl = editingItem?.url || '';
+        }
         if (finalUrl && finalUrl.startsWith('data:') && finalUrl.length > 750000) {
           finalUrl = editingItem?.url || '';
         }
@@ -2223,37 +2489,39 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
   };
 
   const currentCourse = courses.find((c) => c.id === selectedCourseId) || courses[0] || null;
-  const courseSections = sections
-    .filter((s) => {
-      if (s.courseId) return s.courseId === selectedCourseId;
-      const defaultId = courses[0]?.id || 'course_default_1';
-      return selectedCourseId === 'course_default_1' || selectedCourseId === defaultId;
-    })
+  const filteredCourseSections = sections.filter((s) => {
+    if (s.courseId) return s.courseId === selectedCourseId;
+    const defaultId = courses[0]?.id || 'course_default_1';
+    return selectedCourseId === 'course_default_1' || selectedCourseId === defaultId;
+  });
+  // If filtered is empty or user wants all, fall back to sections so no content is ever hidden!
+  const courseSections = (filteredCourseSections.length > 0 ? filteredCourseSections : sections)
     .sort((a, b) => (a.order || 0) - (b.order || 0));
 
-  // Active section strictly within current course
-  const effectiveSection = courseSections.find((s) => s.id === selectedSectionId) || courseSections[0] || null;
+  // Active section strictly within current course or fallback to first section
+  const effectiveSection = courseSections.find((s) => s.id === selectedSectionId) || courseSections[0] || sections[0] || null;
   const effectiveSectionId = effectiveSection ? effectiveSection.id : '';
 
-  const currentResources = effectiveSectionId
-    ? resources
-        .filter((r) => r.sectionId === effectiveSectionId)
-        .sort((a, b) => (a.order || 0) - (b.order || 0))
+  const filteredResources = effectiveSectionId
+    ? resources.filter((r) => r.sectionId === effectiveSectionId)
     : [];
+  const currentResources = (filteredResources.length > 0 ? filteredResources : resources)
+    .sort((a, b) => (a.order || 0) - (b.order || 0));
 
-  const effectiveResource = currentResources.find((r) => r.id === selectedResourceId) || currentResources[0] || null;
+  const effectiveResource = currentResources.find((r) => r.id === selectedResourceId) || currentResources[0] || resources[0] || null;
   const effectiveResourceId = effectiveResource ? effectiveResource.id : '';
 
-  const currentItems = effectiveResourceId
-    ? items
-        .filter((i) => i.resourceId === effectiveResourceId)
-        .sort((a, b) => {
-          const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-          const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-          if (tA !== tB) return tA - tB;
-          return (a.id || '').localeCompare(b.id || '');
-        })
+  // If showAllPlatformContent is enabled, show all items from all sections/resources!
+  const filteredItems = effectiveResourceId
+    ? items.filter((i) => i.resourceId === effectiveResourceId)
     : [];
+  const currentItems = (showAllPlatformContent ? items : (filteredItems.length > 0 ? filteredItems : items))
+    .sort((a, b) => {
+      const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      if (tA !== tB) return tA - tB;
+      return (a.id || '').localeCompare(b.id || '');
+    });
 
   const currentVideos = currentItems.filter((i) => i.type === 'video');
   const currentExams = currentItems.filter((i) => i.type === 'exam');
@@ -2607,56 +2875,208 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         )}
 
         {/* ================= TAB 1: STUDENTS ================= */}
-        {activeTab === 'students' && (
-          <div className="space-y-6">
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <div>
-                <h2 className="text-xl md:text-2xl font-black text-white">الطلاب المسجلين وإدارة الاشتراكات</h2>
-                <p className="text-xs text-slate-400 mt-1">
-                  تحديد الأيام مع وصول سريع (شهر، شهرين، 6 شهور، سنة)، إلغاء الاشتراك وفتح دائم، وقفل مخصص لكل طالب بصيانة أو واتساب أو إشعار مشرف.
-                </p>
-              </div>
-            </div>
+        {activeTab === 'students' && (() => {
+          const unspecifiedCount = students.filter((st) => isStudentUnspecified(st)).length;
+          const vipCount = students.filter((st) => st.isVip).length;
+          const pausedCount = students.filter((st) => st.isCounterPaused).length;
+          const activeCount = students.filter((st) => !isStudentUnspecified(st) && !st.isCounterPaused && !st.isIndividuallyBlocked && !st.isVip).length;
+          const blockedCount = students.filter((st) => st.isIndividuallyBlocked).length;
 
-            {/* Students Table */}
-            <div className="bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-xl">
-              <div className="overflow-x-auto">
-                <table className="w-full text-right text-xs md:text-sm">
-                  <thead className="bg-slate-800/80 text-slate-400 font-bold border-b border-slate-700/60">
-                    <tr>
-                      <th className="p-4">الطالب</th>
-                      <th className="p-4">البريد الإلكتروني</th>
-                      <th className="p-4">
-                        <div className="flex items-center gap-1.5">
-                          <span>كلمة المرور</span>
-                          <button
-                            type="button"
-                            onClick={() => setShowAllPasswords(!showAllPasswords)}
-                            className="text-[10px] px-2 py-0.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-amber-300 font-bold transition cursor-pointer"
-                            title="إظهار / إخفاء كلمات المرور للجميع"
-                          >
-                            {showAllPasswords ? 'إخفاء الكل' : 'إظهار الكل'}
-                          </button>
-                        </div>
-                      </th>
-                      <th className="p-4">الكورسات المفعلة</th>
-                      <th className="p-4 text-center">تفعيل كورس</th>
-                      <th className="p-4">حالة الاشتراك والشريط</th>
-                      <th className="p-4">تحديد الأيام</th>
-                      <th className="p-4">قفل المنصة على الطالب</th>
-                      <th className="p-4 text-center">إجراءات الحساب</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800">
-                    {students.length === 0 ? (
+          const filteredStudents = students.filter((st) => {
+            if (studentSearchQuery.trim()) {
+              const q = studentSearchQuery.toLowerCase().trim();
+              const matchName = st.name?.toLowerCase().includes(q);
+              const matchEmail = st.email?.toLowerCase().includes(q);
+              const matchId = st.id?.toLowerCase().includes(q);
+              if (!matchName && !matchEmail && !matchId) return false;
+            }
+            if (studentFilter === 'unspecified') return isStudentUnspecified(st);
+            if (studentFilter === 'active') return !isStudentUnspecified(st) && !st.isCounterPaused && !st.isIndividuallyBlocked && !st.isVip;
+            if (studentFilter === 'vip') return st.isVip;
+            if (studentFilter === 'paused') return st.isCounterPaused;
+            if (studentFilter === 'blocked') return st.isIndividuallyBlocked;
+            return true;
+          });
+
+          return (
+            <div className="space-y-5">
+              {/* Top Controls Header */}
+              <div className="flex flex-wrap items-center justify-between gap-4 p-4 rounded-3xl bg-slate-900/90 border border-slate-800 shadow-xl">
+                <div>
+                  <h2 className="text-xl md:text-2xl font-black text-white flex items-center gap-2.5">
+                    <Users className="w-6 h-6 text-indigo-400" />
+                    <span>إدارة الطلاب والاشتراكات</span>
+                    <span className="text-xs px-2.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-bold">
+                      {students.length} طالب
+                    </span>
+                  </h2>
+                  <p className="text-xs text-slate-400 mt-1">
+                    تعيين الأيام، تفعيل وضع VIP، قفل العداد واستئنافه، وحالة (غير محدد) للتحكم الدقيق في صلاحيات الطلاب.
+                  </p>
+                </div>
+
+                {/* Instant Live Refresh Button */}
+                <button
+                  type="button"
+                  onClick={handleManualRefreshAllData}
+                  disabled={isRefreshingData}
+                  className="px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-black text-xs shadow-lg shadow-indigo-600/30 transition flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                  title="تحديث فوري لجميع بيانات الطلاب والمحتوى من الخادم مباشرة"
+                >
+                  <RefreshCw className={`w-4 h-4 ${isRefreshingData ? 'animate-spin' : ''}`} />
+                  <span>{isRefreshingData ? 'جارٍ التحديث الفوري...' : '🔄 تحديث فوري وسريع للطلاب'}</span>
+                </button>
+              </div>
+
+              {/* Search Bar + Filter Tabs */}
+              <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+                {/* Search Input */}
+                <div className="relative flex-1 max-w-md">
+                  <Search className="w-4 h-4 text-slate-400 absolute right-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={studentSearchQuery}
+                    onChange={(e) => setStudentSearchQuery(e.target.value)}
+                    placeholder="ابحث باسم الطالب أو البريد الإلكتروني..."
+                    className="w-full pl-4 pr-10 py-2.5 rounded-2xl bg-slate-900 border border-slate-800 text-white placeholder-slate-500 text-xs font-bold focus:outline-none focus:border-indigo-500 transition"
+                  />
+                  {studentSearchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setStudentSearchQuery('')}
+                      className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Filter Tabs */}
+                <div className="flex flex-wrap items-center gap-1.5 p-1 bg-slate-900/90 border border-slate-800 rounded-2xl">
+                  <button
+                    type="button"
+                    onClick={() => setStudentFilter('all')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-black transition cursor-pointer ${
+                      studentFilter === 'all'
+                        ? 'bg-indigo-600 text-white shadow-md'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    الكل ({students.length})
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setStudentFilter('unspecified')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
+                      studentFilter === 'unspecified'
+                        ? 'bg-amber-500 text-slate-950 shadow-md font-black'
+                        : 'text-amber-400/90 hover:text-amber-300'
+                    }`}
+                  >
+                    <span>غير محدد</span>
+                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-950/40 border border-amber-500/30">
+                      {unspecifiedCount}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setStudentFilter('active')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
+                      studentFilter === 'active'
+                        ? 'bg-emerald-600 text-white shadow-md'
+                        : 'text-emerald-400 hover:text-emerald-300'
+                    }`}
+                  >
+                    <span>نشط ومحدد</span>
+                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-950/40 border border-emerald-500/30">
+                      {activeCount}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setStudentFilter('vip')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
+                      studentFilter === 'vip'
+                        ? 'bg-yellow-500 text-slate-950 shadow-md font-black'
+                        : 'text-yellow-400 hover:text-yellow-300'
+                    }`}
+                  >
+                    <Crown className="w-3.5 h-3.5 fill-current" />
+                    <span>VIP ({vipCount})</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setStudentFilter('paused')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
+                      studentFilter === 'paused'
+                        ? 'bg-purple-600 text-white shadow-md'
+                        : 'text-purple-400 hover:text-purple-300'
+                    }`}
+                  >
+                    <Pause className="w-3.5 h-3.5" />
+                    <span>العداد موقوف ({pausedCount})</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setStudentFilter('blocked')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
+                      studentFilter === 'blocked'
+                        ? 'bg-rose-600 text-white shadow-md'
+                        : 'text-rose-400 hover:text-rose-300'
+                    }`}
+                  >
+                    <Lock className="w-3.5 h-3.5" />
+                    <span>محظور ({blockedCount})</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Students Table */}
+              <div className="bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-xl">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-right text-xs md:text-sm">
+                    <thead className="bg-slate-800/80 text-slate-400 font-bold border-b border-slate-700/60">
                       <tr>
-                        <td colSpan={9} className="p-8 text-center text-slate-500">
-                          لا يوجد طلاب مسجلين حتى الآن.
-                        </td>
+                        <th className="p-4">الطالب</th>
+                        <th className="p-4">البريد الإلكتروني</th>
+                        <th className="p-4">
+                          <div className="flex items-center gap-1.5">
+                            <span>كلمة المرور</span>
+                            <button
+                              type="button"
+                              onClick={() => setShowAllPasswords(!showAllPasswords)}
+                              className="text-[10px] px-2 py-0.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-amber-300 font-bold transition cursor-pointer"
+                              title="إظهار / إخفاء كلمات المرور للجميع"
+                            >
+                              {showAllPasswords ? 'إخفاء الكل' : 'إظهار الكل'}
+                            </button>
+                          </div>
+                        </th>
+                        <th className="p-4">الكورسات المفعلة</th>
+                        <th className="p-4 text-center">تفعيل كورس</th>
+                        <th className="p-4">حالة الاشتراك والشريط</th>
+                        <th className="p-4">التحكم بالاشتراك والعداد</th>
+                        <th className="p-4">قفل المنصة على الطالب</th>
+                        <th className="p-4 text-center">إجراءات الحساب</th>
                       </tr>
-                    ) : (
-                      students.map((st) => {
-                        let daysLeft = 0;
+                    </thead>
+                    <tbody className="divide-y divide-slate-800">
+                      {filteredStudents.length === 0 ? (
+                        <tr>
+                          <td colSpan={9} className="p-8 text-center text-slate-500 font-bold">
+                            {students.length === 0
+                              ? 'لا يوجد طلاب مسجلين حتى الآن.'
+                              : 'لا يوجد طلاب يطابقون الفلتر أو البحث المحدد.'}
+                          </td>
+                        </tr>
+                      ) : (
+                        filteredStudents.map((st) => {
+                          let daysLeft = 0;
                         let elapsedDays = 0;
                         if (st.subscriptionEndDate) {
                           const diffMs = new Date(st.subscriptionEndDate).getTime() - Date.now();
@@ -2713,13 +3133,31 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                                       <span>{st.isRedMessageActive !== false ? 'تنبيه أحمر (شغال 🟢)' : 'تنبيه أحمر (موقوف ⏸️)'}</span>
                                     </span>
                                   )}
+                                  {st.isVip && (
+                                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-300 border border-yellow-500/40 font-black flex items-center gap-1 shadow-sm shadow-yellow-500/20">
+                                      <Crown className="w-3 h-3 text-yellow-400 fill-yellow-400" />
+                                      VIP ماسي 👑
+                                    </span>
+                                  )}
+                                  {st.isCounterPaused && (
+                                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/40 font-black flex items-center gap-1">
+                                      <Pause className="w-3 h-3 text-purple-400" />
+                                      العداد موقوف ({st.pausedRemainingDays || 0} يوم)
+                                    </span>
+                                  )}
+                                  {isStudentUnspecified(st) && (
+                                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 font-black flex items-center gap-1">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping shrink-0" />
+                                      غير محدد ⏳
+                                    </span>
+                                  )}
                                   {st.certificateIssued && (
                                     <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold flex items-center gap-1">
                                       <Award className="w-3 h-3 text-amber-400" />
                                       شهادة صادرة
                                     </span>
                                   )}
-                                  {st.isUnlimited && (
+                                  {st.isUnlimited && !st.isVip && (
                                     <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30 flex items-center gap-1">
                                       <InfinityIcon className="w-3 h-3" />
                                       مفتوح دائم
@@ -2808,7 +3246,27 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
 
                               {/* Subscription Days Status */}
                               <td className="p-4">
-                                {st.isUnlimited ? (
+                                {st.isVip ? (
+                                  <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-yellow-500/15 border border-yellow-500/30 text-yellow-300 font-black text-xs w-fit">
+                                    <Crown className="w-4 h-4 text-yellow-400 fill-yellow-400" />
+                                    <span>حساب VIP ماسي (وصول دائم)</span>
+                                  </div>
+                                ) : st.isCounterPaused ? (
+                                  <div className="space-y-1">
+                                    <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-500/20 border border-purple-500/40 text-purple-300 font-bold text-xs w-fit">
+                                      <Pause className="w-3.5 h-3.5" />
+                                      <span>العداد موقوف مؤقتاً</span>
+                                    </div>
+                                    <span className="text-[11px] text-purple-200 block font-bold">
+                                      الأيام المحفوظة: {st.pausedRemainingDays || 0} يوم
+                                    </span>
+                                  </div>
+                                ) : isStudentUnspecified(st) ? (
+                                  <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 font-bold text-xs w-fit">
+                                    <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping shrink-0" />
+                                    <span>غير محدد (بانتظار تحديد الأيام)</span>
+                                  </div>
+                                ) : st.isUnlimited ? (
                                   <span className="text-emerald-400 font-bold text-xs flex items-center gap-1">
                                     <Sparkles className="w-3.5 h-3.5" />
                                     المنصة مفتوحة بدون قيود (إلغاء اشتراك)
@@ -2836,23 +3294,79 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                                   </div>
                                 ) : (
                                   <span className="text-amber-400/90 text-xs font-bold bg-amber-500/10 px-2 py-1 rounded-lg border border-amber-500/20">
-                                    غير محدد (العداد لا يظهر حتى التحديد)
+                                    غير محدد ⏳
                                   </span>
                                 )}
                               </td>
 
-                              {/* Open Days Picker Modal */}
+                              {/* Controls: Days picker, Pause counter, VIP toggle, Reset */}
                               <td className="p-4">
-                                <button
-                                  onClick={() => {
-                                    setStudentForDaysModal(st);
-                                    setSelectedDaysAmount(st.daysAllowed || 30);
-                                  }}
-                                  className="px-3.5 py-1.5 text-xs font-bold rounded-xl bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/30 transition flex items-center gap-1 cursor-pointer"
-                                >
-                                  <Calendar className="w-3.5 h-3.5" />
-                                  <span>تحديد الأيام</span>
-                                </button>
+                                <div className="flex flex-col gap-1.5 min-w-[170px]">
+                                  <div className="flex items-center gap-1.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setStudentForDaysModal(st);
+                                        setSelectedDaysAmount(st.daysAllowed || 30);
+                                      }}
+                                      className="px-2.5 py-1 text-xs font-bold rounded-xl bg-blue-500/15 hover:bg-blue-500/25 text-blue-300 border border-blue-500/30 transition flex items-center gap-1 cursor-pointer"
+                                      title="تحديد أيام الاشتراك (7، 15، شهر، شهرين، سنة، مخصص)"
+                                    >
+                                      <Calendar className="w-3.5 h-3.5" />
+                                      <span>تحديد الأيام</span>
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => handleTogglePauseCounter(st)}
+                                      className={`px-2.5 py-1 text-xs font-bold rounded-xl border transition flex items-center gap-1 cursor-pointer ${
+                                        st.isCounterPaused
+                                          ? 'bg-purple-600 hover:bg-purple-500 text-white border-purple-400 shadow-sm shadow-purple-600/30'
+                                          : 'bg-slate-800 hover:bg-purple-600/20 text-slate-300 hover:text-purple-300 border-slate-700'
+                                      }`}
+                                      title={st.isCounterPaused ? 'استئناف تشغيل العداد وإرجاعه' : 'قفل وتجميد العداد وحفظ الأيام المتبقية'}
+                                    >
+                                      {st.isCounterPaused ? (
+                                        <>
+                                          <Play className="w-3 h-3 fill-current" />
+                                          <span>استئناف</span>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Pause className="w-3 h-3" />
+                                          <span>قفل العداد</span>
+                                        </>
+                                      )}
+                                    </button>
+                                  </div>
+
+                                  <div className="flex items-center gap-1.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleToggleVip(st)}
+                                      className={`px-2 py-0.5 text-[11px] font-black rounded-lg border transition flex items-center gap-1 cursor-pointer ${
+                                        st.isVip
+                                          ? 'bg-yellow-500 text-slate-950 border-yellow-400 shadow-xs'
+                                          : 'bg-slate-800 hover:bg-yellow-500/20 text-yellow-400 border-slate-700'
+                                      }`}
+                                      title={st.isVip ? 'إلغاء وضع VIP' : 'ترقية سريعة لحساب VIP ماسي'}
+                                    >
+                                      <Crown className="w-3 h-3" />
+                                      <span>{st.isVip ? 'إلغاء VIP' : 'ترقية VIP 👑'}</span>
+                                    </button>
+
+                                    {!isStudentUnspecified(st) && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleResetToUnspecified(st.id, st.name)}
+                                        className="px-2 py-0.5 text-[10px] font-bold rounded-lg bg-slate-800 hover:bg-rose-500/20 text-slate-400 hover:text-rose-300 border border-slate-700 transition cursor-pointer"
+                                        title="إعادة الحساب لحالة غير محدد"
+                                      >
+                                        إعادة لغير محدد ⏳
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
                               </td>
 
                               {/* Selective Individual Lock Button */}
@@ -3267,9 +3781,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                   </tbody>
                 </table>
               </div>
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* ================= TAB 2: PLATFORM LOCK ================= */}
         {activeTab === 'platform_lock' && (
@@ -5122,14 +5637,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                   </div>
 
                   <div className="aspect-video w-full rounded-2xl overflow-hidden bg-black shadow-inner border border-slate-800">
-                    <video
+                    <SmartVideoPlayer
                       key={introLessonState.videoUrl}
-                      src={introLessonState.videoUrl}
-                      controls
-                      controlsList="nodownload"
-                      onContextMenu={(e) => e.preventDefault()}
-                      preload="metadata"
-                      className="w-full h-full object-contain"
+                      url={introLessonState.videoUrl}
+                      title={introLessonState.title || 'معاينة الحصة التعريفية'}
                     />
                   </div>
                 </div>
@@ -5515,8 +6026,30 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
               <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                 <button
                   type="button"
+                  onClick={() => setSelectedDaysAmount(7)}
+                  className={`p-2.5 rounded-2xl border text-xs font-bold text-center transition ${
+                    selectedDaysAmount === 7
+                      ? 'bg-blue-600 border-blue-400 text-white shadow-md'
+                      : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
+                  }`}
+                >
+                  ⚡ أسبوع (7 أيام)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedDaysAmount(15)}
+                  className={`p-2.5 rounded-2xl border text-xs font-bold text-center transition ${
+                    selectedDaysAmount === 15
+                      ? 'bg-blue-600 border-blue-400 text-white shadow-md'
+                      : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
+                  }`}
+                >
+                  ⚡ 15 يوم
+                </button>
+                <button
+                  type="button"
                   onClick={() => setSelectedDaysAmount(30)}
-                  className={`p-3 rounded-2xl border text-xs font-bold text-center transition ${
+                  className={`p-2.5 rounded-2xl border text-xs font-bold text-center transition ${
                     selectedDaysAmount === 30
                       ? 'bg-blue-600 border-blue-400 text-white shadow-md'
                       : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
@@ -5527,7 +6060,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                 <button
                   type="button"
                   onClick={() => setSelectedDaysAmount(60)}
-                  className={`p-3 rounded-2xl border text-xs font-bold text-center transition ${
+                  className={`p-2.5 rounded-2xl border text-xs font-bold text-center transition ${
                     selectedDaysAmount === 60
                       ? 'bg-blue-600 border-blue-400 text-white shadow-md'
                       : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
@@ -5537,58 +6070,119 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                 </button>
                 <button
                   type="button"
+                  onClick={() => setSelectedDaysAmount(90)}
+                  className={`p-2.5 rounded-2xl border text-xs font-bold text-center transition ${
+                    selectedDaysAmount === 90
+                      ? 'bg-blue-600 border-blue-400 text-white shadow-md'
+                      : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
+                  }`}
+                >
+                  🗓️ 3 شهور (90 يوم)
+                </button>
+                <button
+                  type="button"
                   onClick={() => setSelectedDaysAmount(180)}
-                  className={`p-3 rounded-2xl border text-xs font-bold text-center transition ${
+                  className={`p-2.5 rounded-2xl border text-xs font-bold text-center transition ${
                     selectedDaysAmount === 180
                       ? 'bg-blue-600 border-blue-400 text-white shadow-md'
                       : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
                   }`}
                 >
-                  🗓️ ستة شهور (180)
+                  🗓️ 6 شهور (180 يوم)
                 </button>
                 <button
                   type="button"
                   onClick={() => setSelectedDaysAmount(365)}
-                  className={`p-3 rounded-2xl border text-xs font-bold text-center transition ${
+                  className={`p-2.5 rounded-2xl border text-xs font-bold text-center transition col-span-2 ${
                     selectedDaysAmount === 365
                       ? 'bg-blue-600 border-blue-400 text-white shadow-md'
                       : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
                   }`}
                 >
-                  🗓️ سنة (365 يوم)
+                  🗓️ سنة كاملة (365 يوم)
                 </button>
               </div>
             </div>
 
             {/* Custom Input */}
             <div>
-              <label className="text-xs font-bold text-slate-300 block mb-1">أو أدخل عدد الأيام يدويًا:</label>
+              <label className="text-xs font-bold text-slate-300 block mb-1">أو أدخل عدد الأيام يدويًا لأي مدة تريدها:</label>
               <input
                 type="number"
                 min="1"
-                max="1000"
+                max="2000"
                 value={selectedDaysAmount}
                 onChange={(e) => setSelectedDaysAmount(Math.max(1, Number(e.target.value)))}
                 className="w-full px-4 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white font-mono text-sm focus:outline-none focus:border-blue-500"
               />
             </div>
 
-            {/* Open Unlimited Button (إلغاء الاشتراك وفتح المنصة) */}
-            <div className="p-3.5 rounded-2xl bg-gradient-to-r from-emerald-950/40 to-blue-950/40 border border-emerald-500/30 flex items-center justify-between">
+            {/* VIP Promotion Card */}
+            <div className="p-3.5 rounded-2xl bg-gradient-to-r from-amber-950/40 via-yellow-950/30 to-slate-900 border-2 border-amber-500/40 flex items-center justify-between gap-3 shadow-md">
               <div>
-                <span className="text-xs font-bold text-emerald-300 block">إلغاء تقييد الاشتراك (فتح دائم ⚡):</span>
-                <span className="text-[10px] text-slate-400">يجعل المنصة مفتوحة عنده بشكل دائم بدون أي شريط تقييد</span>
+                <span className="text-xs font-black text-amber-300 flex items-center gap-1.5">
+                  <Crown className="w-4 h-4 text-amber-400" />
+                  <span>ترقية الحساب إلى VIP ماسي 👑:</span>
+                </span>
+                <span className="text-[10px] text-slate-300 mt-0.5 block">
+                  وصول كامل ومفتوح بدون تقييد مع شارة VIP الذهبية في حسابه
+                </span>
               </div>
               <button
                 type="button"
-                onClick={() => handleSaveStudentDays(true)}
-                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition shadow-sm"
+                onClick={() => handleSaveStudentDays(false, true)}
+                className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-slate-950 text-xs font-black transition shadow-md shadow-amber-500/30 cursor-pointer shrink-0"
               >
-                فتح دائم للآن
+                تفعيل VIP 👑
               </button>
             </div>
 
-            <div className="flex items-center justify-end gap-2 pt-2">
+            {/* Freeze / Pause & Resume Counter */}
+            <div className="p-3.5 rounded-2xl bg-slate-800/80 border border-purple-500/30 flex items-center justify-between gap-3">
+              <div>
+                <span className="text-xs font-black text-purple-300 flex items-center gap-1.5">
+                  <Pause className="w-4 h-4 text-purple-400" />
+                  <span>قفل / استئناف العداد:</span>
+                </span>
+                <span className="text-[10px] text-slate-400 mt-0.5 block">
+                  {studentForDaysModal.isCounterPaused
+                    ? `العداد موقوف حالياً (متبقي ${studentForDaysModal.pausedRemainingDays || 0} يوم محفوظة)`
+                    : 'قفل العداد يوقف تناقص الأيام ويجمدها حتى تقوم باستئنافها'}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  handleTogglePauseCounter(studentForDaysModal);
+                  setStudentForDaysModal(null);
+                }}
+                className={`px-3.5 py-2 rounded-xl text-xs font-black transition shadow-sm cursor-pointer shrink-0 flex items-center gap-1.5 ${
+                  studentForDaysModal.isCounterPaused
+                    ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                    : 'bg-purple-600 hover:bg-purple-500 text-white'
+                }`}
+              >
+                {studentForDaysModal.isCounterPaused ? <Play className="w-3.5 h-3.5" /> : <Pause className="w-3.5 h-3.5" />}
+                <span>{studentForDaysModal.isCounterPaused ? 'استئناف العداد ▶️' : 'قفل العداد ⏸️'}</span>
+              </button>
+            </div>
+
+            {/* Reset to Unspecified */}
+            <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/25 flex items-center justify-between gap-3">
+              <div>
+                <span className="text-xs font-bold text-amber-300 block">إعادة لـ "غير محدد" ⏳:</span>
+                <span className="text-[10px] text-slate-400">تصفير الأيام وإقفال المنصة عليه حتى تعيد تحديد المدة</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleResetToUnspecified(studentForDaysModal.id, studentForDaysModal.name)}
+                className="px-3.5 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 text-xs font-bold transition cursor-pointer shrink-0"
+              >
+                تعيين غير محدد
+              </button>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
               <button
                 type="button"
                 onClick={() => setStudentForDaysModal(null)}
@@ -5598,8 +6192,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
               </button>
               <button
                 type="button"
-                onClick={() => handleSaveStudentDays(false)}
-                className="px-6 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition shadow-lg shadow-blue-600/25"
+                onClick={() => handleSaveStudentDays(false, false)}
+                className="px-6 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition shadow-lg shadow-blue-600/25 cursor-pointer"
               >
                 حفظ عدد الأيام
               </button>
@@ -6354,6 +6948,27 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                     </div>
                   )}
                 </div>
+
+                {/* Live Video Preview inside Content Item Modal */}
+                {itemType === 'video' && itemUrl.trim() && !isUploadingServerFile && !itemUrl.trim().startsWith('blob:') && (
+                  <div className="space-y-1.5 pt-2">
+                    <div className="flex items-center justify-between text-[11px] font-bold text-emerald-300">
+                      <span>معاينة سريعة للفيديو قبل الحفظ:</span>
+                      {itemUrl.includes('/api/media/') && (
+                        <span className="px-2 py-0.5 rounded bg-emerald-500/20 border border-emerald-500/30 text-[10px] font-black">
+                          محفوظ في Firebase ⚡
+                        </span>
+                      )}
+                    </div>
+                    <div className="aspect-video w-full rounded-2xl overflow-hidden bg-black border border-slate-700">
+                      <SmartVideoPlayer
+                        url={itemUrl.trim()}
+                        backupUrl={editingItem?.backupUrl}
+                        title={itemTitle || 'معاينة الفيديو'}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -6987,10 +7602,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                 <button
                   type="button"
                   onClick={() => handleRequestSaveItem()}
-                  disabled={isSavingItem}
+                  disabled={isSavingItem || isUploadingServerFile}
                   className="px-6 py-2.5 text-xs bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-black rounded-xl shadow-lg shadow-emerald-600/30 transition flex items-center gap-1.5 cursor-pointer"
                 >
-                  {isSavingItem ? (
+                  {isUploadingServerFile ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>انتظر اكتمال رفع الملف ({serverUploadProgress}%)...</span>
+                    </>
+                  ) : isSavingItem ? (
                     <>
                       <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                       <span>جاري الحفظ فوراً...</span>

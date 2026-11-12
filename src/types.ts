@@ -46,6 +46,11 @@ export interface StudentUser {
   avatarUrl?: string;
   isDeleted?: boolean; // علامة الحذف لتسجيل الخروج الفوري للطالب في وقتها
   deletedAt?: string;
+  isVip?: boolean; // حساب VIP ماسي
+  subscriptionStatus?: 'unspecified' | 'active' | 'paused' | 'expired' | 'vip'; // حالة الاشتراك في المنصة
+  isCounterPaused?: boolean; // هل تم قفل وتجميد العداد مؤقتاً
+  pausedRemainingDays?: number; // عدد الأيام المتبقية المحفوظة عند قفل العداد
+  pausedAt?: string; // تاريخ ووقت قفل العداد
   preferredThemeColor?: 'default' | 'red' | 'green' | 'blue' | 'purple' | 'pink'; // ثيم ولون الكورس المخصص المختار من الطالب
 }
 
@@ -110,6 +115,9 @@ export interface ContentItem {
   title: string;
   description?: string;
   url?: string;
+  backupUrl?: string;
+  mediaId?: string;
+  fileId?: string;
   fileData?: string; // base64 or upload data
   fileName?: string;
   fileSize?: string;
@@ -197,6 +205,9 @@ export interface IntroLessonConfig {
   isActive: boolean;
   title: string;
   videoUrl: string;
+  backupUrl?: string;
+  mediaId?: string;
+  fileId?: string;
   description?: string;
   updatedAt?: string;
 }

@@ -23,6 +23,8 @@ import {
   Send,
   Phone,
   AlertTriangle,
+  Crown,
+  Pause,
 } from 'lucide-react';
 import { StudentUser, CourseItem, SystemSettings, CourseThemeColor } from '../types';
 import { BrandLogo } from './BrandLogo';
@@ -276,6 +278,52 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
 
       {/* ================= MAIN VIEWPORT CONTAINER ================= */}
       <main className="flex-1 max-w-[1750px] w-full mx-auto p-3 sm:p-4 md:p-5 flex flex-col gap-3 sm:gap-4">
+        {/* ================= 2. COUNTER PAUSED BANNER ================= */}
+        {currentUser.isCounterPaused && (
+          <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-purple-700/90 via-indigo-700/90 to-purple-800/90 text-white shadow-xl shadow-purple-700/20 border-2 border-purple-400 flex flex-wrap items-center justify-between gap-4 animate-in fade-in duration-200">
+            <div className="flex items-center gap-3.5">
+              <div className="w-12 h-12 rounded-2xl bg-purple-950/50 border border-purple-300/40 flex items-center justify-center text-purple-200 shrink-0 shadow-inner">
+                <Pause className="w-6 h-6" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-black text-sm sm:text-base">
+                    تم قفل وتجميد العداد مؤقتاً ⏸️
+                  </span>
+                  <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-black/40 font-bold border border-purple-300/40">
+                    الأيام محفوظة بالكامل
+                  </span>
+                </div>
+                <p className="text-xs sm:text-sm text-purple-100 font-bold mt-1">
+                  أيام اشتراكك المتبقية (<strong className="text-white">{currentUser.pausedRemainingDays || 0} يوم</strong>) محفوظة بالكامل ولن تنقص، وسيتم استئناف العداد وإرجاعه بواسطة المشرف.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ================= 3. VIP GOLDEN BANNER ================= */}
+        {currentUser.isVip && (
+          <div className="p-3.5 sm:p-4.5 rounded-2xl bg-gradient-to-r from-yellow-600 via-amber-600 to-yellow-700 text-white shadow-xl shadow-yellow-600/20 border-2 border-yellow-300 flex items-center justify-between gap-3 animate-in fade-in duration-200">
+            <div className="flex items-center gap-3.5">
+              <div className="w-11 h-11 rounded-2xl bg-black/30 backdrop-blur-sm flex items-center justify-center text-yellow-300 shrink-0 shadow-inner">
+                <Crown className="w-6 h-6 fill-yellow-400" />
+              </div>
+              <div>
+                <h4 className="font-black text-xs sm:text-sm flex items-center gap-2">
+                  <span>عضوية VIP ماسية ملكية 👑</span>
+                  <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-black/35 text-yellow-200 font-bold">
+                    وصول شامل دائم بدون قيود
+                  </span>
+                </h4>
+                <p className="text-[11px] sm:text-xs text-yellow-100 font-medium mt-0.5">
+                  مرحباً بك يا <strong className="text-white">{currentUser.name}</strong>! حسابك يتمتع بكامل ميزات المنصة المفتوحة دائماً.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* ================= CUSTOM RED MESSAGE FOR THIS STUDENT ================= */}
         {/* "ويمكنني كتابة رسالة مخصصة لكل طالب تظهر له باللون الاحمر" */}
         {currentUser.customRedMessage && currentUser.customRedMessage.trim() !== '' && currentUser.isRedMessageActive !== false && (

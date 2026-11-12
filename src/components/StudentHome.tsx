@@ -42,6 +42,8 @@ import {
   PictureInPicture2,
   ShieldCheck,
   Phone,
+  Crown,
+  Pause,
 } from 'lucide-react';
 import { BrandLogo } from './BrandLogo';
 import { PlatformFooter } from './PlatformFooter';
@@ -57,7 +59,7 @@ import {
   CourseThemeColor,
   ExamSystemType
 } from '../types';
-import { db, INITIAL_SECTIONS, INITIAL_RESOURCES, INITIAL_CONTENT_ITEMS } from '../firebase';
+import { db, INITIAL_SECTIONS, INITIAL_RESOURCES, INITIAL_CONTENT_ITEMS, resolveVideoUrl } from '../firebase';
 import {
   collection,
   onSnapshot,
@@ -229,7 +231,15 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
             try { localStorage.removeItem('raad_cached_content_items'); } catch (e) {}
             return INITIAL_CONTENT_ITEMS;
           }
-          return parsed;
+          return parsed.map((i: ContentItem) =>
+            i.type === 'video'
+              ? {
+                  ...i,
+                  url: resolveVideoUrl(i),
+                  ...(i.backupUrl ? { backupUrl: resolveVideoUrl(i.backupUrl) } : {}),
+                }
+              : i
+          );
         }
       }
     } catch (e) {}
@@ -274,7 +284,13 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
         const parsed = JSON.parse(cached);
         if (Array.isArray(parsed)) {
           const firstVid = parsed.find((i: ContentItem) => i.type === 'video' && i.id !== 'item_video_1' && !i.url?.includes('BigBuckBunny'));
-          if (firstVid) return firstVid;
+          if (firstVid) {
+            return {
+              ...firstVid,
+              url: resolveVideoUrl(firstVid),
+              ...(firstVid.backupUrl ? { backupUrl: resolveVideoUrl(firstVid.backupUrl) } : {}),
+            };
+          }
         }
       }
     } catch (e) {}
@@ -394,7 +410,16 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
 
     const unsubItems = onSnapshot(collection(db, 'content_items'), (snap) => {
       const list: ContentItem[] = [];
-      snap.forEach((d) => list.push({ id: d.id, ...d.data() } as ContentItem));
+      snap.forEach((d) => {
+        const raw = { id: d.id, ...d.data() } as ContentItem;
+        if (raw.type === 'video') {
+          raw.url = resolveVideoUrl(raw);
+          if (raw.backupUrl) {
+            raw.backupUrl = resolveVideoUrl(raw.backupUrl);
+          }
+        }
+        list.push(raw);
+      });
       // Sort strictly from oldest to newest (من الأقدم للأحدث)
       list.sort((a, b) => {
         const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
@@ -472,7 +497,10 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
     }
   }, [selectedResourceId, contentItems, activeVideo]);
 
-  // Calculate subscription remaining days and elapsed days (progress starts from 0 and increases each day)
+  // Calculate subscription status: VIP, Unlimited, Paused Counter, Unspecified (no days counter until admin sets days), or Active Days
+  const isVipActive = Boolean(currentUser.isVip);
+  const isCounterPaused = Boolean(currentUser.isCounterPaused);
+
   let daysLeft = 0;
   let totalDays = currentUser.daysAllowed || 0;
   let elapsedDays = 0;
@@ -480,12 +508,17 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
   let isSubscriptionExpired = false;
   let formattedEndDate = '';
 
-  if (currentUser.subscriptionEndDate) {
+  if (isCounterPaused) {
+    daysLeft = Math.max(0, currentUser.pausedRemainingDays ?? 0);
+    elapsedDays = totalDays > 0 ? Math.max(0, totalDays - daysLeft) : 0;
+    progressPercentage = totalDays > 0 ? Math.min(100, Math.round((elapsedDays / totalDays) * 100)) : 0;
+    isSubscriptionExpired = false;
+  } else if (!isVipActive && !currentUser.isUnlimited && currentUser.subscriptionEndDate) {
     const endMs = new Date(currentUser.subscriptionEndDate).getTime();
     const nowMs = Date.now();
     const diff = endMs - nowMs;
     daysLeft = Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)));
-    if (diff <= 0) {
+    if (diff <= 0 && totalDays > 0) {
       isSubscriptionExpired = true;
     }
     elapsedDays = Math.max(0, totalDays - daysLeft);
@@ -525,7 +558,11 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
   const handleSelectVideo = (vid: ContentItem) => {
     pauseAllVideos();
     setIsShowingIntroOnLeft(false);
-    setActiveVideo(vid);
+    setActiveVideo({
+      ...vid,
+      url: resolveVideoUrl(vid),
+      ...(vid.backupUrl ? { backupUrl: resolveVideoUrl(vid.backupUrl) } : {}),
+    });
   };
 
   // Toggle watch confirmation manually with optimistic 0ms latency
@@ -724,13 +761,18 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
     });
   }, [folders, activeCourseId]);
 
-  // Per-course intro lesson with graceful fallback
+  // Per-course intro lesson with graceful fallback and unified video URL resolution
   const effectiveIntroLesson = useMemo(() => {
-    return activeCourse?.introLesson || systemSettings.introLesson || {
+    const rawIntro = activeCourse?.introLesson || systemSettings.introLesson || {
       isActive: true,
       title: 'الحصة التعريفية لشرح المنصة وطريقة الاستفادة منها',
       videoUrl: '',
       description: 'شاهد هذا الفيديو للتعرف على طريقة التدرب واستخدام السبورة الذكية ومجلدات الأخطاء لتحقيق نسبة 100% بإذن الله',
+    };
+    return {
+      ...rawIntro,
+      videoUrl: resolveVideoUrl(rawIntro),
+      ...(rawIntro.backupUrl ? { backupUrl: resolveVideoUrl(rawIntro.backupUrl) } : {}),
     };
   }, [activeCourse?.introLesson, systemSettings.introLesson]);
 
@@ -807,7 +849,12 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
 
   const activeVideoItem = useMemo(() => {
     if (!activeVideo) return null;
-    return contentItems.find((i) => i.id === activeVideo.id) || activeVideo;
+    const raw = contentItems.find((i) => i.id === activeVideo.id) || activeVideo;
+    return {
+      ...raw,
+      url: resolveVideoUrl(raw),
+      ...(raw.backupUrl ? { backupUrl: resolveVideoUrl(raw.backupUrl) } : {}),
+    };
   }, [activeVideo, contentItems]);
 
   const linkedExams = useMemo(() => {
@@ -1004,7 +1051,7 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
   }
 
   // ================= 2. CHECK SUBSCRIPTION EXPIRATION =================
-  if (isSubscriptionExpired && totalDays > 0 && !currentUser.isUnlimited) {
+  if (isSubscriptionExpired && totalDays > 0 && !currentUser.isUnlimited && !isVipActive && !isCounterPaused) {
     const whatsappNum = systemSettings.whatsappNumber || '966500000000';
     const whatsappUrl = `https://wa.me/${whatsappNum}?text=${encodeURIComponent(`السلام عليكم، انتهت مدة اشتراكي في منصة أقسام رعد وأرغب في التجديد - الطالب: ${currentUser.name}`)}`;
 
@@ -1139,9 +1186,23 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                 100% بإذن الله
               </span>
             </div>
-            <p className={`text-[11px] sm:text-xs truncate ${isDarkMode ? 'text-slate-400' : 'text-slate-600 font-bold'}`}>
-              مرحباً، {currentUser.name}
-            </p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className={`text-[11px] sm:text-xs truncate ${isDarkMode ? 'text-slate-400' : 'text-slate-600 font-bold'}`}>
+                مرحباً، {currentUser.name}
+              </p>
+              {isVipActive && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-400/50 text-amber-300 text-[10px] font-black shadow-xs">
+                  <Crown className="w-3 h-3 text-amber-400" />
+                  <span>VIP</span>
+                </span>
+              )}
+              {isCounterPaused && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-purple-500/20 border border-purple-400/50 text-purple-300 text-[10px] font-black">
+                  <Pause className="w-3 h-3" />
+                  <span>العداد موقوف</span>
+                </span>
+              )}
+            </div>
           </div>
         </div>
 
@@ -1345,15 +1406,45 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
       )}
 
       {/* ================= BIG SUBSCRIPTION DAYS PROGRESS BAR AT STUDENT ================= */}
-      {/* "لا تجعل عندما يدخل الطالب للمنصة اول مرة يظهر له عداد ب 30 يوم العداد لا يظهر للطلاب الا لما انا لحدد لهم ايام داخل قسم التحكم" */}
-      {(currentUser.isUnlimited || (totalDays > 0 && currentUser.subscriptionEndDate)) && (
+      {(isVipActive || currentUser.isUnlimited || isCounterPaused || (totalDays > 0 && currentUser.subscriptionEndDate)) && (
         <div className="px-2.5 sm:px-4 md:px-8 py-2 sm:py-3 max-w-[1700px] mx-auto w-full">
           <div
             className={`p-3.5 sm:p-5 md:p-6 rounded-2xl sm:rounded-3xl border shadow-xl transition-all ${
-              isDarkMode ? 'bg-slate-900/90 border-slate-800' : 'bg-white border-slate-200 shadow-sm'
+              isVipActive
+                ? isDarkMode
+                  ? 'bg-gradient-to-r from-amber-950/50 via-slate-900 to-yellow-950/30 border-amber-500/40'
+                  : 'bg-gradient-to-r from-amber-50 via-white to-yellow-50 border-amber-300 shadow-sm'
+                : isCounterPaused
+                ? isDarkMode
+                  ? 'bg-gradient-to-r from-purple-950/50 via-slate-900 to-indigo-950/30 border-purple-500/40'
+                  : 'bg-gradient-to-r from-purple-50 via-white to-indigo-50 border-purple-300 shadow-sm'
+                : isDarkMode
+                ? 'bg-slate-900/90 border-slate-800'
+                : 'bg-white border-slate-200 shadow-sm'
             }`}
           >
-            {currentUser.isUnlimited ? (
+            {isVipActive ? (
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 sm:p-3 rounded-2xl bg-amber-500/15 border border-amber-500/35 text-amber-400 shrink-0 shadow-md shadow-amber-500/10">
+                    <Crown className="w-6 h-6 sm:w-7 sm:h-7" />
+                  </div>
+                  <div>
+                    <h3 className={`text-sm sm:text-base md:text-lg font-black flex items-center gap-2 flex-wrap ${
+                      isDarkMode ? 'text-white' : 'text-slate-900'
+                    }`}>
+                      <span>عضوية VIP ماسية ملكية 👑</span>
+                      <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/40 font-black">
+                        اشتراك دائم مفتوح
+                      </span>
+                    </h3>
+                    <p className={`text-[11px] sm:text-xs mt-0.5 ${isDarkMode ? 'text-amber-200/80' : 'text-amber-800 font-medium'}`}>
+                      تم ترقية حسابك لـ VIP — جميع الأقسام والشروحات والاختبارات والملفات مفتوحة لك بلا حدود زمنية!
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ) : currentUser.isUnlimited ? (
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
                   <div className="p-2.5 sm:p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 shrink-0">
@@ -1365,12 +1456,38 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                     }`}>
                       <span>حسابك يتمتع باشتراك مفتوح دائم ⚡</span>
                       <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                        VIP
+                        مفتوح
                       </span>
                     </h3>
                     <p className={`text-[11px] sm:text-xs mt-0.5 ${isDarkMode ? 'text-slate-400' : 'text-slate-700 font-medium'}`}>
                       المنصة مفتوحة لك بالكامل وبلا قيود زمنية، استمتع بجميع الفيديوهات والاختبارات والملفات!
                     </p>
+                  </div>
+                </div>
+              </div>
+            ) : isCounterPaused ? (
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2.5 sm:p-3 rounded-2xl bg-purple-500/15 border border-purple-500/35 text-purple-400 shrink-0">
+                      <Pause className="w-5 h-5 sm:w-6 sm:h-6" />
+                    </div>
+                    <div>
+                      <h3 className={`text-sm sm:text-base md:text-lg font-black flex items-center gap-2 flex-wrap ${
+                        isDarkMode ? 'text-white' : 'text-slate-900'
+                      }`}>
+                        <span>تم قفل وتجميد عداد الأيام مؤقتاً ⏸️</span>
+                        <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/40 font-black">
+                          أيامك محفوظة
+                        </span>
+                      </h3>
+                      <p className={`text-[11px] sm:text-xs mt-0.5 ${isDarkMode ? 'text-purple-200/80' : 'text-purple-800 font-medium'}`}>
+                        العداد متوقف حالياً بأمر المشرف ولا يستهلك من اشتراكك. يتبقى لك عند إعادة التشغيل: {daysLeft} يوم.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="px-3.5 py-1.5 rounded-xl bg-purple-500/20 border border-purple-400/40 text-purple-300 text-xs sm:text-sm font-black">
+                    الرصيد المحفوظ: {daysLeft} يوم
                   </div>
                 </div>
               </div>
@@ -1972,7 +2089,9 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                 <div className="aspect-video w-full rounded-2xl overflow-hidden bg-black relative shadow-inner border border-slate-800">
                   {effectiveIntroLesson.videoUrl ? (
                     <SmartVideoPlayer
+                      key={`intro-main-${effectiveIntroLesson.videoUrl}`}
                       url={effectiveIntroLesson.videoUrl}
+                      backupUrl={effectiveIntroLesson.backupUrl}
                       title={effectiveIntroLesson.title || 'الحصة التعريفية'}
                       watermarkContent={
                         <div className="absolute top-3 left-3 z-10 pointer-events-none flex items-center gap-2 px-2.5 py-1 rounded-xl bg-black/60 backdrop-blur-md border border-white/20 shadow-lg select-none opacity-85 group-hover:opacity-100 transition-opacity">
@@ -2108,7 +2227,9 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                   {/* Video Container with Smart Smooth Player and Platform Logo Watermark */}
                   <div className="aspect-video w-full rounded-2xl overflow-hidden bg-black relative shadow-inner">
                     <SmartVideoPlayer
+                      key={`lesson-${activeVideoItem.id}-${activeVideoItem.url || ''}`}
                       url={activeVideoItem.url || ''}
+                      backupUrl={activeVideoItem.backupUrl}
                       title={activeVideoItem.title}
                       onEnded={() => handleVideoEnded(activeVideoItem.id)}
                       watermarkContent={
@@ -3113,17 +3234,12 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
             <div className="p-4 sm:p-6 space-y-4 overflow-y-auto">
               <div className="aspect-video w-full rounded-2xl overflow-hidden bg-black shadow-inner">
                 {effectiveIntroLesson.videoUrl ? (
-                    <video
-                      ref={introVideoRef}
+                    <SmartVideoPlayer
                       key={effectiveIntroLesson.videoUrl}
-                      src={effectiveIntroLesson.videoUrl}
-                      controls
-                      controlsList="nodownload"
-                      onContextMenu={(e) => e.preventDefault()}
-                      preload="auto"
-                      autoPlay={false}
-                      playsInline
-                      className="w-full h-full object-contain"
+                      url={effectiveIntroLesson.videoUrl}
+                      backupUrl={effectiveIntroLesson.backupUrl}
+                      title={effectiveIntroLesson.title || 'الحصة التعريفية'}
+                      externalVideoRef={introVideoRef}
                     />
                 ) : (
                   <div className="w-full h-full flex flex-col items-center justify-center p-8 text-center text-slate-500 space-y-2">
@@ -3228,14 +3344,12 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
               <span className="text-[10px] font-black text-white">رعد</span>
             </div>
 
-            <video
-              ref={miniVideoRef}
-              src={activeVideo.url}
-              controls
-              controlsList="nodownload"
-              onContextMenu={(e) => e.preventDefault()}
-              playsInline
-              className="w-full h-full object-contain"
+            <SmartVideoPlayer
+              key={`mini-${activeVideo.id}-${resolveVideoUrl(activeVideo)}`}
+              url={resolveVideoUrl(activeVideo)}
+              backupUrl={activeVideo.backupUrl ? resolveVideoUrl(activeVideo.backupUrl) : undefined}
+              title={activeVideo.title}
+              externalVideoRef={miniVideoRef}
             />
           </div>
         </div>

@@ -50,6 +50,27 @@ export const TelegramLoginCard: React.FC<TelegramLoginCardProps> = ({
         </div>
       </div>
 
+      {/* تنبيه هام لمن لا يعمل معه تليجرام */}
+      <div className="mt-4 p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-right space-y-1.5">
+        <div className="flex items-center gap-1.5 text-amber-400 font-bold text-xs">
+          <AlertCircle className="w-4 h-4 shrink-0 text-amber-400" />
+          <span>تنبيه هام للطلاب:</span>
+        </div>
+        <p className="text-[11px] text-slate-300 leading-relaxed font-medium">
+          إذا لم يعمل معك تسجيل الدخول بحساب تليجرام، يمكنك الانتقال فوراً لإنشاء حساب أو تسجيل الدخول بالبريد الإلكتروني وكلمة المرور.
+        </p>
+        {onSwitchToEmail && (
+          <button
+            type="button"
+            onClick={onSwitchToEmail}
+            className="w-full mt-1 py-1.5 px-3 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer"
+          >
+            <Mail className="w-3.5 h-3.5" />
+            <span>التوجه للبريد الإلكتروني وكلمة المرور ✉️</span>
+          </button>
+        )}
+      </div>
+
       {/* رسالة الخطأ إن وجدت */}
       {errorMessage && (
         <div className="mt-4 p-3 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs font-bold flex items-center gap-2">

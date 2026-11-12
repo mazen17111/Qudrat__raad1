@@ -52,6 +52,132 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   return errInfo;
 }
 
+export interface VideoSourceInput {
+  url?: string;
+  videoUrl?: string;
+  mediaId?: string;
+  fileId?: string;
+  fileData?: string;
+  backupUrl?: string;
+}
+
+/**
+ * دالة موحدة لمعالجة وتطبيع جميع أنواع روابط الفيديو ومعرفات الملفات
+ * (الروابط المباشرة، روابط يوتيوب/درايف/فيميو/دروبوكس، معرفات Firebase media_files، وروابط الخادم المحلي)
+ * لضمان التوافق التام مع مشغلات الفيديو التفاعلية دون أخطاء تشغيل.
+ */
+export function resolveVideoUrl(input: string | VideoSourceInput | null | undefined): string {
+  if (!input) return '';
+
+  let raw = '';
+  if (typeof input === 'string') {
+    raw = input.trim();
+  } else {
+    const candidates = [
+      input.url,
+      input.videoUrl,
+      input.mediaId ? `/api/media/${input.mediaId.trim()}` : '',
+      input.fileId ? input.fileId.trim() : '',
+      input.fileData,
+      input.backupUrl,
+    ];
+    for (const c of candidates) {
+      const val = (c || '').trim();
+      if (val && !val.startsWith('blob:')) {
+        raw = val;
+        break;
+      }
+    }
+  }
+
+  if (!raw || raw.startsWith('blob:')) return '';
+
+  // Data URLs (base64 inline video) pass through directly
+  if (raw.startsWith('data:')) {
+    return raw;
+  }
+
+  // Strip stale full-origin prefixes pointing to platform routes (/api/media/, /api/stream, /uploads/)
+  const originRouteMatch = raw.match(/^https?:\/\/[^/]+(\/(?:api\/media\/|api\/stream\?|uploads\/).*)$/i);
+  if (originRouteMatch && originRouteMatch[1]) {
+    raw = originRouteMatch[1];
+  }
+
+  // Normalize relative server routes
+  if (raw.startsWith('/api/media/') || raw.startsWith('/api/stream') || raw.startsWith('/uploads/')) {
+    return raw.includes(' ') ? encodeURI(raw) : raw;
+  }
+  if (raw.startsWith('api/media/') || raw.startsWith('api/stream') || raw.startsWith('uploads/')) {
+    const normalized = `/${raw}`;
+    return normalized.includes(' ') ? encodeURI(normalized) : normalized;
+  }
+
+  // Normalize Firebase media_files path or bare Firestore media/file IDs
+  const mediaPathMatch = raw.match(/^\/?media_files\/([a-zA-Z0-9_-]+)$/i);
+  if (mediaPathMatch && mediaPathMatch[1]) {
+    return `/api/media/${mediaPathMatch[1]}`;
+  }
+  if (/^(?:med|ext)_[a-zA-Z0-9_-]+$/i.test(raw)) {
+    return `/api/media/${raw}`;
+  }
+  if (/^[a-zA-Z0-9_-]{16,}$/.test(raw) && !raw.includes('.')) {
+    return `/api/media/${raw}`;
+  }
+
+  // Add https:// if user pasted a domain without protocol
+  if (!raw.startsWith('http://') && !raw.startsWith('https://') && /^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(?:\/|$)/.test(raw)) {
+    raw = `https://${raw}`;
+  }
+
+  // Encode unencoded spaces safely
+  if (raw.includes(' ')) {
+    raw = encodeURI(raw);
+  }
+
+  // Normalize YouTube links (watch, youtu.be, shorts, live, embed)
+  const ytMatch = raw.match(
+    /(?:youtu\.be\/|(?:www\.|m\.)?youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|shorts\/|live\/))([\w-]{11})/i
+  );
+  if (ytMatch && ytMatch[1]) {
+    return `https://www.youtube.com/watch?v=${ytMatch[1]}`;
+  }
+
+  // Normalize Google Drive links to canonical view URL compatible with preview embed
+  const driveFileMatch = raw.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/i);
+  const driveOpenMatch = raw.match(/drive\.google\.com\/(?:open|uc)\?(?:.+&)?id=([a-zA-Z0-9_-]+)/i);
+  const driveId = (driveFileMatch && driveFileMatch[1]) || (driveOpenMatch && driveOpenMatch[1]);
+  if (driveId) {
+    return `https://drive.google.com/file/d/${driveId}/view`;
+  }
+
+  // Normalize Dropbox links to raw binary stream
+  if (raw.toLowerCase().includes('dropbox.com')) {
+    raw = raw.replace(/[?&]dl=0/gi, (m) => (m.startsWith('?') ? '?raw=1' : '&raw=1'));
+    if (!raw.toLowerCase().includes('raw=1') && !raw.toLowerCase().includes('dl=1')) {
+      raw += raw.includes('?') ? '&raw=1' : '?raw=1';
+    }
+  }
+
+  return raw;
+}
+
+export function getVideoFallbackUrl(
+  input: VideoSourceInput | null | undefined,
+  failedUrl?: string
+): string {
+  if (!input) return '';
+  const resolvedFailed = resolveVideoUrl(failedUrl);
+  const backup = resolveVideoUrl(input.backupUrl);
+  if (backup && backup !== resolvedFailed) {
+    return backup;
+  }
+  const primary = resolveVideoUrl(input.url || input.videoUrl);
+  if (primary && primary !== resolvedFailed) {
+    return primary;
+  }
+  return '';
+}
+
 export const THEME_PRESETS: ThemeConfig[] = [
   {
     id: 'blue-electric',

@@ -19,6 +19,7 @@ import {
   BookOpen,
   Award,
   Send,
+  UserPlus,
 } from 'lucide-react';
 import { StudentUser, SystemSettings } from '../types';
 import { BrandLogo } from './BrandLogo';
@@ -151,8 +152,12 @@ export const AuthView: React.FC<AuthViewProps> = ({
           photoUrl: tgUser.photo_url || '',
           daysAllowed: 0,
           isUnlimited: false,
+          isVip: false,
+          subscriptionStatus: 'unspecified',
           subscriptionStartDate: '',
           subscriptionEndDate: '',
+          isCounterPaused: false,
+          pausedRemainingDays: 0,
           isIndividuallyBlocked: false,
           isIndividuallyWhitelisted: false,
           watchedVideoIds: [],
@@ -436,8 +441,13 @@ export const AuthView: React.FC<AuthViewProps> = ({
           email: cleanEmail,
           password: password,
           daysAllowed: 0, // No default counter until admin assigns days in Admin Panel
+          isUnlimited: false,
+          isVip: false,
+          subscriptionStatus: 'unspecified',
           subscriptionStartDate: '',
           subscriptionEndDate: '',
+          isCounterPaused: false,
+          pausedRemainingDays: 0,
           isIndividuallyBlocked: false,
           isIndividuallyWhitelisted: false,
           watchedVideoIds: [],
@@ -536,6 +546,64 @@ export const AuthView: React.FC<AuthViewProps> = ({
           <span>{isDarkMode ? 'الوضع النهاري' : 'الوضع الليلي'}</span>
         </button>
       </header>
+
+      {/* ================= IMPORTANT TOP NOTICE BANNER ================= */}
+      {/* "في واجهة تسجيل الدخول ضيف فوق رسالة مهمة ان من لا يعمل معه تسجيل الدخول للمنصة بحساب تليجرام يذهب لانشاء حساب او تسجيل دخول بالبريد الالكتروني وكلمة المرور" */}
+      <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-2 pb-1">
+        <div className={`p-3.5 sm:p-4 rounded-2xl md:rounded-3xl border-2 shadow-lg transition-all flex flex-col md:flex-row items-center justify-between gap-3.5 ${
+          isDarkMode
+            ? 'bg-gradient-to-r from-amber-950/40 via-slate-900 to-amber-950/30 border-amber-500/50 shadow-amber-500/10'
+            : 'bg-gradient-to-r from-amber-50 via-white to-amber-50/60 border-amber-400 shadow-amber-200/50'
+        }`}>
+          <div className="flex items-center gap-3 w-full md:w-auto">
+            <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-500 text-slate-950 flex items-center justify-center shrink-0 shadow-md shadow-amber-500/30">
+              <AlertCircle className="w-5 h-5 sm:w-6 sm:h-6 stroke-[2.5]" />
+            </div>
+            <div className="text-right flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] sm:text-xs font-black uppercase tracking-wider text-amber-500 bg-amber-500/15 border border-amber-500/30 px-2 py-0.5 rounded-md">
+                  تنبيه هام ومباشر ⚠️
+                </span>
+                <span className="text-[10px] sm:text-xs text-amber-500 dark:text-amber-400 font-bold">لكل الطلاب</span>
+              </div>
+              <p className={`text-xs sm:text-sm font-black mt-1 leading-relaxed ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
+                من لا يعمل معه تسجيل الدخول للمنصة بحساب تيليجرام، يرجى التوجه فوراً لإنشاء حساب أو تسجيل الدخول بالبريد الإلكتروني وكلمة المرور.
+              </p>
+            </div>
+          </div>
+
+          <div className="w-full md:w-auto flex flex-col sm:flex-row items-stretch sm:items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                setAuthMode('email');
+                setIsSignUp(true);
+                setError('');
+              }}
+              className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black text-xs sm:text-sm flex items-center justify-center gap-2 shadow-lg shadow-amber-500/25 transition transform active:scale-95 cursor-pointer"
+            >
+              <UserPlus className="w-4 h-4" />
+              <span>إنشاء حساب بالبريد</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setAuthMode('email');
+                setIsSignUp(false);
+                setError('');
+              }}
+              className={`px-4 py-2.5 rounded-xl border-2 font-black text-xs sm:text-sm flex items-center justify-center gap-2 transition transform active:scale-95 cursor-pointer ${
+                isDarkMode
+                  ? 'bg-slate-800 hover:bg-slate-700 border-amber-500/50 text-amber-300'
+                  : 'bg-white hover:bg-amber-50 border-amber-400 text-amber-800'
+              }`}
+            >
+              <Mail className="w-4 h-4" />
+              <span>تسجيل الدخول بالبريد</span>
+            </button>
+          </div>
+        </div>
+      </div>
 
       {/* Main Container: 2-Column Responsive Layout */}
       {/* Right Column: Platform Sufficiency + 4-Step Study Method Cards */}
