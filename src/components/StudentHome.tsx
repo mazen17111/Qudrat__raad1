@@ -302,6 +302,8 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
   const introVideoRef = useRef<HTMLVideoElement>(null);
   const miniVideoRef = useRef<HTMLVideoElement>(null);
   const [isMiniPlayerOpen, setIsMiniPlayerOpen] = useState<boolean>(false);
+  const [lessonPipTrigger, setLessonPipTrigger] = useState<number>(0);
+  const lessonPipActionRef = useRef<(() => void) | null>(null);
   const [showIntroModal, setShowIntroModal] = useState<boolean>(false);
   const [isShowingIntroOnLeft, setIsShowingIntroOnLeft] = useState<boolean>(false);
 
@@ -316,6 +318,9 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
       }
       if (miniVideoRef.current) {
         miniVideoRef.current.pause();
+      }
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('raad-pause-all-videos'));
       }
     } catch (e) {
       console.warn('Error pausing videos:', e);
@@ -2166,26 +2171,24 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                     </div>
 
                     <div className="flex items-center gap-2 flex-wrap">
-                      {/* Simple PiP button above the video ("ضيف زر pip فوق كل فيديو كده حاجة بسيطة يعني") */}
+                      {/* Cross-site PiP button above the video */}
                       <button
                         type="button"
                         onClick={() => {
-                          const video = document.querySelector('video');
-                          if (!video) return;
-                          if (document.pictureInPictureElement) {
-                            document.exitPictureInPicture().catch(() => {});
-                          } else if (video.requestPictureInPicture) {
-                            video.requestPictureInPicture().catch(() => {});
+                          if (lessonPipActionRef.current) {
+                            lessonPipActionRef.current();
+                          } else {
+                            setLessonPipTrigger((prev) => prev + 1);
                           }
                         }}
-                        className={`px-3 py-2 rounded-xl text-xs font-black transition flex items-center gap-1.5 shadow-sm cursor-pointer border ${
+                        className={`px-3 py-2 rounded-xl text-xs font-black transition-all duration-200 hover:scale-105 active:scale-95 flex items-center gap-1.5 shadow-sm cursor-pointer border ${
                           isDarkMode
-                            ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border-slate-700'
-                            : 'bg-white hover:bg-slate-100 text-slate-800 border-slate-300'
+                            ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border-amber-500/40'
+                            : 'bg-white hover:bg-slate-100 text-slate-800 border-amber-400/60'
                         }`}
-                        title="تشغيل الفيديو في نافذة عائمة مصغرة (Picture-in-Picture)"
+                        title="تشغيل الفيديو في نافذة عائمة تبقى معك حتى لو دخلت أي موقع آخر (PiP)"
                       >
-                        <PictureInPicture2 className="w-4 h-4 text-amber-400" />
+                        <PictureInPicture2 className="w-4 h-4 text-amber-400 animate-pulse" />
                         <span>نافذة عائمة (PiP)</span>
                       </button>
 
@@ -2231,6 +2234,8 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                       url={activeVideoItem.url || ''}
                       backupUrl={activeVideoItem.backupUrl}
                       title={activeVideoItem.title}
+                      pipTrigger={lessonPipTrigger}
+                      pipActionRef={lessonPipActionRef}
                       onEnded={() => handleVideoEnded(activeVideoItem.id)}
                       watermarkContent={
                         <div className="absolute top-3 left-3 z-10 pointer-events-none flex items-center gap-2 px-2.5 py-1 rounded-xl bg-black/60 backdrop-blur-md border border-white/20 shadow-lg select-none opacity-85 group-hover:opacity-100 transition-opacity">
