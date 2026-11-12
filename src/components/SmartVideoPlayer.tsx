@@ -3,10 +3,16 @@ import {
   AlertCircle,
   RefreshCw,
   Play,
+  Pause,
+  RotateCcw,
+  RotateCw,
+  Volume2,
+  VolumeX,
+  Maximize2,
+  Minimize2,
   PictureInPicture2,
   Captions,
   Move,
-  Maximize2,
   X,
   Zap,
 } from 'lucide-react';
@@ -25,6 +31,21 @@ interface SmartVideoPlayerProps {
   pipActionRef?: React.MutableRefObject<(() => void) | null>;
 }
 
+const SPEED_OPTIONS = [0.75, 1, 1.25, 1.5, 1.75, 2];
+
+const formatTime = (totalSeconds: number): string => {
+  if (!isFinite(totalSeconds) || totalSeconds < 0) return '00:00';
+  const sec = Math.floor(totalSeconds);
+  const hrs = Math.floor(sec / 3600);
+  const mins = Math.floor((sec % 3600) / 60);
+  const secs = sec % 60;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  if (hrs > 0) {
+    return `${hrs}:${pad(mins)}:${pad(secs)}`;
+  }
+  return `${pad(mins)}:${pad(secs)}`;
+};
+
 const isDirectBrokenSslHost = (cleanUrl: string): boolean => {
   const lower = cleanUrl.toLowerCase();
   return lower.startsWith('http://') || lower.includes('top4top.io');
@@ -33,11 +54,9 @@ const isDirectBrokenSslHost = (cleanUrl: string): boolean => {
 const shouldStartWithProxy = (cleanUrl: string): boolean => {
   if (!cleanUrl) return false;
   const lower = cleanUrl.toLowerCase();
-  // Local/Firebase-backed routes never need external stream proxy
   if (lower.startsWith('/api/') || lower.startsWith('/uploads/') || lower.startsWith('blob:') || lower.startsWith('data:')) {
     return false;
   }
-  // Proactively stream via backend +faststart cache/proxy for hosts that have expired SSL, regional ISP blocks, or CORS restrictions
   if (
     lower.startsWith('http://') ||
     lower.includes('top4top.io') ||
@@ -76,8 +95,9 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
 }) => {
   const internalVideoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const floatingWrapperRef = useRef<HTMLDivElement>(null);
+  const playerWrapperRef = useRef<HTMLDivElement>(null);
   const pendingNativePipRef = useRef(false);
+  const hideControlsTimerRef = useRef<number | null>(null);
 
   const primaryCleanUrl = resolveVideoUrl(url);
   const backupCleanUrl = resolveVideoUrl(backupUrl);
@@ -98,14 +118,28 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
   const [hasTriedDirect, setHasTriedDirect] = useState(() => !shouldStartWithProxy(primaryCleanUrl));
   const [hasLoadedMetadata, setHasLoadedMetadata] = useState(false);
 
-  // PiP & Captions state
+  // Unified Custom Player UI State (matching PlatformYouTubePlayer look across ALL videos)
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [isBuffering, setIsBuffering] = useState(false);
+  const [isEnded, setIsEnded] = useState(false);
+  const [hasStartedOnce, setHasStartedOnce] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [isMuted, setIsMuted] = useState(false);
+  const [volume, setVolume] = useState(100);
+  const [playbackRate, setPlaybackRate] = useState(1);
+  const [showSpeedMenu, setShowSpeedMenu] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [controlsVisible, setControlsVisible] = useState(true);
+
+  // PiP & Captions State
   const [isPiPActive, setIsPiPActive] = useState(false);
   const [isFloatingPiP, setIsFloatingPiP] = useState(false);
   const [isPiPSupported, setIsPiPSupported] = useState(false);
   const [captionsEnabled, setCaptionsEnabled] = useState(false);
   const [textTrackCount, setTextTrackCount] = useState(0);
 
-  // Draggable position for the quick PiP control button ("اجعل زر ال pip متحرك")
+  // Draggable position for movable PiP pill
   const [pipBtnPos, setPipBtnPos] = useState<{ left: number; top: number } | null>(null);
   const pipBtnDragRef = useRef<{
     active: boolean;
@@ -117,7 +151,7 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
   }>({ active: false, moved: false, startX: 0, startY: 0, originLeft: 0, originTop: 0 });
   const suppressNextPipClickRef = useRef(false);
 
-  // Draggable position for in-page Floating PiP fallback window
+  // Draggable position for Floating PiP fallback window
   const [floatingWinPos, setFloatingWinPos] = useState<{ x: number; y: number } | null>(null);
   const winDragRef = useRef<{
     dragging: boolean;
@@ -127,7 +161,7 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
     originY: number;
   }>({ dragging: false, startX: 0, startY: 0, originX: 0, originY: 0 });
 
-  // Synchronize state IMMEDIATELY during render when URL changes so zero frames use old video's proxy mode
+  // Synchronize state immediately on URL change
   if (primaryCleanUrl !== trackedPrimaryUrl) {
     const startWithProxy = shouldStartWithProxy(primaryCleanUrl);
     setTrackedPrimaryUrl(primaryCleanUrl);
@@ -140,6 +174,12 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
     setHasTriedDirect(!startWithProxy);
     setIsPiPActive(false);
     setIsFloatingPiP(false);
+    setIsPlaying(false);
+    setIsBuffering(false);
+    setIsEnded(false);
+    setHasStartedOnce(false);
+    setCurrentTime(0);
+    setDuration(0);
   }
 
   const setCombinedVideoRef = useCallback(
@@ -152,13 +192,44 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
     [externalVideoRef]
   );
 
+  const scheduleHideControls = useCallback(() => {
+    if (hideControlsTimerRef.current) {
+      window.clearTimeout(hideControlsTimerRef.current);
+    }
+    setControlsVisible(true);
+    hideControlsTimerRef.current = window.setTimeout(() => {
+      setControlsVisible(false);
+      setShowSpeedMenu(false);
+    }, 3200);
+  }, []);
+
   useEffect(() => {
     setIsPiPSupported(
       typeof document !== 'undefined' && 'pictureInPictureEnabled' in document && Boolean(document.pictureInPictureEnabled)
     );
   }, []);
 
-  // Listen to native PiP & text track updates
+  // Listen to global pause requests when student switches lessons/sections/exams
+  useEffect(() => {
+    const handleGlobalPause = () => {
+      try {
+        internalVideoRef.current?.pause();
+      } catch {}
+    };
+    window.addEventListener('raad-pause-all-videos', handleGlobalPause);
+    return () => window.removeEventListener('raad-pause-all-videos', handleGlobalPause);
+  }, []);
+
+  // Track Fullscreen changes
+  useEffect(() => {
+    const onFsChange = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement && document.fullscreenElement === playerWrapperRef.current));
+    };
+    document.addEventListener('fullscreenchange', onFsChange);
+    return () => document.removeEventListener('fullscreenchange', onFsChange);
+  }, []);
+
+  // Native PiP & TextTrack event listeners
   useEffect(() => {
     const video = internalVideoRef.current;
     if (!video) return;
@@ -178,11 +249,6 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
     video.addEventListener('leavepictureinpicture', handleLeavePiP);
     try {
       video.textTracks?.addEventListener?.('addtrack', syncTracks);
-      video.textTracks?.addEventListener?.('change', () => {
-        if (video.textTracks) {
-          setTextTrackCount(video.textTracks.length);
-        }
-      });
     } catch {}
 
     return () => {
@@ -201,8 +267,9 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
       setCaptionsEnabled(next);
       const count = applyHtmlVideoCaptions(internalVideoRef.current, next);
       setTextTrackCount(count);
+      scheduleHideControls();
     },
-    [captionsEnabled]
+    [captionsEnabled, scheduleHideControls]
   );
 
   const handleTogglePiP = useCallback(
@@ -229,7 +296,6 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
         return;
       }
 
-      // If metadata isn't loaded yet (readyState === 0), trigger playback & defer native PiP until loadedmetadata
       if (video.readyState < 1 && isPiPSupported && typeof video.requestPictureInPicture === 'function') {
         pendingNativePipRef.current = true;
         try {
@@ -243,7 +309,6 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
             return;
           } catch {}
         } else {
-          // loadedmetadata handler below will immediately launch native PiP once metadata arrives
           return;
         }
       }
@@ -261,20 +326,18 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
         console.warn('Native PiP fallback to draggable window:', err);
       }
 
-      // Fallback when browser/iframe blocks OS PiP -> activate Draggable Floating Window
       setIsFloatingPiP(true);
     },
     [isFloatingPiP, isPiPSupported]
   );
 
-  // Expose synchronous handler so external click buttons preserve browser user activation!
   if (pipActionRef) {
     pipActionRef.current = () => {
       handleTogglePiP();
     };
   }
 
-  // Register MediaSession Auto-PiP action handler on tab switch in supporting browsers
+  // Register MediaSession Auto-PiP on tab switch
   useEffect(() => {
     try {
       const ms = (navigator as any).mediaSession;
@@ -302,7 +365,7 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
     }
   }, [pipTrigger, handleTogglePiP]);
 
-  // Global pointer drag handlers for both Movable PiP Button & Movable Floating PiP Window
+  // Global pointer drag handlers for movable PiP pill & floating PiP window
   useEffect(() => {
     const onPointerMove = (e: PointerEvent) => {
       if (pipBtnDragRef.current.active && containerRef.current) {
@@ -313,7 +376,7 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
         }
         if (pipBtnDragRef.current.moved) {
           const rect = containerRef.current.getBoundingClientRect();
-          const nextLeft = Math.max(8, Math.min(Math.max(8, rect.width - 140), pipBtnDragRef.current.originLeft + dx));
+          const nextLeft = Math.max(8, Math.min(Math.max(8, rect.width - 110), pipBtnDragRef.current.originLeft + dx));
           const nextTop = Math.max(8, Math.min(Math.max(8, rect.height - 48), pipBtnDragRef.current.originTop + dy));
           setPipBtnPos({ left: nextLeft, top: nextTop });
         }
@@ -365,8 +428,8 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
   };
 
   const startDraggingFloatingWin = (e: React.PointerEvent) => {
-    if (!isFloatingPiP || !floatingWrapperRef.current) return;
-    const rect = floatingWrapperRef.current.getBoundingClientRect();
+    if (!isFloatingPiP || !playerWrapperRef.current) return;
+    const rect = playerWrapperRef.current.getBoundingClientRect();
     winDragRef.current = {
       dragging: true,
       startX: e.clientX,
@@ -376,7 +439,7 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
     };
   };
 
-  // Bidirectional stall recovery: if current path hangs before loading metadata for > 8s, switch between /api/stream and direct HTTPS link
+  // Bidirectional stall recovery
   useEffect(() => {
     const isExternalHttp = cleanUrl.startsWith('http://') || cleanUrl.startsWith('https://');
     if (!isExternalHttp || hasLoadedMetadata || hasError) return;
@@ -417,37 +480,119 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
   };
 
   // Safe seek handler preventing browser stalls
-  const safeSeek = useCallback((targetSeconds: number) => {
+  const safeSeek = useCallback(
+    (targetSeconds: number) => {
+      const video = internalVideoRef.current;
+      if (!video) return;
+
+      let target = targetSeconds;
+      const dur = video.duration;
+
+      if (dur && isFinite(dur)) {
+        target = Math.max(0, Math.min(target, dur - 0.2));
+      } else {
+        target = Math.max(0, target);
+      }
+
+      try {
+        if (video.seekable && video.seekable.length > 0) {
+          const seekableEnd = video.seekable.end(video.seekable.length - 1);
+          const seekableStart = video.seekable.start(0);
+          if (isFinite(seekableEnd) && target > seekableEnd) {
+            target = Math.max(seekableStart, seekableEnd - 0.2);
+          }
+        }
+      } catch (e) {}
+
+      try {
+        video.currentTime = target;
+        setCurrentTime(target);
+        scheduleHideControls();
+      } catch (err) {
+        console.warn('Seek error handled safely:', err);
+      }
+    },
+    [scheduleHideControls]
+  );
+
+  const togglePlay = useCallback(() => {
+    const video = internalVideoRef.current;
+    if (!video || hasError) return;
+    try {
+      if (video.paused || video.ended) {
+        if (video.ended) {
+          video.currentTime = 0;
+        }
+        video.play().catch(() => {});
+      } else {
+        video.pause();
+      }
+      scheduleHideControls();
+    } catch {}
+  }, [hasError, scheduleHideControls]);
+
+  const toggleMute = useCallback(() => {
     const video = internalVideoRef.current;
     if (!video) return;
-
-    let target = targetSeconds;
-    const dur = video.duration;
-
-    if (dur && isFinite(dur)) {
-      target = Math.max(0, Math.min(target, dur - 0.2));
-    } else {
-      target = Math.max(0, target);
-    }
-
     try {
-      if (video.seekable && video.seekable.length > 0) {
-        const seekableEnd = video.seekable.end(video.seekable.length - 1);
-        const seekableStart = video.seekable.start(0);
-        if (isFinite(seekableEnd) && target > seekableEnd) {
-          target = Math.max(seekableStart, seekableEnd - 0.2);
+      if (video.muted || video.volume === 0) {
+        video.muted = false;
+        const nextVol = volume > 0 ? volume : 100;
+        video.volume = nextVol / 100;
+        setVolume(nextVol);
+        setIsMuted(false);
+      } else {
+        video.muted = true;
+        setIsMuted(true);
+      }
+      scheduleHideControls();
+    } catch {}
+  }, [volume, scheduleHideControls]);
+
+  const handleVolumeChange = (val: number) => {
+    const video = internalVideoRef.current;
+    setVolume(val);
+    if (!video) return;
+    try {
+      video.volume = Math.max(0, Math.min(1, val / 100));
+      if (val === 0) {
+        video.muted = true;
+        setIsMuted(true);
+      } else {
+        video.muted = false;
+        setIsMuted(false);
+      }
+    } catch {}
+  };
+
+  const handleSpeedChange = (rate: number) => {
+    const video = internalVideoRef.current;
+    setPlaybackRate(rate);
+    setShowSpeedMenu(false);
+    if (!video) return;
+    try {
+      video.playbackRate = rate;
+    } catch {}
+  };
+
+  const toggleFullscreen = useCallback(async () => {
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      } else if (playerWrapperRef.current?.requestFullscreen) {
+        if (isFloatingPiP) setIsFloatingPiP(false);
+        await playerWrapperRef.current.requestFullscreen();
+      } else {
+        const video = internalVideoRef.current as any;
+        if (video?.webkitEnterFullscreen) {
+          video.webkitEnterFullscreen();
         }
       }
-    } catch (e) {}
+      scheduleHideControls();
+    } catch {}
+  }, [isFloatingPiP, scheduleHideControls]);
 
-    try {
-      video.currentTime = target;
-    } catch (err) {
-      console.warn('Seek error handled safely:', err);
-    }
-  }, []);
-
-  // Keyboard navigation shortcuts (Arrow keys for smooth seek ±5s, Space for play/pause, C for Captions)
+  // Keyboard navigation shortcuts (Space, Arrows ±5s, M, F, C for Captions)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const activeTag = (document.activeElement?.tagName || '').toLowerCase();
@@ -464,11 +609,13 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
         safeSeek(video.currentTime - 5);
       } else if (e.code === 'Space') {
         e.preventDefault();
-        if (video.paused) {
-          video.play().catch(() => {});
-        } else {
-          video.pause();
-        }
+        togglePlay();
+      } else if (e.key === 'm' || e.key === 'M') {
+        e.preventDefault();
+        toggleMute();
+      } else if (e.key === 'f' || e.key === 'F') {
+        e.preventDefault();
+        toggleFullscreen();
       } else if (e.key === 'c' || e.key === 'C') {
         e.preventDefault();
         handleToggleCaptions();
@@ -477,7 +624,7 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [safeSeek, handleToggleCaptions]);
+  }, [safeSeek, togglePlay, toggleMute, toggleFullscreen, handleToggleCaptions]);
 
   if (!url || !url.trim()) {
     return (
@@ -488,7 +635,7 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
     );
   }
 
-  // 1. YouTube Detection (rendered exclusively through custom PlatformYouTubePlayer — zero YouTube UI/branding + CC + OS Document PiP)
+  // 1. YouTube Detection (rendered through PlatformYouTubePlayer — custom platform style, NO PiP button)
   const ytMatch = cleanUrl.match(
     /(?:youtu\.be\/|(?:www\.|m\.)?youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|shorts\/|live\/))([\w-]{11})/i
   );
@@ -501,8 +648,6 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
         title={title}
         onEnded={onEnded}
         watermarkContent={watermarkContent}
-        pipTrigger={pipTrigger}
-        pipActionRef={pipActionRef}
       />
     );
   }
@@ -554,14 +699,16 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
       : cleanUrl;
 
   const isAnyPip = isPiPActive || isFloatingPiP;
+  const progressPct = duration > 0 ? Math.min(100, Math.max(0, (currentTime / duration) * 100)) : 0;
 
-  // 4. Clean, Native Video Player for Direct URLs, /api/media/ Firebase streams, & Server Uploads
+  // 4. Unified Custom Branded Platform Video Player for Direct URLs, Catbox, Firebase Media & Server Uploads
   return (
     <div
       ref={containerRef}
       className="relative w-full h-full bg-black overflow-hidden flex items-center justify-center select-none"
+      dir="rtl"
     >
-      {/* Placeholder shown inside player slot while Floating PiP fallback is active */}
+      {/* Inline placeholder while Floating PiP fallback is active */}
       {isFloatingPiP && (
         <div className="w-full h-full bg-slate-950 flex flex-col items-center justify-center p-6 text-center space-y-3 border border-blue-500/30">
           <div className="w-12 h-12 rounded-2xl bg-blue-600/20 border border-blue-500/40 flex items-center justify-center">
@@ -579,9 +726,17 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
         </div>
       )}
 
-      {/* Draggable Floating Wrapper (turns native <video> into fixed movable PiP when OS PiP is unavailable, otherwise inline) */}
+      {/* Main Custom Platform Player Container (or Draggable Floating PiP Window) */}
       <div
-        ref={floatingWrapperRef}
+        ref={playerWrapperRef}
+        onMouseMove={scheduleHideControls}
+        onMouseLeave={() => {
+          if (isPlaying) {
+            setControlsVisible(false);
+            setShowSpeedMenu(false);
+          }
+        }}
+        onContextMenu={(e) => e.preventDefault()}
         style={
           isFloatingPiP && floatingWinPos
             ? { left: `${floatingWinPos.x}px`, top: `${floatingWinPos.y}px`, right: 'auto', bottom: 'auto' }
@@ -590,14 +745,14 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
         className={
           isFloatingPiP
             ? 'fixed bottom-5 left-5 z-[9999] w-80 sm:w-96 rounded-2xl overflow-hidden shadow-2xl border-2 border-blue-500/80 bg-slate-950 flex flex-col select-none'
-            : 'relative w-full h-full flex items-center justify-center'
+            : 'relative w-full h-full bg-black overflow-hidden select-none group'
         }
       >
+        {/* Draggable Floating PiP Header Bar (fallback mode) */}
         {isFloatingPiP && (
           <div
             onPointerDown={startDraggingFloatingWin}
             className="flex items-center justify-between px-3 py-2 bg-gradient-to-r from-slate-900 via-blue-950 to-slate-900 border-b border-blue-500/30 text-white cursor-grab active:cursor-grabbing touch-none"
-            dir="rtl"
             title="اسحب لتحريك النافذة العائمة في أي مكان"
           >
             <div className="flex items-center gap-1.5 min-w-0">
@@ -606,16 +761,6 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
               <span className="text-[11px] font-black truncate">{title || 'منصة أقسام رعد'}</span>
             </div>
             <div className="flex items-center gap-1 shrink-0" onPointerDown={(e) => e.stopPropagation()}>
-              <button
-                type="button"
-                onClick={handleToggleCaptions}
-                className={`px-1.5 py-0.5 rounded text-[10px] font-black cursor-pointer border ${
-                  captionsEnabled ? 'bg-emerald-500 text-slate-950 border-emerald-300' : 'bg-slate-800 text-slate-200 border-slate-700'
-                }`}
-                title={captionsEnabled ? 'إلغاء الكابشن' : 'تشغيل الكابشن'}
-              >
-                CC
-              </button>
               <button
                 type="button"
                 onClick={() => setIsFloatingPiP(false)}
@@ -641,200 +786,490 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
           </div>
         )}
 
-        {!isFloatingPiP && watermarkContent}
-
-        {/* Floating Movable PiP + Captions (CC) Quick Pill */}
-        {!hasError && !isFloatingPiP && (
-          <div
-            onPointerDown={startDraggingPipButton}
-            style={
-              pipBtnPos
-                ? { left: `${pipBtnPos.left}px`, top: `${pipBtnPos.top}px`, right: 'auto' }
-                : undefined
-            }
-            className={`absolute ${pipBtnPos ? '' : 'top-3 right-3'} z-20 flex items-center gap-1 p-1 rounded-2xl bg-black/75 backdrop-blur-md border border-white/20 shadow-xl cursor-grab active:cursor-grabbing touch-none select-none`}
-            title="اسحب لتحريك أزرار PiP و CC لأي مكان على الشاشة"
-          >
-            <span className="px-1 text-slate-400" aria-hidden="true">
-              <Move className="w-3 h-3" />
-            </span>
-
-            {/* Captions (CC) Toggle Button */}
-            <button
-              type="button"
-              onClick={handleToggleCaptions}
-              onPointerDown={(e) => e.stopPropagation()}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-xl border text-[11px] font-black transition cursor-pointer ${
-                captionsEnabled
-                  ? 'bg-emerald-500 text-slate-950 border-emerald-300 shadow shadow-emerald-500/30'
-                  : 'bg-white/10 hover:bg-white/20 text-white border-white/15'
-              }`}
-              title={
-                captionsEnabled
-                  ? textTrackCount > 0
-                    ? 'إلغاء الكابشن / الترجمة (C)'
-                    : 'تم تفعيل وضع الكابشن (لا توجد ترجمة مدمجة في هذا الملف)'
-                  : 'تشغيل الكابشن / الترجمة (C)'
-              }
+        {/* Video Frame Container */}
+        <div className={isFloatingPiP ? 'relative aspect-video w-full bg-black overflow-hidden flex items-center justify-center' : 'relative w-full h-full bg-black overflow-hidden flex items-center justify-center'}>
+          {/* Native <video> with native browser controls hidden so our unified platform skin applies */}
+          {!hasError && (
+            <video
+              ref={setCombinedVideoRef}
+              key={`vid-${effectiveSource}-${reloadKey}`}
+              src={effectiveSource}
+              controls={false}
+              controlsList="nodownload"
+              onContextMenu={(e) => e.preventDefault()}
+              preload="metadata"
+              playsInline
+              autoPlay={false}
+              onLoadedMetadata={() => {
+                const v = internalVideoRef.current;
+                setHasLoadedMetadata(true);
+                setHasError(false);
+                if (v) {
+                  if (v.duration && isFinite(v.duration)) {
+                    setDuration(v.duration);
+                  }
+                  v.playbackRate = playbackRate;
+                  v.muted = isMuted;
+                  v.volume = Math.max(0, Math.min(1, volume / 100));
+                }
+                const count = applyHtmlVideoCaptions(v, captionsEnabled);
+                setTextTrackCount(count);
+                if (pendingNativePipRef.current) {
+                  pendingNativePipRef.current = false;
+                  if (v && v.requestPictureInPicture) {
+                    v.requestPictureInPicture()
+                      .then(() => setIsPiPActive(true))
+                      .catch(() => setIsFloatingPiP(true));
+                  }
+                }
+              }}
+              onDurationChange={() => {
+                const v = internalVideoRef.current;
+                if (v && v.duration && isFinite(v.duration)) {
+                  setDuration(v.duration);
+                }
+              }}
+              onTimeUpdate={() => {
+                const v = internalVideoRef.current;
+                if (v) {
+                  setCurrentTime(v.currentTime || 0);
+                  if (v.duration && isFinite(v.duration)) {
+                    setDuration(v.duration);
+                  }
+                }
+              }}
+              onPlay={() => {
+                setIsPlaying(true);
+                setIsEnded(false);
+                setHasStartedOnce(true);
+                setIsBuffering(false);
+                scheduleHideControls();
+              }}
+              onPlaying={() => {
+                setIsPlaying(true);
+                setIsBuffering(false);
+              }}
+              onPause={() => {
+                setIsPlaying(false);
+                setControlsVisible(true);
+              }}
+              onWaiting={() => {
+                setIsBuffering(true);
+              }}
+              onCanPlay={() => {
+                setHasLoadedMetadata(true);
+                setIsBuffering(false);
+              }}
+              onVolumeChange={() => {
+                const v = internalVideoRef.current;
+                if (v) {
+                  setIsMuted(v.muted || v.volume === 0);
+                  setVolume(Math.round(v.volume * 100));
+                }
+              }}
+              onRateChange={() => {
+                const v = internalVideoRef.current;
+                if (v) setPlaybackRate(v.playbackRate);
+              }}
+              onEnded={() => {
+                setIsPlaying(false);
+                setIsBuffering(false);
+                setIsEnded(true);
+                setControlsVisible(true);
+                if (onEnded) onEnded();
+              }}
+              onError={() => {
+                if (!useProxyFallback && isExternalHttp && !hasTriedProxy) {
+                  setHasTriedProxy(true);
+                  setUseProxyFallback(true);
+                  setHasLoadedMetadata(false);
+                  return;
+                }
+                if (autoRetryCount < 1) {
+                  setAutoRetryCount((prev) => prev + 1);
+                  setHasLoadedMetadata(false);
+                  setTimeout(() => {
+                    setReloadKey((prev) => prev + 1);
+                  }, 600);
+                  return;
+                }
+                if (useProxyFallback && cleanUrl.startsWith('https://') && !isDirectBrokenSslHost(cleanUrl) && !hasTriedDirect) {
+                  setHasTriedDirect(true);
+                  setUseProxyFallback(false);
+                  setAutoRetryCount(0);
+                  setHasLoadedMetadata(false);
+                  return;
+                }
+                if (!useBackupUrl && backupCleanUrl && backupCleanUrl !== primaryCleanUrl) {
+                  const backupProxy = shouldStartWithProxy(backupCleanUrl);
+                  setUseBackupUrl(true);
+                  setAutoRetryCount(0);
+                  setHasLoadedMetadata(false);
+                  setUseProxyFallback(backupProxy);
+                  setHasTriedProxy(backupProxy);
+                  setHasTriedDirect(!backupProxy);
+                  setReloadKey((prev) => prev + 1);
+                  return;
+                }
+                setHasError(true);
+              }}
+              className={isFloatingPiP ? 'w-full h-full object-contain bg-black' : className}
             >
-              <Captions className="w-3.5 h-3.5" />
-              <span>CC</span>
-            </button>
+              متصفحك لا يدعم تشغيل هذا الفيديو.
+            </video>
+          )}
 
-            {/* Animated & Movable Picture-in-Picture (PiP) Button */}
-            <button
-              type="button"
-              onClick={handleTogglePiP}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl border text-[11px] font-black transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer ${
-                isAnyPip
-                  ? 'bg-amber-500 text-slate-950 border-amber-300 shadow-lg shadow-amber-500/30 ring-2 ring-amber-400/40'
-                  : 'bg-amber-500/20 hover:bg-amber-500/35 text-amber-300 border-amber-400/50 animate-pulse'
-              }`}
-              title={
-                isAnyPip
-                  ? 'الخروج من النافذة العائمة (PiP)'
-                  : 'تشغيل في نافذة عائمة تبقى ظاهرة حتى لو دخلت موقعاً آخر (PiP) — اسحب للتحريك'
+          {/* Platform Watermark */}
+          {!isFloatingPiP && watermarkContent}
+
+          {/* Movable Animated Quick PiP Pill (available ONLY for non-YouTube videos) */}
+          {!hasError && !isFloatingPiP && (
+            <div
+              onPointerDown={startDraggingPipButton}
+              onClick={(e) => e.stopPropagation()}
+              style={
+                pipBtnPos
+                  ? { left: `${pipBtnPos.left}px`, top: `${pipBtnPos.top}px`, right: 'auto' }
+                  : undefined
               }
+              className={`absolute ${pipBtnPos ? '' : 'top-3 right-3'} z-30 flex items-center gap-1 p-1 rounded-2xl bg-black/75 backdrop-blur-md border border-white/20 shadow-xl cursor-grab active:cursor-grabbing touch-none select-none`}
+              title="اسحب لتحريك زر PiP في أي مكان على الشاشة"
             >
-              <PictureInPicture2 className={`w-3.5 h-3.5 ${isAnyPip ? 'text-slate-950' : 'text-amber-300'}`} />
-              <span>PiP</span>
-            </button>
-          </div>
-        )}
-
-        {/* Subtle loading pill while metadata is preparing */}
-        {!hasLoadedMetadata && !hasError && !isFloatingPiP && (
-          <div className="pointer-events-none absolute bottom-12 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2 px-3 py-1 rounded-full bg-black/70 border border-white/15 text-slate-200 text-[11px] font-bold backdrop-blur-md">
-            <RefreshCw className="w-3 h-3 animate-spin text-amber-400" />
-            <span>جاري تجهيز الفيديو...</span>
-          </div>
-        )}
-
-        {hasError ? (
-          <div className="flex flex-col items-center justify-center p-6 text-center space-y-3 z-20 max-w-sm">
-            <AlertCircle className="w-10 h-10 text-amber-400" />
-            <div>
-              <h4 className="text-white font-bold text-sm">تعذر تشغيل هذا الفيديو</h4>
-              <p className="text-slate-400 text-xs mt-1">
-                يرجى التأكد من اتصال الإنترنت أو الضغط لإعادة التحميل عبر خادم المنصة السريع
-              </p>
+              <span className="px-1 text-slate-400" aria-hidden="true">
+                <Move className="w-3 h-3" />
+              </span>
+              <button
+                type="button"
+                onClick={handleTogglePiP}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl border text-[11px] font-black transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer ${
+                  isAnyPip
+                    ? 'bg-amber-500 text-slate-950 border-amber-300 shadow-lg shadow-amber-500/30 ring-2 ring-amber-400/40'
+                    : 'bg-amber-500/20 hover:bg-amber-500/35 text-amber-300 border-amber-400/50 animate-pulse'
+                }`}
+                title={
+                  isAnyPip
+                    ? 'الخروج من النافذة العائمة (PiP)'
+                    : 'تشغيل في نافذة عائمة تبقى ظاهرة حتى لو دخلت موقعاً آخر (PiP) — اسحب للتحريك'
+                }
+              >
+                <PictureInPicture2 className={`w-3.5 h-3.5 ${isAnyPip ? 'text-slate-950' : 'text-amber-300'}`} />
+                <span>PiP</span>
+              </button>
             </div>
-            <div className="flex items-center gap-2 flex-wrap justify-center">
-              {isExternalHttp ? (
-                <>
+          )}
+
+          {/* Click & Double-Click Overlay Shield */}
+          {!hasError && (
+            <div
+              onClick={togglePlay}
+              onDoubleClick={toggleFullscreen}
+              onContextMenu={(e) => e.preventDefault()}
+              className="absolute inset-0 z-10 cursor-pointer"
+            />
+          )}
+
+          {/* Unified Platform Branded Idle / Paused / Ended Cover (Exact match to YouTube custom cover) */}
+          {(!isPlaying || isEnded) && !hasError && (
+            <div
+              onClick={togglePlay}
+              className="absolute inset-0 z-20 flex flex-col items-center justify-center p-4 text-center cursor-pointer bg-gradient-to-br from-slate-950/92 via-slate-900/88 to-blue-950/92 backdrop-blur-[3px] transition-opacity duration-200"
+            >
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  togglePlay();
+                }}
+                className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white flex items-center justify-center shadow-2xl shadow-blue-600/40 ring-4 ring-white/15 hover:scale-105 active:scale-95 transition-all cursor-pointer"
+                title={isEnded ? 'إعادة تشغيل الدرس' : 'تشغيل الدرس'}
+              >
+                {isEnded ? (
+                  <RotateCcw className="w-7 h-7 sm:w-8 sm:h-8" />
+                ) : (
+                  <Play className="w-7 h-7 sm:w-8 sm:h-8 fill-current -mr-0.5" />
+                )}
+              </button>
+
+              {!isFloatingPiP && (
+                <div className="mt-4 max-w-md space-y-1.5 px-3">
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-500/20 border border-blue-400/30 text-blue-300 text-[11px] font-black">
+                    <Zap className="w-3.5 h-3.5 text-amber-400" />
+                    <span>مشغل منصة أقسام رعد الخاص</span>
+                  </div>
+                  {title && (
+                    <h4 className="text-white font-black text-sm sm:text-base line-clamp-2 drop-shadow">
+                      {title}
+                    </h4>
+                  )}
+                  <p className="text-slate-300 text-[11px] font-medium">
+                    {isEnded
+                      ? 'انتهى الدرس — اضغط لإعادة المشاهدة'
+                      : hasStartedOnce
+                      ? 'تم إيقاف الفيديو مؤقتاً — اضغط للمتابعة'
+                      : 'اضغط لبدء تشغيل الفيديو بجودة عالية'}
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Buffering Indicator */}
+          {isBuffering && isPlaying && !hasError && (
+            <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-black/30">
+              <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-slate-900/90 border border-white/15 text-white text-xs font-bold shadow-xl">
+                <RefreshCw className="w-4 h-4 animate-spin text-amber-400" />
+                <span>جاري التحميل...</span>
+              </div>
+            </div>
+          )}
+
+          {/* Error Recovery Screen */}
+          {hasError && (
+            <div className="flex flex-col items-center justify-center p-6 text-center space-y-3 z-30 max-w-sm">
+              <AlertCircle className="w-10 h-10 text-amber-400" />
+              <div>
+                <h4 className="text-white font-bold text-sm">تعذر تشغيل هذا الفيديو</h4>
+                <p className="text-slate-400 text-xs mt-1">
+                  يرجى التأكد من اتصال الإنترنت أو الضغط لإعادة التحميل عبر خادم المنصة السريع
+                </p>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap justify-center">
+                {isExternalHttp ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={handleRetryViaProxy}
+                      className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition shadow-lg cursor-pointer"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      <span>تشغيل عبر الخادم السريع</span>
+                    </button>
+                    {cleanUrl.startsWith('https://') && !isDirectBrokenSslHost(cleanUrl) && (
+                      <button
+                        type="button"
+                        onClick={handleRetryDirect}
+                        className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition shadow-lg cursor-pointer"
+                      >
+                        <Play className="w-3.5 h-3.5" />
+                        <span>تشغيل مباشر</span>
+                      </button>
+                    )}
+                  </>
+                ) : (
                   <button
                     type="button"
-                    onClick={handleRetryViaProxy}
+                    onClick={handleRetryDirect}
                     className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition shadow-lg cursor-pointer"
                   >
                     <RefreshCw className="w-3.5 h-3.5" />
-                    <span>تشغيل عبر الخادم السريع</span>
+                    <span>إعادة تحميل الفيديو</span>
                   </button>
-                  {cleanUrl.startsWith('https://') && !isDirectBrokenSslHost(cleanUrl) && (
+                )}
+                {isExternalHttp && (
+                  <a
+                    href={cleanUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium transition"
+                  >
+                    فتح الرابط مباشرة ↗
+                  </a>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Corner badge while controls are auto-hidden */}
+          {isPlaying && !controlsVisible && !isFloatingPiP && !hasError && (
+            <div className="pointer-events-none absolute bottom-2 right-2 z-20 flex items-center gap-1 px-2.5 py-1 rounded-lg bg-black/80 border border-white/10 text-[10px] font-black text-amber-300 shadow">
+              <Zap className="w-3 h-3 text-amber-400" />
+              <span>أقسام رعد</span>
+            </div>
+          )}
+
+          {/* Unified Custom Platform Control Bar (Exact match to YouTube custom player + PiP) */}
+          {!hasError && (
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className={`absolute inset-x-0 bottom-0 z-30 bg-gradient-to-t from-black via-black/92 to-transparent pt-6 pb-2.5 px-3 sm:px-4 transition-opacity duration-200 ${
+                controlsVisible || !isPlaying || isFloatingPiP ? 'opacity-100' : 'opacity-0 pointer-events-none'
+              }`}
+            >
+              {/* Gradient Seek Slider */}
+              <div className="relative w-full h-4 flex items-center group/seek mb-1.5" dir="ltr">
+                <div className="w-full h-1.5 rounded-full bg-white/20 overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-blue-500 via-cyan-400 to-emerald-400 transition-all duration-100"
+                    style={{ width: `${progressPct}%` }}
+                  />
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={duration || 100}
+                  step={0.5}
+                  value={Math.min(currentTime, duration || 100)}
+                  onChange={(e) => safeSeek(Number(e.target.value))}
+                  aria-label="شريط تقديم الفيديو"
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                />
+              </div>
+
+              {/* Control Buttons Row */}
+              <div className="flex items-center justify-between gap-2 text-white">
+                {/* Right side (RTL): Play, Skip ±10s, Time, Brand Badge */}
+                <div className="flex items-center gap-1.5 sm:gap-2">
+                  <button
+                    type="button"
+                    onClick={togglePlay}
+                    className="p-1.5 sm:p-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white transition cursor-pointer shadow"
+                    title={isPlaying ? 'إيقاف مؤقت' : 'تشغيل'}
+                  >
+                    {isPlaying ? <Pause className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> : <Play className="w-3.5 h-3.5 sm:w-4 sm:h-4 fill-current" />}
+                  </button>
+
+                  {!isFloatingPiP && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => safeSeek(currentTime - 10)}
+                        className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-slate-200 transition cursor-pointer"
+                        title="ترجيع 10 ثواني"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => safeSeek(currentTime + 10)}
+                        className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-slate-200 transition cursor-pointer"
+                        title="تقديم 10 ثواني"
+                      >
+                        <RotateCw className="w-3.5 h-3.5" />
+                      </button>
+                    </>
+                  )}
+
+                  <span className="text-[10px] sm:text-xs font-mono font-bold text-slate-200 px-1" dir="ltr">
+                    {formatTime(currentTime)} / {formatTime(duration)}
+                  </span>
+
+                  <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-slate-900/90 border border-white/15 text-[10px] font-black text-amber-300">
+                    <Zap className="w-3 h-3 text-amber-400" />
+                    <span>أقسام رعد</span>
+                  </span>
+                </div>
+
+                {/* Left side (RTL): Volume, CC Captions, Speed, Animated PiP, Fullscreen */}
+                <div className="flex items-center gap-1 sm:gap-1.5 relative">
+                  <button
+                    type="button"
+                    onClick={toggleMute}
+                    className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-slate-200 transition cursor-pointer"
+                    title={isMuted ? 'إلغاء الكتم' : 'كتم الصوت'}
+                  >
+                    {isMuted || volume === 0 ? <VolumeX className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-rose-400" /> : <Volume2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />}
+                  </button>
+
+                  {!isFloatingPiP && (
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      value={isMuted ? 0 : volume}
+                      onChange={(e) => handleVolumeChange(Number(e.target.value))}
+                      className="hidden md:block w-14 accent-blue-500 cursor-pointer h-1"
+                      aria-label="مستوى الصوت"
+                    />
+                  )}
+
+                  {/* Captions (CC) Toggle Button */}
+                  <button
+                    type="button"
+                    onClick={handleToggleCaptions}
+                    className={`flex items-center gap-1 px-2 py-1 rounded-lg border text-[10px] sm:text-[11px] font-black transition cursor-pointer ${
+                      captionsEnabled
+                        ? 'bg-emerald-500 text-slate-950 border-emerald-300 shadow shadow-emerald-500/30'
+                        : 'bg-white/10 hover:bg-white/20 text-slate-200 border-white/15'
+                    }`}
+                    title={
+                      captionsEnabled
+                        ? textTrackCount > 0
+                          ? 'إلغاء الكابشن / الترجمة (C)'
+                          : 'تم تفعيل وضع الكابشن (لا توجد ترجمة مدمجة في هذا الملف)'
+                        : 'تشغيل الكابشن / الترجمة (C)'
+                    }
+                  >
+                    <Captions className="w-3.5 h-3.5" />
+                    <span>CC</span>
+                  </button>
+
+                  {/* Speed selector */}
+                  {!isFloatingPiP && (
+                    <div className="relative">
+                      <button
+                        type="button"
+                        onClick={() => setShowSpeedMenu((s) => !s)}
+                        className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-[10px] sm:text-[11px] font-mono font-black text-slate-100 transition cursor-pointer"
+                        title="سرعة التشغيل"
+                      >
+                        {playbackRate}x
+                      </button>
+                      {showSpeedMenu && (
+                        <div className="absolute bottom-full left-0 mb-2 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-1 flex flex-col gap-0.5 min-w-[68px] z-40">
+                          {SPEED_OPTIONS.map((spd) => (
+                            <button
+                              key={spd}
+                              type="button"
+                              onClick={() => handleSpeedChange(spd)}
+                              className={`px-2 py-1 rounded-lg text-[11px] font-mono font-bold text-center cursor-pointer transition ${
+                                playbackRate === spd
+                                  ? 'bg-blue-600 text-white'
+                                  : 'text-slate-300 hover:bg-slate-800'
+                              }`}
+                            >
+                              {spd}x
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Animated PiP Button */}
+                  <button
+                    type="button"
+                    onClick={handleTogglePiP}
+                    className={`flex items-center gap-1 px-2 sm:px-2.5 py-1 rounded-lg border text-[10px] sm:text-[11px] font-black transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer ${
+                      isAnyPip
+                        ? 'bg-amber-500 text-slate-950 border-amber-300 shadow-lg shadow-amber-500/30'
+                        : 'bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border-amber-400/40 animate-pulse'
+                    }`}
+                    title={
+                      isAnyPip
+                        ? 'إعادة الفيديو للوضع الطبيعي'
+                        : 'تشغيل في نافذة عائمة تبقى معك حتى لو دخلت موقعاً آخر (PiP)'
+                    }
+                  >
+                    <PictureInPicture2 className="w-3.5 h-3.5" />
+                    <span>PiP</span>
+                  </button>
+
+                  {/* Fullscreen Button */}
+                  {!isFloatingPiP && (
                     <button
                       type="button"
-                      onClick={handleRetryDirect}
-                      className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition shadow-lg cursor-pointer"
+                      onClick={toggleFullscreen}
+                      className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-slate-200 transition cursor-pointer"
+                      title={isFullscreen ? 'إنهاء ملء الشاشة' : 'ملء الشاشة'}
                     >
-                      <Play className="w-3.5 h-3.5" />
-                      <span>تشغيل مباشر</span>
+                      {isFullscreen ? <Minimize2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> : <Maximize2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />}
                     </button>
                   )}
-                </>
-              ) : (
-                <button
-                  type="button"
-                  onClick={handleRetryDirect}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition shadow-lg cursor-pointer"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  <span>إعادة تحميل الفيديو</span>
-                </button>
-              )}
-              {isExternalHttp && (
-                <a
-                  href={cleanUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium transition"
-                >
-                  فتح الرابط مباشرة ↗
-                </a>
-              )}
+                </div>
+              </div>
             </div>
-          </div>
-        ) : (
-          <video
-            ref={setCombinedVideoRef}
-            key={`vid-${effectiveSource}-${reloadKey}`}
-            src={effectiveSource}
-            controls
-            controlsList="nodownload"
-            onContextMenu={(e) => e.preventDefault()}
-            preload="metadata"
-            playsInline
-            autoPlay={false}
-            onLoadedMetadata={() => {
-              setHasLoadedMetadata(true);
-              setHasError(false);
-              const count = applyHtmlVideoCaptions(internalVideoRef.current, captionsEnabled);
-              setTextTrackCount(count);
-              if (pendingNativePipRef.current) {
-                pendingNativePipRef.current = false;
-                const v = internalVideoRef.current;
-                if (v && v.requestPictureInPicture) {
-                  v.requestPictureInPicture()
-                    .then(() => setIsPiPActive(true))
-                    .catch(() => setIsFloatingPiP(true));
-                }
-              }
-            }}
-            onCanPlay={() => {
-              setHasLoadedMetadata(true);
-            }}
-            onEnded={() => {
-              if (onEnded) onEnded();
-            }}
-            onError={() => {
-              if (!useProxyFallback && isExternalHttp && !hasTriedProxy) {
-                setHasTriedProxy(true);
-                setUseProxyFallback(true);
-                setHasLoadedMetadata(false);
-                return;
-              }
-              if (autoRetryCount < 1) {
-                setAutoRetryCount((prev) => prev + 1);
-                setHasLoadedMetadata(false);
-                setTimeout(() => {
-                  setReloadKey((prev) => prev + 1);
-                }, 600);
-                return;
-              }
-              if (useProxyFallback && cleanUrl.startsWith('https://') && !isDirectBrokenSslHost(cleanUrl) && !hasTriedDirect) {
-                setHasTriedDirect(true);
-                setUseProxyFallback(false);
-                setAutoRetryCount(0);
-                setHasLoadedMetadata(false);
-                return;
-              }
-              if (!useBackupUrl && backupCleanUrl && backupCleanUrl !== primaryCleanUrl) {
-                const backupProxy = shouldStartWithProxy(backupCleanUrl);
-                setUseBackupUrl(true);
-                setAutoRetryCount(0);
-                setHasLoadedMetadata(false);
-                setUseProxyFallback(backupProxy);
-                setHasTriedProxy(backupProxy);
-                setHasTriedDirect(!backupProxy);
-                setReloadKey((prev) => prev + 1);
-                return;
-              }
-              setHasError(true);
-            }}
-            className={isFloatingPiP ? 'w-full aspect-video object-contain bg-black' : className}
-          >
-            متصفحك لا يدعم تشغيل هذا الفيديو.
-          </video>
-        )}
+          )}
+        </div>
       </div>
     </div>
   );

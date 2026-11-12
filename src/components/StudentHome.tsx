@@ -2171,26 +2171,30 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                     </div>
 
                     <div className="flex items-center gap-2 flex-wrap">
-                      {/* Cross-site PiP button above the video */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (lessonPipActionRef.current) {
-                            lessonPipActionRef.current();
-                          } else {
-                            setLessonPipTrigger((prev) => prev + 1);
-                          }
-                        }}
-                        className={`px-3 py-2 rounded-xl text-xs font-black transition-all duration-200 hover:scale-105 active:scale-95 flex items-center gap-1.5 shadow-sm cursor-pointer border ${
-                          isDarkMode
-                            ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border-amber-500/40'
-                            : 'bg-white hover:bg-slate-100 text-slate-800 border-amber-400/60'
-                        }`}
-                        title="تشغيل الفيديو في نافذة عائمة تبقى معك حتى لو دخلت أي موقع آخر (PiP)"
-                      >
-                        <PictureInPicture2 className="w-4 h-4 text-amber-400 animate-pulse" />
-                        <span>نافذة عائمة (PiP)</span>
-                      </button>
+                      {/* Cross-site PiP button above the video (hidden for YouTube links) */}
+                      {!/(?:youtu\.be\/|(?:www\.|m\.)?youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|shorts\/|live\/))([\w-]{11})/i.test(
+                        resolveVideoUrl(activeVideoItem.url || '')
+                      ) && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (lessonPipActionRef.current) {
+                              lessonPipActionRef.current();
+                            } else {
+                              setLessonPipTrigger((prev) => prev + 1);
+                            }
+                          }}
+                          className={`px-3 py-2 rounded-xl text-xs font-black transition-all duration-200 hover:scale-105 active:scale-95 flex items-center gap-1.5 shadow-sm cursor-pointer border ${
+                            isDarkMode
+                              ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border-amber-500/40'
+                              : 'bg-white hover:bg-slate-100 text-slate-800 border-amber-400/60'
+                          }`}
+                          title="تشغيل الفيديو في نافذة عائمة تبقى معك حتى لو دخلت أي موقع آخر (PiP)"
+                        >
+                          <PictureInPicture2 className="w-4 h-4 text-amber-400 animate-pulse" />
+                          <span>نافذة عائمة (PiP)</span>
+                        </button>
+                      )}
 
                       <button
                         type="button"
