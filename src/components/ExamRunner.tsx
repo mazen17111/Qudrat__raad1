@@ -47,6 +47,7 @@ import {
   transferMistakeImmediately,
   getOrCreateMistakesFolderId,
   markQuestionAsPermanentlyDeleted,
+  deleteCorrectQuestionsFromFolderPermanently,
 } from '../mistakesService';
 import {
   collection,
@@ -526,6 +527,7 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
   // 4. Prompt to delete correctly answered questions upon returning to platform from folder exam
   const [showDeleteCorrectPrompt, setShowDeleteCorrectPrompt] = useState(false);
   const [isDeletingCorrectQuestions, setIsDeletingCorrectQuestions] = useState(false);
+  const [deleteCorrectError, setDeleteCorrectError] = useState<string | null>(null);
 
   // 5. Zoom Question Image Lightbox
   const [zoomedImageUrl, setZoomedImageUrl] = useState<string | null>(null);
@@ -775,6 +777,7 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
           folderId,
           originalQuestionId: showFolderModalForQ.id,
           questionText: showFolderModalForQ.questionText,
+          imageUrl: showFolderModalForQ.imageUrl,
         });
       }
 
@@ -939,9 +942,76 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
     return `${m}:${s < 10 ? '0' : ''}${s}`;
   };
 
-  // Exit request handler: exits cleanly without deleting any questions automatically!
-  // (ولا يحذف أي أسئلة إلا لما الطالب هو الذي يحذفها بنفسه يدوياً)
+  const correctFolderQuestions = useMemo(() => {
+    if (!isFolderExam) return [];
+    return safeQuestions.filter((q, idx) => selectedAnswers[idx] === q.correctOptionIndex);
+  }, [isFolderExam, safeQuestions, selectedAnswers]);
+
+  // Exit request handler: on finished folder exams with at least 1 correct answer,
+  // ask the student whether to permanently delete correctly answered questions or keep them.
   const handleRequestExit = () => {
+    if (isFolderExam && isFinished && correctFolderQuestions.length > 0) {
+      setDeleteCorrectError(null);
+      setShowDeleteCorrectPrompt(true);
+      return;
+    }
+    onExit();
+  };
+
+  // Student chose "نعم" — permanently delete correctly answered questions so they never return
+  const handleConfirmDeleteCorrectAndExit = async () => {
+    if (isDeletingCorrectQuestions) return;
+    if (!currentUser?.id || correctFolderQuestions.length === 0) {
+      setShowDeleteCorrectPrompt(false);
+      onExit();
+      return;
+    }
+
+    setIsDeletingCorrectQuestions(true);
+    setDeleteCorrectError(null);
+
+    try {
+      const effectiveFolderId =
+        folderId ||
+        userFolderQuestions.find((fq) => correctFolderQuestions.some((cq) => cq.id === fq.id))?.folderId ||
+        '';
+
+      const deletedIds = await deleteCorrectQuestionsFromFolderPermanently({
+        userId: currentUser.id,
+        courseId: currentCourseId,
+        folderId: effectiveFolderId || undefined,
+        questions: correctFolderQuestions,
+      });
+
+      const deletedIdSet = new Set(deletedIds);
+      const correctTextSet = new Set(
+        correctFolderQuestions.map((q) => (q.questionText || '').trim()).filter(Boolean)
+      );
+
+      setUserFolderQuestions((prev) =>
+        prev.filter((fq) => {
+          if (effectiveFolderId && fq.folderId !== effectiveFolderId) return true;
+          if (deletedIdSet.has(fq.id)) return false;
+          if (fq.originalQuestionId && deletedIdSet.has(fq.originalQuestionId)) return false;
+          if (effectiveFolderId && correctTextSet.has((fq.questionText || '').trim())) return false;
+          return true;
+        })
+      );
+
+      setShowDeleteCorrectPrompt(false);
+      onExit();
+    } catch (err) {
+      console.error('Error permanently deleting correct folder questions:', err);
+      setDeleteCorrectError('حدث خطأ أثناء حذف الأسئلة من المجلد. يرجى المحاولة مرة أخرى.');
+    } finally {
+      setIsDeletingCorrectQuestions(false);
+    }
+  };
+
+  // Student chose "لا" — keep all questions in the folder permanently until deleted manually
+  const handleKeepQuestionsAndExit = () => {
+    if (isDeletingCorrectQuestions) return;
+    setShowDeleteCorrectPrompt(false);
     onExit();
   };
 
@@ -1705,9 +1775,126 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
     );
   }
 
-  // ================= Modal: No questions are deleted automatically (ولا يحذف أي أسئلة إلا لما الطالب هو الذي يحذفها) =================
+  // ================= Modal: هل تود حذف الأسئلة الصحيحة نهائياً أم لا؟ =================
   function renderDeleteCorrectPromptModal() {
-    return null;
+    if (!showDeleteCorrectPrompt) return null;
+
+    const targetFolderLabel = folderTitle || examTitle.replace(/^اختبار\s+/, '') || 'المجلد';
+    const correctCount = correctFolderQuestions.length;
+
+    return (
+      <div
+        dir="rtl"
+        className="fixed inset-0 z-[99999] bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200"
+      >
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className={`w-full max-w-md rounded-3xl border-2 p-6 sm:p-7 space-y-5 shadow-2xl relative text-right ${
+            isDarkMode
+              ? 'bg-slate-900 border-amber-500/40 text-white'
+              : 'bg-white border-slate-300 text-slate-900'
+          }`}
+        >
+          {/* Dismiss button to stay on score screen */}
+          <button
+            type="button"
+            disabled={isDeletingCorrectQuestions}
+            onClick={() => setShowDeleteCorrectPrompt(false)}
+            className={`absolute top-4 left-4 p-1.5 rounded-xl transition cursor-pointer disabled:opacity-40 ${
+              isDarkMode
+                ? 'bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white'
+                : 'bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-black'
+            }`}
+            title="إغلاق والبقاء في صفحة النتيجة"
+          >
+            <X className="w-4 h-4" />
+          </button>
+
+          {/* Icon + Title */}
+          <div className="flex flex-col items-center text-center space-y-3 pt-1">
+            <div className="w-16 h-16 rounded-2xl bg-amber-500/15 border border-amber-500/40 text-amber-500 flex items-center justify-center shadow-lg">
+              <Trash2 className="w-8 h-8" />
+            </div>
+            <div className="space-y-1.5">
+              <h3 className={`text-lg sm:text-xl font-black ${isDarkMode ? 'text-white' : 'text-slate-950'}`}>
+                هل تود حذف الأسئلة الصحيحة نهائياً؟
+              </h3>
+              <p className={`text-xs sm:text-sm font-bold ${isDarkMode ? 'text-amber-300' : 'text-amber-700'}`}>
+                أجبت بشكل صحيح على {correctCount} {correctCount === 1 ? 'سؤال' : correctCount === 2 ? 'سؤالين' : correctCount <= 10 ? 'أسئلة' : 'سؤالاً'} في مجلد &quot;{targetFolderLabel}&quot;
+              </p>
+            </div>
+          </div>
+
+          {/* Explanation box */}
+          <div
+            className={`p-4 rounded-2xl border text-xs leading-relaxed space-y-2 ${
+              isDarkMode
+                ? 'bg-slate-800/70 border-slate-700 text-slate-300'
+                : 'bg-slate-50 border-slate-200 text-slate-700 font-medium'
+            }`}
+          >
+            <div className="flex items-start gap-2">
+              <Trash2 className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
+              <span>
+                <strong className={isDarkMode ? 'text-rose-400' : 'text-rose-700'}>نعم:</strong>{' '}
+                تُحذف الأسئلة التي أجبتها بشكل صحيح من هذا المجلد نهائياً ولا تعود أبداً مهما كان.
+              </span>
+            </div>
+            <div className="flex items-start gap-2">
+              <ShieldCheck className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
+              <span>
+                <strong className={isDarkMode ? 'text-emerald-400' : 'text-emerald-700'}>لا:</strong>{' '}
+                تبقى جميع الأسئلة محفوظة في المجلد ولن تُحذف أبداً إلا إذا قمت بحذفها يدوياً بنفسك.
+              </span>
+            </div>
+          </div>
+
+          {/* Error message if deletion fails */}
+          {deleteCorrectError && (
+            <div className="p-3 rounded-xl bg-rose-500/15 border border-rose-500/40 text-rose-400 text-xs font-bold flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{deleteCorrectError}</span>
+            </div>
+          )}
+
+          {/* Action Buttons: نعم / لا */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+            <button
+              type="button"
+              disabled={isDeletingCorrectQuestions}
+              onClick={handleConfirmDeleteCorrectAndExit}
+              className="w-full py-3 px-4 rounded-2xl bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white font-black text-xs sm:text-sm transition shadow-lg shadow-rose-600/30 flex items-center justify-center gap-2 cursor-pointer"
+            >
+              {isDeletingCorrectQuestions ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <span>جارٍ الحذف النهائي...</span>
+                </>
+              ) : (
+                <>
+                  <Trash2 className="w-4 h-4" />
+                  <span>نعم، احذفها نهائياً</span>
+                </>
+              )}
+            </button>
+
+            <button
+              type="button"
+              disabled={isDeletingCorrectQuestions}
+              onClick={handleKeepQuestionsAndExit}
+              className={`w-full py-3 px-4 rounded-2xl font-black text-xs sm:text-sm transition border flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 ${
+                isDarkMode
+                  ? 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-500/50 shadow-lg shadow-emerald-600/25'
+                  : 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-700 shadow-md'
+              }`}
+            >
+              <ShieldCheck className="w-4 h-4" />
+              <span>لا، احتفظ بها في المجلد</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   // Calculate progress percent
