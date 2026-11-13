@@ -130,7 +130,9 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
   const [playbackRate, setPlaybackRate] = useState(1);
   const [showSpeedMenu, setShowSpeedMenu] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isPseudoFullscreen, setIsPseudoFullscreen] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
+  const lastPointerTypeRef = useRef<string>('mouse');
 
   // PiP & Captions State
   const [isPiPActive, setIsPiPActive] = useState(false);
@@ -220,16 +222,36 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
     return () => window.removeEventListener('raad-pause-all-videos', handleGlobalPause);
   }, []);
 
-  // Track Fullscreen changes
+  // Track Fullscreen & iOS Pseudo-Fullscreen changes
   useEffect(() => {
     const onFsChange = () => {
-      setIsFullscreen(Boolean(document.fullscreenElement && document.fullscreenElement === playerWrapperRef.current));
+      const doc = document as any;
+      const fsEl = doc.fullscreenElement || doc.webkitFullscreenElement;
+      setIsFullscreen(Boolean(fsEl && fsEl === playerWrapperRef.current));
     };
     document.addEventListener('fullscreenchange', onFsChange);
-    return () => document.removeEventListener('fullscreenchange', onFsChange);
+    document.addEventListener('webkitfullscreenchange', onFsChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', onFsChange);
+      document.removeEventListener('webkitfullscreenchange', onFsChange);
+    };
   }, []);
 
-  // Native PiP & TextTrack event listeners
+  useEffect(() => {
+    if (!isPseudoFullscreen) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsPseudoFullscreen(false);
+    };
+    window.addEventListener('keydown', onEsc);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener('keydown', onEsc);
+    };
+  }, [isPseudoFullscreen]);
+
+  // Native PiP (Standard + iOS Safari webkitpresentationmodechanged) & TextTrack event listeners
   useEffect(() => {
     const video = internalVideoRef.current;
     if (!video) return;
@@ -240,6 +262,16 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
     };
     const handleLeavePiP = () => setIsPiPActive(false);
 
+    const handleWebkitPresentation = () => {
+      const mode = (video as any).webkitPresentationMode;
+      if (mode === 'picture-in-picture') {
+        setIsPiPActive(true);
+        setIsFloatingPiP(false);
+      } else {
+        setIsPiPActive(false);
+      }
+    };
+
     const syncTracks = () => {
       const count = applyHtmlVideoCaptions(video, captionsEnabled);
       setTextTrackCount(count);
@@ -247,6 +279,7 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
 
     video.addEventListener('enterpictureinpicture', handleEnterPiP);
     video.addEventListener('leavepictureinpicture', handleLeavePiP);
+    video.addEventListener('webkitpresentationmodechanged', handleWebkitPresentation);
     try {
       video.textTracks?.addEventListener?.('addtrack', syncTracks);
     } catch {}
@@ -254,6 +287,7 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
     return () => {
       video.removeEventListener('enterpictureinpicture', handleEnterPiP);
       video.removeEventListener('leavepictureinpicture', handleLeavePiP);
+      video.removeEventListener('webkitpresentationmodechanged', handleWebkitPresentation);
       try {
         video.textTracks?.removeEventListener?.('addtrack', syncTracks);
       } catch {}
@@ -294,6 +328,22 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
       if (isFloatingPiP) {
         setIsFloatingPiP(false);
         return;
+      }
+
+      // iOS Safari Native PiP support (webkitSetPresentationMode)
+      const vAny = video as any;
+      if (typeof vAny.webkitSupportsPresentationMode === 'function' && vAny.webkitSupportsPresentationMode('picture-in-picture')) {
+        try {
+          if (video.paused) {
+            video.play().catch(() => {});
+          }
+          const nextMode = vAny.webkitPresentationMode === 'picture-in-picture' ? 'inline' : 'picture-in-picture';
+          vAny.webkitSetPresentationMode(nextMode);
+          setIsPiPActive(nextMode === 'picture-in-picture');
+          return;
+        } catch (err) {
+          console.warn('iOS PiP fallback:', err);
+        }
       }
 
       if (video.readyState < 1 && isPiPSupported && typeof video.requestPictureInPicture === 'function') {
@@ -577,20 +627,37 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
 
   const toggleFullscreen = useCallback(async () => {
     try {
-      if (document.fullscreenElement) {
-        await document.exitFullscreen();
-      } else if (playerWrapperRef.current?.requestFullscreen) {
-        if (isFloatingPiP) setIsFloatingPiP(false);
-        await playerWrapperRef.current.requestFullscreen();
+      const doc = document as any;
+      const fsEl = doc.fullscreenElement || doc.webkitFullscreenElement;
+      if (fsEl) {
+        if (document.exitFullscreen) {
+          await document.exitFullscreen();
+        } else if (doc.webkitExitFullscreen) {
+          doc.webkitExitFullscreen();
+        }
+        setIsPseudoFullscreen(false);
+      } else if (isPseudoFullscreen) {
+        setIsPseudoFullscreen(false);
       } else {
+        if (isFloatingPiP) setIsFloatingPiP(false);
+        const wrapper = playerWrapperRef.current as any;
         const video = internalVideoRef.current as any;
-        if (video?.webkitEnterFullscreen) {
+        if (wrapper?.requestFullscreen) {
+          await wrapper.requestFullscreen();
+        } else if (wrapper?.webkitRequestFullscreen) {
+          wrapper.webkitRequestFullscreen();
+        } else if (video?.webkitEnterFullscreen) {
           video.webkitEnterFullscreen();
+        } else {
+          // Universal mobile WebView viewport fullscreen fallback
+          setIsPseudoFullscreen(true);
         }
       }
       scheduleHideControls();
-    } catch {}
-  }, [isFloatingPiP, scheduleHideControls]);
+    } catch {
+      setIsPseudoFullscreen((prev) => !prev);
+    }
+  }, [isFloatingPiP, isPseudoFullscreen, scheduleHideControls]);
 
   // Keyboard navigation shortcuts (Space, Arrows ±5s, M, F, C for Captions)
   useEffect(() => {
@@ -700,6 +767,7 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
 
   const isAnyPip = isPiPActive || isFloatingPiP;
   const progressPct = duration > 0 ? Math.min(100, Math.max(0, (currentTime / duration) * 100)) : 0;
+  const effectiveFullscreen = isFullscreen || isPseudoFullscreen;
 
   // 4. Unified Custom Branded Platform Video Player for Direct URLs, Catbox, Firebase Media & Server Uploads
   return (
@@ -726,12 +794,16 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
         </div>
       )}
 
-      {/* Main Custom Platform Player Container (or Draggable Floating PiP Window) */}
+      {/* Main Custom Platform Player Container (or Draggable Floating PiP Window / Mobile Pseudo-Fullscreen) */}
       <div
         ref={playerWrapperRef}
+        onPointerDown={(e) => {
+          lastPointerTypeRef.current = e.pointerType || 'mouse';
+          scheduleHideControls();
+        }}
         onMouseMove={scheduleHideControls}
         onMouseLeave={() => {
-          if (isPlaying) {
+          if (isPlaying && lastPointerTypeRef.current !== 'touch') {
             setControlsVisible(false);
             setShowSpeedMenu(false);
           }
@@ -744,7 +816,9 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
         }
         className={
           isFloatingPiP
-            ? 'fixed bottom-5 left-5 z-[9999] w-80 sm:w-96 rounded-2xl overflow-hidden shadow-2xl border-2 border-blue-500/80 bg-slate-950 flex flex-col select-none'
+            ? 'fixed bottom-4 left-3 z-[9999] w-72 sm:w-96 max-w-[calc(100vw-24px)] rounded-2xl overflow-hidden shadow-2xl border-2 border-blue-500/80 bg-slate-950 flex flex-col select-none'
+            : isPseudoFullscreen
+            ? 'fixed inset-0 z-[99999] w-screen h-[100dvh] bg-black overflow-hidden select-none group'
             : 'relative w-full h-full bg-black overflow-hidden select-none group'
         }
       >
@@ -958,10 +1032,16 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
             </div>
           )}
 
-          {/* Click & Double-Click Overlay Shield */}
+          {/* Click & Touch Overlay Shield */}
           {!hasError && (
             <div
-              onClick={togglePlay}
+              onClick={() => {
+                if (lastPointerTypeRef.current === 'touch' && isPlaying && !controlsVisible) {
+                  scheduleHideControls();
+                  return;
+                }
+                togglePlay();
+              }}
               onDoubleClick={toggleFullscreen}
               onContextMenu={(e) => e.preventDefault()}
               className="absolute inset-0 z-10 cursor-pointer"
@@ -1091,18 +1171,22 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
           {!hasError && (
             <div
               onClick={(e) => e.stopPropagation()}
-              className={`absolute inset-x-0 bottom-0 z-30 bg-gradient-to-t from-black via-black/92 to-transparent pt-6 pb-2.5 px-3 sm:px-4 transition-opacity duration-200 ${
+              className={`absolute inset-x-0 bottom-0 z-30 bg-gradient-to-t from-black via-black/92 to-transparent pt-5 pb-2 px-2 sm:px-4 transition-opacity duration-200 ${
                 controlsVisible || !isPlaying || isFloatingPiP ? 'opacity-100' : 'opacity-0 pointer-events-none'
               }`}
             >
-              {/* Gradient Seek Slider */}
-              <div className="relative w-full h-4 flex items-center group/seek mb-1.5" dir="ltr">
-                <div className="w-full h-1.5 rounded-full bg-white/20 overflow-hidden">
+              {/* Touch-Friendly Gradient Seek Slider */}
+              <div className="relative w-full h-7 sm:h-5 flex items-center group/seek mb-1 touch-none" dir="ltr">
+                <div className="w-full h-1.5 rounded-full bg-white/25 overflow-hidden relative">
                   <div
                     className="h-full bg-gradient-to-r from-blue-500 via-cyan-400 to-emerald-400 transition-all duration-100"
                     style={{ width: `${progressPct}%` }}
                   />
                 </div>
+                <div
+                  className="pointer-events-none absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3.5 h-3.5 rounded-full bg-white shadow-md ring-2 ring-blue-500 transition-transform group-hover/seek:scale-110"
+                  style={{ left: `${progressPct}%` }}
+                />
                 <input
                   type="range"
                   min={0}
@@ -1111,18 +1195,18 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
                   value={Math.min(currentTime, duration || 100)}
                   onChange={(e) => safeSeek(Number(e.target.value))}
                   aria-label="شريط تقديم الفيديو"
-                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer touch-none"
                 />
               </div>
 
               {/* Control Buttons Row */}
-              <div className="flex items-center justify-between gap-2 text-white">
+              <div className="flex items-center justify-between gap-1 sm:gap-2 text-white">
                 {/* Right side (RTL): Play, Skip ±10s, Time, Brand Badge */}
-                <div className="flex items-center gap-1.5 sm:gap-2">
+                <div className="flex items-center gap-1 sm:gap-2 min-w-0">
                   <button
                     type="button"
                     onClick={togglePlay}
-                    className="p-1.5 sm:p-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white transition cursor-pointer shadow"
+                    className="p-1.5 sm:p-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white transition cursor-pointer shadow shrink-0"
                     title={isPlaying ? 'إيقاف مؤقت' : 'تشغيل'}
                   >
                     {isPlaying ? <Pause className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> : <Play className="w-3.5 h-3.5 sm:w-4 sm:h-4 fill-current" />}
@@ -1133,7 +1217,7 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
                       <button
                         type="button"
                         onClick={() => safeSeek(currentTime - 10)}
-                        className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-slate-200 transition cursor-pointer"
+                        className="p-1 sm:p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-slate-200 transition cursor-pointer shrink-0"
                         title="ترجيع 10 ثواني"
                       >
                         <RotateCcw className="w-3.5 h-3.5" />
@@ -1141,7 +1225,7 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
                       <button
                         type="button"
                         onClick={() => safeSeek(currentTime + 10)}
-                        className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-slate-200 transition cursor-pointer"
+                        className="p-1 sm:p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-slate-200 transition cursor-pointer shrink-0"
                         title="تقديم 10 ثواني"
                       >
                         <RotateCw className="w-3.5 h-3.5" />
@@ -1149,7 +1233,7 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
                     </>
                   )}
 
-                  <span className="text-[10px] sm:text-xs font-mono font-bold text-slate-200 px-1" dir="ltr">
+                  <span className="text-[9px] sm:text-xs font-mono font-bold text-slate-200 px-0.5 sm:px-1 whitespace-nowrap" dir="ltr">
                     {formatTime(currentTime)} / {formatTime(duration)}
                   </span>
 
@@ -1160,7 +1244,7 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
                 </div>
 
                 {/* Left side (RTL): Volume, CC Captions, Speed, Animated PiP, Fullscreen */}
-                <div className="flex items-center gap-1 sm:gap-1.5 relative">
+                <div className="flex items-center gap-1 sm:gap-1.5 relative shrink-0">
                   <button
                     type="button"
                     onClick={toggleMute}
@@ -1260,9 +1344,9 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
                       type="button"
                       onClick={toggleFullscreen}
                       className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-slate-200 transition cursor-pointer"
-                      title={isFullscreen ? 'إنهاء ملء الشاشة' : 'ملء الشاشة'}
+                      title={effectiveFullscreen ? 'إنهاء ملء الشاشة' : 'ملء الشاشة'}
                     >
-                      {isFullscreen ? <Minimize2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> : <Maximize2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />}
+                      {effectiveFullscreen ? <Minimize2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> : <Maximize2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />}
                     </button>
                   )}
                 </div>
