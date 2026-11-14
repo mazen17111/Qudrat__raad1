@@ -40,32 +40,103 @@ const cachedDir = path.join(uploadBaseDir, 'cached');
   }
 });
 
-// Clean up orphaned temporary download/ffmpeg files in cachedDir on boot
+// Clean up orphaned temporary download/ffmpeg files in cachedDir/videosDir on boot
 try {
-  for (const fname of fs.readdirSync(cachedDir)) {
-    if (fname.includes('.tmp_') || fname.includes('.opt_')) {
-      try {
-        fs.unlinkSync(path.join(cachedDir, fname));
-      } catch {}
+  for (const dir of [cachedDir, videosDir]) {
+    for (const fname of fs.readdirSync(dir)) {
+      if (fname.includes('.tmp_') || fname.includes('.opt_') || fname.endsWith('_webtmp.mp4')) {
+        try {
+          fs.unlinkSync(path.join(dir, fname));
+        } catch {}
+      }
     }
   }
 } catch {}
 
+const VIDEO_EXT_REGEX = /\.(mp4|mov|mkv|webm|avi|m4v|wmv|flv|3gp|ts|mpeg|mpg)$/i;
+
+function isVideoFile(mimetype?: string, filename?: string): boolean {
+  const mime = (mimetype || '').toLowerCase();
+  if (mime.startsWith('video/')) return true;
+  if (filename && VIDEO_EXT_REGEX.test(filename)) return true;
+  return false;
+}
+
+function normalizeServedMimeType(mimeType?: string, filePathOrName?: string): string {
+  const lowerMime = (mimeType || '').toLowerCase().trim();
+  const lowerName = (filePathOrName || '').toLowerCase().trim();
+
+  if (
+    lowerName.endsWith('.mp4') ||
+    lowerName.endsWith('.m4v') ||
+    lowerName.endsWith('.mov') ||
+    lowerMime === 'video/mp4' ||
+    lowerMime === 'video/quicktime' ||
+    lowerMime === 'video/x-m4v'
+  ) {
+    return 'video/mp4';
+  }
+  if (lowerName.endsWith('.webm') || lowerMime === 'video/webm') {
+    return 'video/webm';
+  }
+  if (lowerName.endsWith('.ogv') || lowerName.endsWith('.ogg') || lowerMime === 'video/ogg') {
+    return 'video/ogg';
+  }
+  if (lowerName.endsWith('.mkv') || lowerMime === 'video/x-matroska') {
+    return 'video/x-matroska';
+  }
+  if (lowerName.endsWith('.pdf') || lowerMime === 'application/pdf') {
+    return 'application/pdf';
+  }
+  if (lowerName.endsWith('.png') || lowerMime === 'image/png') {
+    return 'image/png';
+  }
+  if (lowerName.endsWith('.jpg') || lowerName.endsWith('.jpeg') || lowerMime === 'image/jpeg') {
+    return 'image/jpeg';
+  }
+  if (lowerName.endsWith('.webp') || lowerMime === 'image/webp') {
+    return 'image/webp';
+  }
+  if (lowerName.endsWith('.gif') || lowerMime === 'image/gif') {
+    return 'image/gif';
+  }
+  if (lowerName.endsWith('.svg') || lowerMime === 'image/svg+xml') {
+    return 'image/svg+xml';
+  }
+
+  if (
+    !lowerMime ||
+    lowerMime === 'application/octet-stream' ||
+    lowerMime === 'binary/octet-stream'
+  ) {
+    if (isVideoFile('', lowerName)) return 'video/mp4';
+    return 'application/octet-stream';
+  }
+
+  return mimeType || 'application/octet-stream';
+}
+
 // Configure Multer Storage with sanitized filenames
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    if (file.mimetype.startsWith('video/')) {
+  destination: (_req, file, cb) => {
+    if (isVideoFile(file.mimetype, file.originalname)) {
       cb(null, videosDir);
-    } else if (file.mimetype.startsWith('image/')) {
+    } else if ((file.mimetype || '').toLowerCase().startsWith('image/')) {
       cb(null, imagesDir);
     } else {
       cb(null, filesDir);
     }
   },
-  filename: (req, file, cb) => {
+  filename: (_req, file, cb) => {
     const timestamp = Date.now();
-    const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
-    cb(null, `${timestamp}_${safeName}`);
+    const ext = path.extname(file.originalname || '').replace(/[^a-zA-Z0-9.]/g, '') || '.bin';
+    const base = path
+      .basename(file.originalname || 'file', path.extname(file.originalname || ''))
+      .replace(/[^a-zA-Z0-9_-]/g, '_')
+      .replace(/_+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 48) || 'media';
+    cb(null, `${timestamp}_${base}${ext.toLowerCase()}`);
   },
 });
 
@@ -80,17 +151,44 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Serve uploaded files statically with byte-range headers
-app.use(
-  '/uploads',
-  express.static(uploadBaseDir, {
-    setHeaders: (res) => {
-      res.setHeader('Accept-Ranges', 'bytes');
-      res.setHeader('Access-Control-Allow-Origin', '*');
-      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-    },
-  })
-);
+// Persistent Local Media Index (avoids Firestore reads after server restarts)
+const mediaIndexPath = path.join(uploadBaseDir, '.media-index.json');
+const mediaMetadataCache = new Map<string, any>();
+
+function loadLocalMediaIndex() {
+  try {
+    if (fs.existsSync(mediaIndexPath)) {
+      const parsed = JSON.parse(fs.readFileSync(mediaIndexPath, 'utf8'));
+      if (parsed && typeof parsed === 'object') {
+        for (const [key, val] of Object.entries(parsed)) {
+          if (val && typeof val === 'object') {
+            mediaMetadataCache.set(key, val);
+          }
+        }
+      }
+    }
+  } catch (err: any) {
+    console.warn('[Media Index] Could not read local index:', err.message);
+  }
+}
+
+function persistLocalMediaEntry(meta: any) {
+  if (!meta || !meta.id) return;
+  mediaMetadataCache.set(meta.id, meta);
+  try {
+    const obj: Record<string, any> = {};
+    mediaMetadataCache.forEach((val, key) => {
+      obj[key] = val;
+    });
+    const tmpIndexPath = `${mediaIndexPath}.tmp`;
+    fs.writeFileSync(tmpIndexPath, JSON.stringify(obj), 'utf8');
+    fs.renameSync(tmpIndexPath, mediaIndexPath);
+  } catch (err: any) {
+    console.warn('[Media Index] Could not persist local index:', err.message);
+  }
+}
+
+loadLocalMediaIndex();
 
 // ================= SERVER FIREBASE FIRESTORE INIT =================
 let telegramDb: any = null;
@@ -107,9 +205,8 @@ try {
 }
 
 const insecureHttpsAgent = new https.Agent({ rejectUnauthorized: false });
-const mediaMetadataCache = new Map<string, any>();
 
-// Helper to persist uploaded media chunks into Firebase Firestore (up to 15MB)
+// Helper to persist uploaded media chunks into Firebase Firestore (up to 20MB)
 async function saveMediaToFirebase(
   mediaId: string,
   filePath: string,
@@ -122,7 +219,7 @@ async function saveMediaToFirebase(
     const stat = fs.statSync(filePath);
     const maxFirestoreBytes = 20 * 1024 * 1024; // 20 MB limit for chunked Firestore storage
     if (stat.size > maxFirestoreBytes) {
-      await setDoc(doc(telegramDb, 'media_files', mediaId), {
+      const meta = {
         id: mediaId,
         fileName,
         mimeType,
@@ -130,7 +227,9 @@ async function saveMediaToFirebase(
         localUrl: relativeUrl,
         storedInFirestore: false,
         createdAt: new Date().toISOString(),
-      });
+      };
+      persistLocalMediaEntry(meta);
+      await setDoc(doc(telegramDb, 'media_files', mediaId), meta);
       return false;
     }
 
@@ -167,8 +266,8 @@ async function saveMediaToFirebase(
       totalChunks,
       createdAt: new Date().toISOString(),
     };
+    persistLocalMediaEntry(meta);
     await setDoc(doc(telegramDb, 'media_files', mediaId), meta);
-    mediaMetadataCache.set(mediaId, meta);
     console.log(`[Media Upload] Saved "${fileName}" (${totalChunks} chunks, ${stat.size} bytes) to Firebase Firestore!`);
     return true;
   } catch (err: any) {
@@ -179,14 +278,21 @@ async function saveMediaToFirebase(
 
 // Helper to stream local file with HTTP 206 Byte-Range support
 function streamLocalFile(localFile: string, mimeType: string, req: Request, res: Response) {
-  const stat = fs.statSync(localFile);
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(localFile);
+  } catch {
+    if (!res.headersSent) res.status(404).send('File not found');
+    return;
+  }
   const fileSize = stat.size;
   const range = req.headers.range;
-  const contentType = mimeType || 'video/mp4';
+  const contentType = normalizeServedMimeType(mimeType, localFile);
 
   const baseHeaders: Record<string, string | number> = {
     'Accept-Ranges': 'bytes',
     'Content-Type': contentType,
+    'Content-Disposition': 'inline',
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Accept-Ranges',
     'Cross-Origin-Resource-Policy': 'cross-origin',
@@ -195,9 +301,18 @@ function streamLocalFile(localFile: string, mimeType: string, req: Request, res:
 
   if (range) {
     const parts = range.replace(/bytes=/, '').split('-');
-    const start = parseInt(parts[0], 10);
-    const end = parts[1] ? Math.min(fileSize - 1, parseInt(parts[1], 10)) : fileSize - 1;
-    if (isNaN(start) || start >= fileSize || start > end) {
+    let start = parts[0] ? parseInt(parts[0], 10) : 0;
+    let end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+    if (!parts[0] && parts[1]) {
+      // Suffix byte-range: bytes=-N
+      const suffixLen = parseInt(parts[1], 10);
+      if (!isNaN(suffixLen) && suffixLen > 0) {
+        start = Math.max(0, fileSize - suffixLen);
+        end = fileSize - 1;
+      }
+    }
+    end = Math.min(fileSize - 1, isNaN(end) ? fileSize - 1 : end);
+    if (isNaN(start) || start < 0 || start >= fileSize || start > end) {
       res.writeHead(416, {
         'Content-Range': `bytes */${fileSize}`,
         'Access-Control-Allow-Origin': '*',
@@ -244,6 +359,138 @@ function streamLocalFile(localFile: string, mimeType: string, req: Request, res:
   }
 }
 
+// Direct byte-range streaming for /uploads/:subfolder/:filename + static fallback (never falls through to SPA HTML)
+app.options('/uploads/:subfolder/:filename', (_req: Request, res: Response) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type');
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges');
+  res.status(204).end();
+});
+
+app.get('/uploads/:subfolder/:filename', (req: Request, res: Response) => {
+  const rawSub = Array.isArray(req.params.subfolder) ? req.params.subfolder[0] : req.params.subfolder;
+  const rawName = Array.isArray(req.params.filename) ? req.params.filename[0] : req.params.filename;
+  const allowedSubfolders = new Set(['videos', 'images', 'files', 'cached']);
+  if (!rawSub || !rawName || !allowedSubfolders.has(rawSub)) {
+    res.status(404).send('Not found');
+    return;
+  }
+  const safeName = path.basename(rawName);
+  const targetFile = path.join(uploadBaseDir, rawSub, safeName);
+  if (fs.existsSync(targetFile) && fs.statSync(targetFile).isFile()) {
+    streamLocalFile(targetFile, normalizeServedMimeType('', targetFile), req, res);
+    return;
+  }
+  res.status(404).send('Uploaded file not found');
+});
+
+app.use(
+  '/uploads',
+  express.static(uploadBaseDir, {
+    setHeaders: (res, filePath) => {
+      res.setHeader('Accept-Ranges', 'bytes');
+      res.setHeader('Content-Type', normalizeServedMimeType('', filePath));
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges');
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    },
+  })
+);
+
+function execCommand(cmd: string, timeoutMs = 300000): Promise<{ ok: boolean; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    exec(cmd, { timeout: timeoutMs, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+      resolve({ ok: !err, stdout: stdout || '', stderr: stderr || '' });
+    });
+  });
+}
+
+async function prepareWebPlayableVideo(
+  inputPath: string
+): Promise<{ filePath: string; filename: string; mimeType: string }> {
+  const dir = path.dirname(inputPath);
+  const baseNoExt = path.basename(inputPath, path.extname(inputPath));
+  const targetMp4Path = path.join(dir, `${baseNoExt}.mp4`);
+  const tmpOutPath = path.join(dir, `${baseNoExt}_webtmp.mp4`);
+
+  let vCodec = '';
+  let pixFmt = '';
+  let aCodec = '';
+  let hasAudio = false;
+
+  const probe = await execCommand(
+    `ffprobe -v error -show_entries stream=codec_type,codec_name,pix_fmt -of json "${inputPath}"`,
+    30000
+  );
+  if (probe.ok && probe.stdout) {
+    try {
+      const info = JSON.parse(probe.stdout);
+      const streams = Array.isArray(info.streams) ? info.streams : [];
+      const vStream = streams.find((s: any) => s.codec_type === 'video');
+      const aStream = streams.find((s: any) => s.codec_type === 'audio');
+      if (vStream) {
+        vCodec = String(vStream.codec_name || '').toLowerCase();
+        pixFmt = String(vStream.pix_fmt || '').toLowerCase();
+      }
+      if (aStream) {
+        hasAudio = true;
+        aCodec = String(aStream.codec_name || '').toLowerCase();
+      }
+    } catch {}
+  }
+
+  const isWebH264 = vCodec === 'h264' && (!pixFmt || pixFmt === 'yuv420p' || pixFmt === 'yuvj420p');
+  const isWebAudio = !hasAudio || aCodec === 'aac' || aCodec === 'mp3';
+
+  let converted = false;
+
+  if (isWebH264) {
+    const fastCmd = isWebAudio
+      ? `ffmpeg -y -i "${inputPath}" -c copy -movflags +faststart "${tmpOutPath}"`
+      : `ffmpeg -y -i "${inputPath}" -c:v copy -c:a aac -b:a 128k -ac 2 -movflags +faststart "${tmpOutPath}"`;
+    const res = await execCommand(fastCmd, 180000);
+    if (res.ok && fs.existsSync(tmpOutPath) && fs.statSync(tmpOutPath).size > 1024) {
+      converted = true;
+    } else {
+      try { if (fs.existsSync(tmpOutPath)) fs.unlinkSync(tmpOutPath); } catch {}
+    }
+  }
+
+  // Universal fallback / transcode (HEVC/H.265, 10-bit, yuv444p, MKV, AVI, MOV, WebM, odd screen sizes)
+  if (!converted) {
+    const transcodeCmd = `ffmpeg -y -i "${inputPath}" -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2" -c:v libx264 -preset veryfast -crf 23 -pix_fmt yuv420p -profile:v main -level 4.1 -c:a aac -b:a 128k -ac 2 -movflags +faststart "${tmpOutPath}"`;
+    const res = await execCommand(transcodeCmd, 600000);
+    if (res.ok && fs.existsSync(tmpOutPath) && fs.statSync(tmpOutPath).size > 1024) {
+      converted = true;
+    } else {
+      console.warn('[Video Transcode] Full transcode notice:', res.stderr?.slice(-400));
+      try { if (fs.existsSync(tmpOutPath)) fs.unlinkSync(tmpOutPath); } catch {}
+    }
+  }
+
+  if (converted && fs.existsSync(tmpOutPath)) {
+    try {
+      if (fs.existsSync(inputPath) && inputPath !== tmpOutPath) {
+        fs.unlinkSync(inputPath);
+      }
+      fs.renameSync(tmpOutPath, targetMp4Path);
+      return {
+        filePath: targetMp4Path,
+        filename: path.basename(targetMp4Path),
+        mimeType: 'video/mp4',
+      };
+    } catch {}
+  }
+
+  return {
+    filePath: inputPath,
+    filename: path.basename(inputPath),
+    mimeType: normalizeServedMimeType('', inputPath),
+  };
+}
+
 // 1. Direct Upload Endpoint for Admin (Videos, PDFs, Exam Files, Images)
 app.post('/api/upload', upload.single('file'), async (req: Request, res: Response) => {
   try {
@@ -253,43 +500,44 @@ app.post('/api/upload', upload.single('file'), async (req: Request, res: Respons
     }
 
     const file = req.file;
-    const subfolder = file.mimetype.startsWith('video/')
-      ? 'videos'
-      : file.mimetype.startsWith('image/')
-      ? 'images'
-      : 'files';
-    const relativeUrl = `/uploads/${subfolder}/${file.filename}`;
-    const filePath = file.path;
+    const isVideo = isVideoFile(file.mimetype, file.originalname);
+    const isImage = !isVideo && (file.mimetype || '').toLowerCase().startsWith('image/');
+    const subfolder = isVideo ? 'videos' : isImage ? 'images' : 'files';
 
-    // For MP4 videos: optimize with ffmpeg +faststart so seek headers (moov atom) are at the front
-    if (file.mimetype.startsWith('video/') && (file.filename.toLowerCase().endsWith('.mp4') || file.filename.toLowerCase().endsWith('.mov'))) {
-      const optimizedPath = filePath + '_opt.mp4';
-      await new Promise<void>((resolve) => {
-        exec(
-          `ffmpeg -i "${filePath}" -c copy -movflags +faststart "${optimizedPath}" -y`,
-          (err) => {
-            if (!err && fs.existsSync(optimizedPath)) {
-              try {
-                fs.unlinkSync(filePath);
-                fs.renameSync(optimizedPath, filePath);
-              } catch (e) {}
-            }
-            resolve();
-          }
-        );
-      });
+    let finalFilePath = file.path;
+    let finalDiskFilename = file.filename;
+    let finalMimeType = normalizeServedMimeType(file.mimetype, file.originalname);
+
+    // Transcode/optimize any uploaded video into web-universal H.264 + AAC +faststart MP4
+    if (isVideo) {
+      const prepared = await prepareWebPlayableVideo(file.path);
+      finalFilePath = prepared.filePath;
+      finalDiskFilename = prepared.filename;
+      finalMimeType = prepared.mimeType || 'video/mp4';
     }
 
-    const updatedSize = fs.existsSync(filePath) ? fs.statSync(filePath).size : file.size;
+    const relativeUrl = `/uploads/${subfolder}/${finalDiskFilename}`;
+    const updatedSize = fs.existsSync(finalFilePath) ? fs.statSync(finalFilePath).size : file.size;
     const sizeMb = (updatedSize / (1024 * 1024)).toFixed(2);
     const mediaId = `med_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+
+    // Always index locally BEFORE Firebase attempt so quota exhaustion never breaks local playback
+    persistLocalMediaEntry({
+      id: mediaId,
+      fileName: file.originalname,
+      mimeType: finalMimeType,
+      size: updatedSize,
+      localUrl: relativeUrl,
+      storedInFirestore: false,
+      createdAt: new Date().toISOString(),
+    });
 
     // Persist file into Firebase Firestore so it survives restarts and plays from anywhere
     const savedInFirebase = await saveMediaToFirebase(
       mediaId,
-      filePath,
+      finalFilePath,
       file.originalname,
-      file.mimetype || 'video/mp4',
+      finalMimeType,
       relativeUrl
     );
 
@@ -303,7 +551,7 @@ app.post('/api/upload', upload.single('file'), async (req: Request, res: Respons
       savedInFirebase,
       fileName: file.originalname,
       fileSize: `${sizeMb} MB`,
-      mimeType: file.mimetype,
+      mimeType: finalMimeType,
     });
   } catch (err: any) {
     console.error('Upload Error:', err);
@@ -311,11 +559,90 @@ app.post('/api/upload', upload.single('file'), async (req: Request, res: Respons
   }
 });
 
+// Track active disk cache jobs so simultaneous byte-range requests don't re-read Firestore chunks
+const inFlightFirestoreDiskCaches = new Map<string, Promise<string | null>>();
+
+function getCachedMediaDiskPath(meta: any): string {
+  const mime = normalizeServedMimeType(meta?.mimeType, meta?.fileName);
+  const ext = mime === 'video/webm' ? '.webm' : mime === 'video/ogg' ? '.ogv' : '.mp4';
+  return path.join(cachedDir, `${meta.id}${ext}`);
+}
+
+async function cacheFirestoreMediaToDisk(meta: any): Promise<string | null> {
+  if (!meta?.id || !meta?.totalChunks || !telegramDb) return null;
+  const targetPath = getCachedMediaDiskPath(meta);
+  if (fs.existsSync(targetPath)) {
+    try {
+      if (fs.statSync(targetPath).size >= Math.min(1024, meta.size || 1024)) {
+        return targetPath;
+      }
+    } catch {}
+  }
+
+  const existing = inFlightFirestoreDiskCaches.get(meta.id);
+  if (existing) return existing;
+
+  const job = (async (): Promise<string | null> => {
+    const tmpPath = `${targetPath}.tmp_${Date.now()}`;
+    try {
+      const fd = fs.openSync(tmpPath, 'w');
+      try {
+        const batchSize = 6;
+        for (let i = 0; i < meta.totalChunks; i += batchSize) {
+          const indices = [];
+          for (let j = i; j < Math.min(i + batchSize, meta.totalChunks); j++) {
+            indices.push(j);
+          }
+          const snaps = await Promise.all(
+            indices.map((idx) => getDoc(doc(telegramDb, 'media_files', meta.id, 'chunks', String(idx))))
+          );
+          for (const snap of snaps) {
+            if (!snap.exists()) {
+              throw new Error('Missing chunk');
+            }
+            const buf = Buffer.from(snap.data().data, 'base64');
+            fs.writeSync(fd, buf);
+          }
+        }
+      } finally {
+        fs.closeSync(fd);
+      }
+      fs.renameSync(tmpPath, targetPath);
+      const localUrl = `/uploads/cached/${path.basename(targetPath)}`;
+      persistLocalMediaEntry({
+        ...meta,
+        mimeType: normalizeServedMimeType(meta.mimeType, targetPath),
+        localUrl,
+      });
+      return targetPath;
+    } catch (err: any) {
+      try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch {}
+      console.warn(`[Media Cache] Could not cache ${meta.id} to disk:`, err.message);
+      return null;
+    } finally {
+      inFlightFirestoreDiskCaches.delete(meta.id);
+    }
+  })();
+
+  inFlightFirestoreDiskCaches.set(meta.id, job);
+  return job;
+}
+
 // Helper to stream media metadata/chunks stored in Firebase Firestore
 async function streamMediaDocFromFirestore(meta: any, req: Request, res: Response) {
+  // Prefer local cached disk file whenever available (0 Firestore chunk reads & full range support)
+  const diskTarget = getCachedMediaDiskPath(meta);
+  if (fs.existsSync(diskTarget) && fs.statSync(diskTarget).size > 0) {
+    streamLocalFile(diskTarget, normalizeServedMimeType(meta.mimeType, diskTarget), req, res);
+    return;
+  }
+
+  // Trigger background disk cache so subsequent seeks/plays use SSD instead of Firestore reads
+  void cacheFirestoreMediaToDisk(meta);
+
   const totalSize: number = meta.size;
   const chunkSize: number = meta.chunkSize;
-  const mimeType: string = meta.mimeType || 'video/mp4';
+  const mimeType: string = normalizeServedMimeType(meta.mimeType, meta.fileName);
   const range = req.headers.range;
 
   let start = 0;
@@ -324,9 +651,9 @@ async function streamMediaDocFromFirestore(meta: any, req: Request, res: Respons
 
   if (range) {
     const parts = range.replace(/bytes=/, '').split('-');
-    start = parseInt(parts[0], 10);
+    start = parts[0] ? parseInt(parts[0], 10) : 0;
     end = parts[1] ? Math.min(totalSize - 1, parseInt(parts[1], 10)) : totalSize - 1;
-    if (isNaN(start) || start >= totalSize || start > end) {
+    if (isNaN(start) || start < 0 || start >= totalSize || start > end) {
       res.writeHead(416, {
         'Content-Range': `bytes */${totalSize}`,
         'Access-Control-Allow-Origin': '*',
@@ -340,6 +667,7 @@ async function streamMediaDocFromFirestore(meta: any, req: Request, res: Respons
   const headers: Record<string, string | number> = {
     'Accept-Ranges': 'bytes',
     'Content-Type': mimeType,
+    'Content-Disposition': 'inline',
     'Content-Length': end - start + 1,
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Accept-Ranges',
@@ -404,12 +732,25 @@ app.get('/api/media/:mediaId', async (req: Request, res: Response) => {
       return;
     }
 
+    // 0-read fast path: check cached/local file directly on disk by mediaId
+    for (const ext of ['.mp4', '.webm', '.ogv']) {
+      const cachedDirect = path.join(cachedDir, `${mediaId}${ext}`);
+      if (fs.existsSync(cachedDirect) && fs.statSync(cachedDirect).size > 0) {
+        streamLocalFile(cachedDirect, normalizeServedMimeType('', cachedDirect), req, res);
+        return;
+      }
+    }
+
     let meta = mediaMetadataCache.get(mediaId);
     if (!meta && telegramDb) {
-      const snap = await getDoc(doc(telegramDb, 'media_files', mediaId));
-      if (snap.exists()) {
-        meta = snap.data();
-        mediaMetadataCache.set(mediaId, meta);
+      try {
+        const snap = await getDoc(doc(telegramDb, 'media_files', mediaId));
+        if (snap.exists()) {
+          meta = snap.data();
+          persistLocalMediaEntry(meta);
+        }
+      } catch (fsErr: any) {
+        console.warn(`[Media Lookup] Firestore lookup warning for ${mediaId}:`, fsErr.message);
       }
     }
 
@@ -422,8 +763,8 @@ app.get('/api/media/:mediaId', async (req: Request, res: Response) => {
     if (meta.localUrl && meta.localUrl.startsWith('/uploads/')) {
       const localRel = meta.localUrl.replace(/^\/uploads\//, '');
       const localFile = path.join(uploadBaseDir, localRel);
-      if (fs.existsSync(localFile)) {
-        streamLocalFile(localFile, meta.mimeType || 'video/mp4', req, res);
+      if (fs.existsSync(localFile) && fs.statSync(localFile).isFile()) {
+        streamLocalFile(localFile, normalizeServedMimeType(meta.mimeType, localFile), req, res);
         return;
       }
     }
@@ -584,6 +925,15 @@ function streamExternalUrl(
     }
 
     const upstreamContentType = (upstreamRes.headers['content-type'] || '').toLowerCase();
+    if (upstreamContentType.includes('text/html') || status >= 400) {
+      cleanupCloseListener();
+      upstreamRes.resume();
+      if (!res.headersSent) {
+        res.status(status >= 400 ? status : 502).send('Upstream returned non-media response');
+      }
+      return;
+    }
+
     const detected = detectVideoFormat(rawUrl, upstreamContentType);
     let finalContentType = upstreamRes.headers['content-type'] || detected.mimeType;
     if (
@@ -606,8 +956,9 @@ function streamExternalUrl(
     if (upstreamRes.headers['content-range']) {
       responseHeaders['Content-Range'] = upstreamRes.headers['content-range'];
     }
-    if (upstreamRes.headers['content-length']) {
-      responseHeaders['Content-Length'] = upstreamRes.headers['content-length'];
+    const upstreamLen = upstreamRes.headers['content-length'];
+    if (upstreamLen && !(req.method === 'HEAD' && upstreamLen === '0')) {
+      responseHeaders['Content-Length'] = upstreamLen;
     }
 
     if (!res.headersSent) {
@@ -679,11 +1030,29 @@ function streamExternalUrl(
 }
 
 // External video caching + ffmpeg +faststart + Firebase persistence helpers
+const validatedExternalCacheFiles = new Set<string>();
+
+async function isValidPlayableVideoFile(filePath: string): Promise<boolean> {
+  if (!fs.existsSync(filePath)) return false;
+  try {
+    if (fs.statSync(filePath).size < 1024) return false;
+  } catch {
+    return false;
+  }
+  const probe = await execCommand(
+    `ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "${filePath}"`,
+    15000
+  );
+  return probe.ok && probe.stdout.trim().length > 0;
+}
+
 function getExternalCacheKey(cleanUrl: string): string {
   return 'ext_' + crypto.createHash('sha256').update(cleanUrl).digest('hex').slice(0, 24);
 }
 
-function findCachedExternalVideo(cacheKey: string): { filePath: string; mimeType: string; ext: string } | null {
+async function findCachedExternalVideo(
+  cacheKey: string
+): Promise<{ filePath: string; mimeType: string; ext: string } | null> {
   const candidates: Array<{ ext: string; mimeType: string }> = [
     { ext: '.mp4', mimeType: 'video/mp4' },
     { ext: '.webm', mimeType: 'video/webm' },
@@ -694,9 +1063,20 @@ function findCachedExternalVideo(cacheKey: string): { filePath: string; mimeType
     const p = path.join(cachedDir, `${cacheKey}${c.ext}`);
     if (fs.existsSync(p)) {
       try {
-        if (fs.statSync(p).size > 1024) {
+        if (fs.statSync(p).size <= 1024) {
+          fs.unlinkSync(p);
+          continue;
+        }
+        if (validatedExternalCacheFiles.has(p)) {
           return { filePath: p, mimeType: c.mimeType, ext: c.ext };
         }
+        const valid = await isValidPlayableVideoFile(p);
+        if (valid) {
+          validatedExternalCacheFiles.add(p);
+          return { filePath: p, mimeType: c.mimeType, ext: c.ext };
+        }
+        console.warn(`[Mirror Cache] Evicting corrupted cached video: ${p}`);
+        fs.unlinkSync(p);
       } catch {}
     }
   }
@@ -726,6 +1106,16 @@ function downloadExternalVideoToFile(
       return;
     }
 
+    let settled = false;
+    const finish = (ok: boolean, mimeType = '') => {
+      if (settled) return;
+      settled = true;
+      if (!ok) {
+        try { if (fs.existsSync(destPath)) fs.unlinkSync(destPath); } catch {}
+      }
+      resolve({ ok, mimeType });
+    };
+
     const isHttps = parsedUrl.protocol === 'https:';
     const clientLib = isHttps ? https : http;
     const req = clientLib.request(
@@ -738,7 +1128,7 @@ function downloadExternalVideoToFile(
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
           Accept: '*/*',
         },
-        timeout: 120000,
+        timeout: 300000,
         ...(isHttps ? { agent: insecureHttpsAgent, rejectUnauthorized: false } : {}),
       },
       (resp) => {
@@ -746,45 +1136,56 @@ function downloadExternalVideoToFile(
         if ([301, 302, 303, 307, 308].includes(status) && resp.headers.location) {
           resp.resume();
           const nextUrl = new URL(resp.headers.location, parsedUrl).toString();
+          settled = true;
           downloadExternalVideoToFile(nextUrl, destPath, redirectCount + 1).then(resolve);
           return;
         }
         const cType = (resp.headers['content-type'] || '').toLowerCase();
         if (status >= 400 || cType.includes('text/html')) {
           resp.resume();
-          resolve({ ok: false, mimeType: cType });
+          finish(false, cType);
           return;
         }
         const contentLen = parseInt(resp.headers['content-length'] || '0', 10);
-        // Cap server background mirroring at 250MB to prevent disk bloat
-        if (contentLen > 250 * 1024 * 1024) {
+        // Cap server background mirroring at 512MB to support larger lessons safely
+        if (contentLen > 512 * 1024 * 1024) {
           resp.resume();
-          resolve({ ok: false, mimeType: cType });
+          finish(false, cType);
           return;
         }
 
         const outStream = fs.createWriteStream(destPath);
         let writtenBytes = 0;
+        let streamAborted = false;
+
+        resp.on('aborted', () => {
+          streamAborted = true;
+          outStream.destroy();
+          finish(false, cType);
+        });
         resp.on('data', (chunk: Buffer) => {
           writtenBytes += chunk.length;
-          if (writtenBytes > 250 * 1024 * 1024) {
+          if (writtenBytes > 512 * 1024 * 1024) {
+            streamAborted = true;
             resp.destroy();
-            outStream.close();
-            try { fs.unlinkSync(destPath); } catch {}
-            resolve({ ok: false, mimeType: cType });
+            outStream.destroy();
+            finish(false, cType);
           }
         });
         resp.on('error', () => {
-          outStream.close();
-          try { fs.unlinkSync(destPath); } catch {}
-          resolve({ ok: false, mimeType: cType });
+          streamAborted = true;
+          outStream.destroy();
+          finish(false, cType);
         });
         outStream.on('finish', () => {
-          resolve({ ok: true, mimeType: cType || 'video/mp4' });
+          const isComplete =
+            !streamAborted &&
+            resp.complete !== false &&
+            (contentLen <= 0 || writtenBytes >= contentLen);
+          finish(isComplete, cType || 'video/mp4');
         });
         outStream.on('error', () => {
-          try { fs.unlinkSync(destPath); } catch {}
-          resolve({ ok: false, mimeType: cType });
+          finish(false, cType);
         });
         resp.pipe(outStream);
       }
@@ -792,12 +1193,10 @@ function downloadExternalVideoToFile(
 
     req.on('timeout', () => {
       req.destroy();
-      try { fs.unlinkSync(destPath); } catch {}
-      resolve({ ok: false, mimeType: '' });
+      finish(false, '');
     });
     req.on('error', () => {
-      try { fs.unlinkSync(destPath); } catch {}
-      resolve({ ok: false, mimeType: '' });
+      finish(false, '');
     });
     req.end();
   });
@@ -809,21 +1208,21 @@ function mirrorAndOptimizeExternalUrl(
   const cleanUrl = normalizeExternalVideoUrl(rawUrl);
   const cacheKey = getExternalCacheKey(cleanUrl);
 
-  const alreadyCached = findCachedExternalVideo(cacheKey);
-  if (alreadyCached) {
-    const cachedMeta = mediaMetadataCache.get(cacheKey);
-    return Promise.resolve({
-      cachedFile: alreadyCached.filePath,
-      cachedUrl: `/uploads/cached/${cacheKey}${alreadyCached.ext}`,
-      mediaId: cacheKey,
-      savedInFirebase: Boolean(cachedMeta?.storedInFirestore),
-    });
-  }
-
   const existing = inFlightMirrors.get(cacheKey);
   if (existing) return existing;
 
   const job = (async () => {
+    const alreadyCached = await findCachedExternalVideo(cacheKey);
+    if (alreadyCached) {
+      const cachedMeta = mediaMetadataCache.get(cacheKey);
+      return {
+        cachedFile: alreadyCached.filePath,
+        cachedUrl: `/uploads/cached/${cacheKey}${alreadyCached.ext}`,
+        mediaId: cacheKey,
+        savedInFirebase: Boolean(cachedMeta?.storedInFirestore),
+      };
+    }
+
     const preDetected = detectVideoFormat(cleanUrl);
     const rawExt = preDetected.ext || '.mp4';
     const tmpPath = path.join(cachedDir, `${cacheKey}.tmp_${Date.now()}${rawExt}`);
@@ -848,64 +1247,36 @@ function mirrorAndOptimizeExternalUrl(
         return {};
       }
 
-      const detected = detectVideoFormat(cleanUrl, dl.mimeType);
-      let finalExt = detected.isMp4Muxable ? '.mp4' : detected.ext;
-      let finalMime = detected.isMp4Muxable ? 'video/mp4' : detected.mimeType;
-      let finalPath = path.join(cachedDir, `${cacheKey}${finalExt}`);
-
-      if (detected.isMp4Muxable) {
-        // Run ffmpeg +faststart so moov atom is moved to the very beginning for instant seeking
-        const optPath = path.join(cachedDir, `${cacheKey}.opt_${Date.now()}.mp4`);
-        await new Promise<void>((resolve) => {
-          exec(
-            `ffmpeg -i "${tmpPath}" -c copy -movflags +faststart "${optPath}" -y`,
-            { timeout: 120000 },
-            (err) => {
-              if (!err && fs.existsSync(optPath) && fs.statSync(optPath).size > 1024) {
-                try {
-                  fs.unlinkSync(tmpPath);
-                  fs.renameSync(optPath, finalPath);
-                } catch {}
-                resolve();
-              } else if (detected.ext === '.mov' || detected.ext === '.mkv') {
-                // Retry remuxing audio to AAC for .mov/.mkv files so all browsers play smoothly
-                try { if (fs.existsSync(optPath)) fs.unlinkSync(optPath); } catch {}
-                exec(
-                  `ffmpeg -i "${tmpPath}" -c:v copy -c:a aac -movflags +faststart "${optPath}" -y`,
-                  { timeout: 120000 },
-                  (err2) => {
-                    if (!err2 && fs.existsSync(optPath) && fs.statSync(optPath).size > 1024) {
-                      try {
-                        fs.unlinkSync(tmpPath);
-                        fs.renameSync(optPath, finalPath);
-                      } catch {}
-                    } else {
-                      try { if (fs.existsSync(optPath)) fs.unlinkSync(optPath); } catch {}
-                      if (detected.ext === '.mkv') {
-                        finalExt = '.mkv';
-                        finalMime = 'video/x-matroska';
-                        finalPath = path.join(cachedDir, `${cacheKey}.mkv`);
-                      }
-                      try { fs.renameSync(tmpPath, finalPath); } catch {}
-                    }
-                    resolve();
-                  }
-                );
-              } else {
-                try { if (fs.existsSync(optPath)) fs.unlinkSync(optPath); } catch {}
-                try { fs.renameSync(tmpPath, finalPath); } catch {}
-                resolve();
-              }
-            }
-          );
-        });
-      } else {
-        try { fs.renameSync(tmpPath, finalPath); } catch {}
+      // Normalize/transcode to universal web-playable H.264/AAC +faststart MP4
+      const prepared = await prepareWebPlayableVideo(tmpPath);
+      const valid = await isValidPlayableVideoFile(prepared.filePath);
+      if (!valid) {
+        try { if (fs.existsSync(prepared.filePath)) fs.unlinkSync(prepared.filePath); } catch {}
+        try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch {}
+        console.warn(`[Mirror Cache] Discarding invalid video download for ${cleanUrl}`);
+        return {};
       }
 
-      if (!fs.existsSync(finalPath)) return {};
+      const finalExt = path.extname(prepared.filePath) || '.mp4';
+      const finalMime = prepared.mimeType || 'video/mp4';
+      const finalPath = path.join(cachedDir, `${cacheKey}${finalExt}`);
+      if (prepared.filePath !== finalPath) {
+        fs.renameSync(prepared.filePath, finalPath);
+      }
+      validatedExternalCacheFiles.add(finalPath);
 
       const relativeUrl = `/uploads/cached/${cacheKey}${finalExt}`;
+      const finalStat = fs.statSync(finalPath);
+      persistLocalMediaEntry({
+        id: cacheKey,
+        fileName: `${cacheKey}${finalExt}`,
+        mimeType: finalMime,
+        size: finalStat.size,
+        localUrl: relativeUrl,
+        storedInFirestore: false,
+        createdAt: new Date().toISOString(),
+      });
+
       const savedInFirebase = await saveMediaToFirebase(
         cacheKey,
         finalPath,
@@ -916,7 +1287,7 @@ function mirrorAndOptimizeExternalUrl(
 
       console.log(`[Mirror Cache] Ready "${cacheKey}${finalExt}" (Firebase=${savedInFirebase}) for ${cleanUrl}`);
       return { cachedFile: finalPath, cachedUrl: relativeUrl, mediaId: cacheKey, savedInFirebase };
-    } catch (e) {
+    } catch {
       try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch {}
       return {};
     } finally {
@@ -1019,8 +1390,8 @@ app.get('/api/stream', async (req: Request, res: Response) => {
   const normalizedUrl = normalizeExternalVideoUrl(targetUrl);
   const cacheKey = getExternalCacheKey(normalizedUrl);
 
-  // 1. Instant SSD +faststart stream if already cached (supports .mp4, .webm, .ogv, .mkv)
-  const cachedEntry = findCachedExternalVideo(cacheKey);
+  // 1. Instant SSD +faststart stream if already cached (validates integrity first)
+  const cachedEntry = await findCachedExternalVideo(cacheKey);
   if (cachedEntry) {
     streamLocalFile(cachedEntry.filePath, cachedEntry.mimeType, req, res);
     return;
@@ -1606,10 +1977,11 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running at http://0.0.0.0:${PORT}`);
     autoConfigureTelegramWebhook().catch(() => {});
   });
+  server.requestTimeout = 15 * 60 * 1000;
 }
 
 startServer();

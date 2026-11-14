@@ -495,18 +495,24 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
     if (!isExternalHttp || hasLoadedMetadata || hasError) return;
 
     const timer = setTimeout(() => {
+      const v = internalVideoRef.current;
+      if (v && (v.readyState >= 1 || (v.buffered && v.buffered.length > 0))) {
+        return;
+      }
       if (!useProxyFallback && !hasTriedProxy) {
         setHasTriedProxy(true);
         setUseProxyFallback(true);
+        setAutoRetryCount(0);
         setHasLoadedMetadata(false);
         return;
       }
       if (useProxyFallback && cleanUrl.startsWith('https://') && !isDirectBrokenSslHost(cleanUrl) && !hasTriedDirect) {
         setHasTriedDirect(true);
         setUseProxyFallback(false);
+        setAutoRetryCount(0);
         setHasLoadedMetadata(false);
       }
-    }, 8000);
+    }, 18000);
 
     return () => clearTimeout(timer);
   }, [cleanUrl, useProxyFallback, hasTriedProxy, hasTriedDirect, hasLoadedMetadata, hasError, reloadKey]);
@@ -565,7 +571,58 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
     [scheduleHideControls]
   );
 
-  const togglePlay = useCallback(() => {
+  const isExternalHttpUrl = cleanUrl.startsWith('http://') || cleanUrl.startsWith('https://');
+
+  const triggerPlaybackErrorRecovery = useCallback(() => {
+    setIsPlaying(false);
+    setIsBuffering(false);
+    if (!useProxyFallback && isExternalHttpUrl && !hasTriedProxy) {
+      setHasTriedProxy(true);
+      setUseProxyFallback(true);
+      setAutoRetryCount(0);
+      setHasLoadedMetadata(false);
+      return;
+    }
+    if (autoRetryCount < 1) {
+      setAutoRetryCount((prev) => prev + 1);
+      setHasLoadedMetadata(false);
+      setTimeout(() => {
+        setReloadKey((prev) => prev + 1);
+      }, 600);
+      return;
+    }
+    if (useProxyFallback && cleanUrl.startsWith('https://') && !isDirectBrokenSslHost(cleanUrl) && !hasTriedDirect) {
+      setHasTriedDirect(true);
+      setUseProxyFallback(false);
+      setAutoRetryCount(0);
+      setHasLoadedMetadata(false);
+      return;
+    }
+    if (!useBackupUrl && backupCleanUrl && backupCleanUrl !== primaryCleanUrl) {
+      const backupProxy = shouldStartWithProxy(backupCleanUrl);
+      setUseBackupUrl(true);
+      setAutoRetryCount(0);
+      setHasLoadedMetadata(false);
+      setUseProxyFallback(backupProxy);
+      setHasTriedProxy(backupProxy);
+      setHasTriedDirect(!backupProxy);
+      setReloadKey((prev) => prev + 1);
+      return;
+    }
+    setHasError(true);
+  }, [
+    useProxyFallback,
+    isExternalHttpUrl,
+    hasTriedProxy,
+    autoRetryCount,
+    cleanUrl,
+    hasTriedDirect,
+    useBackupUrl,
+    backupCleanUrl,
+    primaryCleanUrl,
+  ]);
+
+  const togglePlay = useCallback(async () => {
     const video = internalVideoRef.current;
     if (!video || hasError) return;
     try {
@@ -573,13 +630,43 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
         if (video.ended) {
           video.currentTime = 0;
         }
-        video.play().catch(() => {});
+        if (video.error || video.networkState === 3) {
+          try {
+            video.load();
+          } catch {}
+        }
+        setIsBuffering(true);
+        try {
+          await video.play();
+        } catch (err: any) {
+          const errName = err?.name || '';
+          if (errName === 'AbortError') {
+            setIsBuffering(false);
+            return;
+          }
+          if (errName === 'NotAllowedError') {
+            try {
+              video.muted = true;
+              setIsMuted(true);
+              await video.play();
+              scheduleHideControls();
+              return;
+            } catch {}
+          }
+          setIsBuffering(false);
+          if (errName === 'NotSupportedError' || video.error) {
+            triggerPlaybackErrorRecovery();
+          }
+          return;
+        }
       } else {
         video.pause();
       }
       scheduleHideControls();
-    } catch {}
-  }, [hasError, scheduleHideControls]);
+    } catch {
+      setIsBuffering(false);
+    }
+  }, [hasError, scheduleHideControls, triggerPlaybackErrorRecovery]);
 
   const toggleMute = useCallback(() => {
     const video = internalVideoRef.current;
@@ -871,7 +958,7 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
               controls={false}
               controlsList="nodownload"
               onContextMenu={(e) => e.preventDefault()}
-              preload="metadata"
+              preload="auto"
               playsInline
               autoPlay={false}
               onLoadedMetadata={() => {
@@ -953,39 +1040,7 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
                 if (onEnded) onEnded();
               }}
               onError={() => {
-                if (!useProxyFallback && isExternalHttp && !hasTriedProxy) {
-                  setHasTriedProxy(true);
-                  setUseProxyFallback(true);
-                  setHasLoadedMetadata(false);
-                  return;
-                }
-                if (autoRetryCount < 1) {
-                  setAutoRetryCount((prev) => prev + 1);
-                  setHasLoadedMetadata(false);
-                  setTimeout(() => {
-                    setReloadKey((prev) => prev + 1);
-                  }, 600);
-                  return;
-                }
-                if (useProxyFallback && cleanUrl.startsWith('https://') && !isDirectBrokenSslHost(cleanUrl) && !hasTriedDirect) {
-                  setHasTriedDirect(true);
-                  setUseProxyFallback(false);
-                  setAutoRetryCount(0);
-                  setHasLoadedMetadata(false);
-                  return;
-                }
-                if (!useBackupUrl && backupCleanUrl && backupCleanUrl !== primaryCleanUrl) {
-                  const backupProxy = shouldStartWithProxy(backupCleanUrl);
-                  setUseBackupUrl(true);
-                  setAutoRetryCount(0);
-                  setHasLoadedMetadata(false);
-                  setUseProxyFallback(backupProxy);
-                  setHasTriedProxy(backupProxy);
-                  setHasTriedDirect(!backupProxy);
-                  setReloadKey((prev) => prev + 1);
-                  return;
-                }
-                setHasError(true);
+                triggerPlaybackErrorRecovery();
               }}
               className={isFloatingPiP ? 'w-full h-full object-contain bg-black' : className}
             >

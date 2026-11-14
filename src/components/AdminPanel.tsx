@@ -316,6 +316,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     return '';
   });
   const [itemUrl, setItemUrl] = useState('');
+  const [itemBackupUrl, setItemBackupUrl] = useState('');
   const [itemFileData, setItemFileData] = useState('');
   const [itemFileName, setItemFileName] = useState('');
   const [itemFileSize, setItemFileSize] = useState('');
@@ -328,6 +329,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
   const [isConfirmSaveOpen, setIsConfirmSaveOpen] = useState<boolean>(false);
   const [itemDurationMinutes, setItemDurationMinutes] = useState<number>(15);
   const [showAsEducationalVideo, setShowAsEducationalVideo] = useState<boolean>(false);
+  const titleInputRef = useRef<HTMLInputElement | null>(null);
+  const userClearedTitleRef = useRef<boolean>(false);
   const itemTitleRef = useRef<string>(
     typeof window !== 'undefined' ? (localStorage.getItem('admin_draft_item_title') || sessionStorage.getItem('admin_active_item_title') || '') : ''
   );
@@ -336,7 +339,25 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
   );
 
   // Sync draft to localStorage, sessionStorage, and refs so title is permanently protected
-  const updateItemTitle = (val: string) => {
+  const updateItemTitle = (val: string, isDirectUserInput = true) => {
+    // Guard against browser autofill or stray non-focused synthetic clears
+    if (
+      isDirectUserInput &&
+      val === '' &&
+      titleInputRef.current &&
+      document.activeElement !== titleInputRef.current &&
+      pinnedTitleRef.current
+    ) {
+      setItemTitle(pinnedTitleRef.current);
+      return;
+    }
+
+    if (isDirectUserInput) {
+      userClearedTitleRef.current = val.length === 0;
+    } else if (val) {
+      userClearedTitleRef.current = false;
+    }
+
     itemTitleRef.current = val;
     pinnedTitleRef.current = val;
     setItemTitle(val);
@@ -345,6 +366,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       sessionStorage.setItem('admin_active_item_title', val);
     } catch (e) {}
   };
+
+  // Automatic restoration guard: while the upload modal is open, never allow itemTitle to be lost unless user cleared it
+  useEffect(() => {
+    if (!isAddingItem) return;
+    if (!userClearedTitleRef.current && !itemTitle && pinnedTitleRef.current) {
+      setItemTitle(pinnedTitleRef.current);
+    }
+  }, [isAddingItem, itemTitle, itemType, modalSectionId, modalResourceId, itemUrl, itemFileName, showAsEducationalVideo, itemDurationMinutes]);
 
   const updateItemDesc = (val: string) => {
     setItemDesc(val);
@@ -368,6 +397,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
   ]);
 
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
+  const [saveToastDetails, setSaveToastDetails] = useState<{ title: string; subtitle?: string; variant?: 'success' | 'error' } | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
 
   // Manual Full Data Refresh with instant feedback
   const handleManualRefreshAllData = async () => {
@@ -605,9 +636,31 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     }
   }, [systemSettings]);
 
-  const notifySave = (msg = 'تم الحفظ بنجاح!') => {
+  const notifySave = (
+    msg = 'تم الحفظ بنجاح!',
+    details?: { subtitle?: string; variant?: 'success' | 'error'; durationMs?: number }
+  ) => {
+    if (toastTimerRef.current) {
+      window.clearTimeout(toastTimerRef.current);
+      toastTimerRef.current = null;
+    }
+    const isError =
+      details?.variant === 'error' ||
+      msg.includes('خطأ') ||
+      msg.includes('تعذر') ||
+      msg.includes('يرجى');
     setSaveStatus(msg);
-    setTimeout(() => setSaveStatus(null), 3000);
+    setSaveToastDetails({
+      title: msg,
+      subtitle: details?.subtitle,
+      variant: isError ? 'error' : 'success',
+    });
+    const timeoutMs = details?.durationMs ?? (details?.subtitle ? 5500 : 3500);
+    toastTimerRef.current = window.setTimeout(() => {
+      setSaveStatus(null);
+      setSaveToastDetails(null);
+      toastTimerRef.current = null;
+    }, timeoutMs);
   };
 
   // Helper to check if student subscription is unspecified
@@ -1236,7 +1289,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         try {
           const res = JSON.parse(xhr.responseText);
           if (res.success && res.url) {
-            setIntroLessonState((prev) => ({ ...prev, videoUrl: res.url }));
+            const fallbackUrl =
+              res.localUrl && res.localUrl !== res.url
+                ? res.localUrl
+                : res.mediaId && `/api/media/${res.mediaId}` !== res.url
+                ? `/api/media/${res.mediaId}`
+                : '';
+            setIntroLessonState((prev) => ({
+              ...prev,
+              videoUrl: res.url,
+              ...(fallbackUrl ? { backupUrl: fallbackUrl } : {}),
+            }));
             notifySave(
               res.savedInFirebase
                 ? `تم رفع وحفظ فيديو الحصة التعريفية "${file.name}" في Firebase بنجاح! لا تنس الضغط على حفظ ⚡`
@@ -1709,20 +1772,27 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
 
     xhr.onload = () => {
       setIsUploadingServerFile(false);
-      if (pinnedTitleRef.current && (!itemTitle || !itemTitle.trim())) {
-        setItemTitle(pinnedTitleRef.current);
+      if (pinnedTitleRef.current) {
+        setItemTitle((prev) => prev || pinnedTitleRef.current || itemTitleRef.current);
       }
       if (xhr.status >= 200 && xhr.status < 300) {
         try {
           const res = JSON.parse(xhr.responseText);
           if (res.success && res.url) {
+            const fallbackUrl =
+              res.localUrl && res.localUrl !== res.url
+                ? res.localUrl
+                : res.mediaId && `/api/media/${res.mediaId}` !== res.url
+                ? `/api/media/${res.mediaId}`
+                : '';
             setItemUrl(res.url);
+            setItemBackupUrl(fallbackUrl);
             setItemFileName(res.fileName || file.name);
             setItemFileSize(res.fileSize || `${sizeMb} MB`);
             notifySave(
               res.savedInFirebase
-                ? `تم رفع وحفظ ${itemType === 'video' ? 'الفيديو' : 'الملف'} (${file.name}) في Firebase بنجاح ✓⚡`
-                : `تم رفع وحفظ ملف ${itemType === 'video' ? 'الفيديو' : 'المستند'} (${file.name}) على خادم المنصة بنجاح ⚡`
+                ? `تم رفع ومعالجة ${itemType === 'video' ? 'الفيديو' : 'الملف'} (${file.name}) وحفظه في Firebase بنجاح ✓⚡`
+                : `تم رفع ومعالجة ${itemType === 'video' ? 'الفيديو' : 'المستند'} (${file.name}) وحفظه على خادم المنصة بنجاح ⚡`
             );
             return;
           }
@@ -1758,8 +1828,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         try {
           const parsed = JSON.parse(fileText);
           const rawList = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.questions) ? parsed.questions : []);
-          if (parsed.title && !itemTitle) {
-            setItemTitle(parsed.title);
+          if (parsed.title && !itemTitleRef.current.trim() && !pinnedTitleRef.current.trim()) {
+            updateItemTitle(parsed.title, false);
           }
           if (rawList.length > 0) {
             importedQuestions = rawList.map((item: any, idx: number) => {
@@ -2023,6 +2093,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
               finalUrl = mirrorData.playUrl;
             }
           } catch {}
+        } else if (itemBackupUrl) {
+          basePayload.backupUrl = resolveVideoUrl(itemBackupUrl);
         } else if (editingItem?.backupUrl) {
           basePayload.backupUrl = resolveVideoUrl(editingItem.backupUrl);
         }
@@ -2156,6 +2228,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         sessionStorage.removeItem('admin_active_item_title');
       } catch (e) {}
 
+      userClearedTitleRef.current = false;
       itemTitleRef.current = '';
       pinnedTitleRef.current = '';
       setIsConfirmSaveOpen(false);
@@ -2164,6 +2237,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       setItemTitle('');
       setItemDesc('');
       setItemUrl('');
+      setItemBackupUrl('');
       setItemFileData('');
       setItemFileName('');
       setItemDurationMinutes(15);
@@ -2183,10 +2257,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
           explanation: '',
         },
       ]);
+      const typeAr = itemType === 'video' ? 'الفيديو التعليمي' : itemType === 'exam' ? 'الاختبار التفاعلي' : 'الملف والمستند';
       notifySave(
         editingItem
-          ? `تم تأكيد وحفظ كافة تعديلات (${resolvedTitle}) في Firebase فوراً بنجاح ✓`
-          : `تم نشر وحفظ (${resolvedTitle}) في Firebase فوراً بنجاح ✓`
+          ? `تم تحديث وحفظ ${typeAr} "${resolvedTitle}" في قاعدة البيانات بنجاح ✓`
+          : `تمت إضافة ورفع ${typeAr} "${resolvedTitle}" إلى قاعدة البيانات بنجاح ✓`,
+        {
+          subtitle: 'تم تثبيت العنصر في قاعدة البيانات (Firebase) وأصبح متاحاً للطلاب فوراً.',
+          variant: 'success',
+          durationMs: 6000,
+        }
       );
     } catch (err) {
       console.error('Error saving to Firebase:', err);
@@ -2250,6 +2330,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
   const handleOpenAddItem = (type: 'video' | 'exam' | 'file', targetResId?: string) => {
     setEditingItem(null);
     setItemType(type);
+    userClearedTitleRef.current = false;
     const chosenResId = targetResId || selectedResourceId || effectiveResourceId || '';
     setModalResourceId(chosenResId);
     const chosenRes = resources.find((r) => r.id === chosenResId);
@@ -2271,6 +2352,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       setItemDesc('');
     }
     setItemUrl('');
+    setItemBackupUrl('');
     setItemFileData('');
     setItemFileName('');
     setItemFileSize('');
@@ -2298,6 +2380,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
 
   const handleOpenEditItem = (it: ContentItem) => {
     setEditingItem(it);
+    userClearedTitleRef.current = false;
     itemTitleRef.current = it.title;
     pinnedTitleRef.current = it.title;
     setItemType(it.type);
@@ -2307,6 +2390,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     setItemTitle(it.title);
     setItemDesc(it.description || '');
     setItemUrl(it.url || '');
+    setItemBackupUrl(it.backupUrl || '');
     setItemFileData(it.fileData || '');
     setItemFileName(it.fileName || '');
     setItemFileSize(it.fileSize || '');
@@ -2608,11 +2692,59 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
           </div>
         </div>
 
-        {/* Status notification toast */}
+        {/* Floating Top Toast Notification (always visible above modals & scroll) */}
         {saveStatus && (
-          <div className="px-4 py-2 rounded-xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-bold flex items-center gap-2 animate-bounce">
-            <CheckCircle2 className="w-4 h-4" />
-            <span>{saveStatus}</span>
+          <div
+            role="status"
+            aria-live="polite"
+            className="fixed top-4 left-1/2 -translate-x-1/2 z-[120] w-[92%] max-w-lg pointer-events-auto animate-in fade-in slide-in-from-top-3 duration-200"
+          >
+            <div
+              className={`rounded-2xl px-4 py-3.5 shadow-2xl backdrop-blur-xl border-2 flex items-start gap-3 ${
+                saveToastDetails?.variant === 'error'
+                  ? 'bg-rose-950/95 border-rose-500/70 text-rose-100 shadow-rose-900/40'
+                  : 'bg-slate-900/95 border-emerald-500/80 text-white shadow-emerald-500/25'
+              }`}
+            >
+              <div
+                className={`p-2 rounded-xl shrink-0 ${
+                  saveToastDetails?.variant === 'error'
+                    ? 'bg-rose-500/20 text-rose-300'
+                    : 'bg-emerald-500/20 text-emerald-400'
+                }`}
+              >
+                {saveToastDetails?.variant === 'error' ? (
+                  <AlertTriangle className="w-5 h-5" />
+                ) : (
+                  <CheckCircle2 className="w-5 h-5" />
+                )}
+              </div>
+              <div className="flex-1 min-w-0 space-y-0.5 text-right">
+                <p className="text-xs md:text-sm font-black leading-snug">
+                  {saveToastDetails?.title || saveStatus}
+                </p>
+                {saveToastDetails?.subtitle && (
+                  <p className="text-[11px] font-bold text-emerald-300/90 leading-relaxed">
+                    {saveToastDetails.subtitle}
+                  </p>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (toastTimerRef.current) {
+                    window.clearTimeout(toastTimerRef.current);
+                    toastTimerRef.current = null;
+                  }
+                  setSaveStatus(null);
+                  setSaveToastDetails(null);
+                }}
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition shrink-0 cursor-pointer"
+                aria-label="إغلاق الإشعار"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         )}
 
@@ -5690,8 +5822,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
 
                   <div className="aspect-video w-full rounded-2xl overflow-hidden bg-black shadow-inner border border-slate-800">
                     <SmartVideoPlayer
-                      key={introLessonState.videoUrl}
+                      key={`${introLessonState.videoUrl}-${introLessonState.backupUrl || ''}`}
                       url={introLessonState.videoUrl}
+                      backupUrl={introLessonState.backupUrl}
                       title={introLessonState.title || 'معاينة الحصة التعريفية'}
                     />
                   </div>
@@ -6698,21 +6831,25 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
               </div>
               <div className="relative">
                 <input
+                  ref={titleInputRef}
                   type="text"
                   name="custom_content_title_protect"
                   id="item-title-field"
                   autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="off"
                   spellCheck={false}
                   data-lpignore="true"
                   data-1p-ignore="true"
+                  data-form-type="other"
                   required
                   placeholder={itemType === 'video' ? 'مثال: شرح درس التناظر اللفظي 1...' : itemType === 'exam' ? 'مثال: اختبار القدرات العام...' : 'مثال: ملخص ومذكرة القوانين...'}
                   value={itemTitle}
-                  onChange={(e) => updateItemTitle(e.target.value)}
+                  onChange={(e) => updateItemTitle(e.target.value, true)}
                   onBlur={() => {
-                    if (itemTitle.trim()) {
-                      itemTitleRef.current = itemTitle.trim();
-                      pinnedTitleRef.current = itemTitle.trim();
+                    if (itemTitle) {
+                      itemTitleRef.current = itemTitle;
+                      pinnedTitleRef.current = itemTitle;
                     }
                   }}
                   onKeyDown={(e) => {
@@ -6911,24 +7048,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                     value={itemUrl}
                     onChange={(e) => {
                       setItemUrl(e.target.value);
-                      const preserved = itemTitle.trim() || itemTitleRef.current.trim() || pinnedTitleRef.current.trim() || (editingItem ? editingItem.title : '');
-                      if (preserved && (!itemTitle || !itemTitle.trim())) {
-                        setItemTitle(preserved);
-                        itemTitleRef.current = preserved;
-                        pinnedTitleRef.current = preserved;
+                      const preserved = itemTitleRef.current || pinnedTitleRef.current || (editingItem ? editingItem.title : '');
+                      if (preserved) {
+                        setItemTitle((prev) => prev || preserved);
                       }
                     }}
                     onPaste={(e) => {
-                      const pasted = e.clipboardData.getData('text')?.trim();
+                      const pasted = e.clipboardData?.getData('text')?.trim();
                       if (pasted) {
                         e.preventDefault();
                         setItemUrl(pasted);
                       }
-                      const preserved = itemTitle.trim() || itemTitleRef.current.trim() || pinnedTitleRef.current.trim() || (editingItem ? editingItem.title : '');
+                      const preserved = itemTitleRef.current || pinnedTitleRef.current || (editingItem ? editingItem.title : '');
                       if (preserved) {
-                        setItemTitle(preserved);
-                        itemTitleRef.current = preserved;
-                        pinnedTitleRef.current = preserved;
+                        setItemTitle((prev) => prev || preserved);
                       }
                     }}
                     onKeyDown={(e) => {
@@ -6949,7 +7082,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                     </span>
                     <input
                       type="file"
-                      accept={itemType === 'video' ? 'video/*,.mp4,.webm,.mkv,.mov' : '.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.zip,.png,.jpg,.jpeg,.txt,*'}
+                      accept={itemType === 'video' ? 'video/*,.mp4,.webm,.mkv,.mov,.avi,.m4v,.wmv,.flv,.3gp' : '.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.zip,.png,.jpg,.jpeg,.txt,*'}
                       onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
                       onChange={handleFileUpload}
                       className="hidden"
@@ -6957,7 +7090,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                   </label>
                   <p className="text-[10px] text-slate-400 text-center">
                     {itemType === 'video'
-                      ? 'يدعم ملفات الفيديو المباشرة (MP4, WebM, MKV) مع الحفظ الدائم على الخادم وتقديم وتأخير سلس 100%.'
+                      ? 'يدعم جميع صيغ الفيديو (MP4, MOV, WebM, MKV, AVI) ويحوّلها تلقائياً لتعمل بسلاسة على جميع الأجهزة ✓.'
                       : 'يدعم ملفات PDF، Word، مستندات، عروض وصور مع الحفظ الآمن في المنصة.'}
                   </p>
 
@@ -6967,7 +7100,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                       <div className="flex items-center justify-between text-xs text-blue-300 font-bold">
                         <span className="flex items-center gap-1.5">
                           <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-400" />
-                          <span>جاري رفع وحفظ الملف على خادم المنصة...</span>
+                          <span>
+                            {serverUploadProgress >= 100
+                              ? 'جاري تجهيز وتهيئة الفيديو للتشغيل السريع على جميع الأجهزة...'
+                              : 'جاري رفع وحفظ الملف على خادم المنصة...'}
+                          </span>
                         </span>
                         <span className="font-mono">%{serverUploadProgress}</span>
                       </div>
@@ -7015,7 +7152,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                     <div className="aspect-video w-full rounded-2xl overflow-hidden bg-black border border-slate-700">
                       <SmartVideoPlayer
                         url={itemUrl.trim()}
-                        backupUrl={editingItem?.backupUrl}
+                        backupUrl={itemBackupUrl || editingItem?.backupUrl}
                         title={itemTitle || 'معاينة الفيديو'}
                       />
                     </div>
@@ -7281,24 +7418,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                       value={itemUrl}
                       onChange={(e) => {
                         setItemUrl(e.target.value);
-                        const preserved = itemTitle.trim() || itemTitleRef.current.trim() || pinnedTitleRef.current.trim() || (editingItem ? editingItem.title : '');
-                        if (preserved && (!itemTitle || !itemTitle.trim())) {
-                          setItemTitle(preserved);
-                          itemTitleRef.current = preserved;
-                          pinnedTitleRef.current = preserved;
+                        const preserved = itemTitleRef.current || pinnedTitleRef.current || (editingItem ? editingItem.title : '');
+                        if (preserved) {
+                          setItemTitle((prev) => prev || preserved);
                         }
                       }}
                       onPaste={(e) => {
-                        const pasted = e.clipboardData.getData('text')?.trim();
+                        const pasted = e.clipboardData?.getData('text')?.trim();
                         if (pasted) {
                           e.preventDefault();
                           setItemUrl(pasted);
                         }
-                        const preserved = itemTitle.trim() || itemTitleRef.current.trim() || pinnedTitleRef.current.trim() || (editingItem ? editingItem.title : '');
+                        const preserved = itemTitleRef.current || pinnedTitleRef.current || (editingItem ? editingItem.title : '');
                         if (preserved) {
-                          setItemTitle(preserved);
-                          itemTitleRef.current = preserved;
-                          pinnedTitleRef.current = preserved;
+                          setItemTitle((prev) => prev || preserved);
                         }
                       }}
                       onKeyDown={(e) => {
