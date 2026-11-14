@@ -36,7 +36,7 @@ import {
   FriendChallengeParticipant,
   FriendChallengeQuestionRef
 } from '../types';
-import { db } from '../firebase';
+import { db, OperationType, reportFirestoreListenerError } from '../firebase';
 import { transferMistakeImmediately } from '../mistakesService';
 import {
   collection,
@@ -141,20 +141,26 @@ export const FeaturesModal: React.FC<FeaturesModalProps> = ({
     const targetRoomId = activeChallengeRoom?.id || createdChallenge?.id;
     if (!targetRoomId) return;
 
-    const unsub = onSnapshot(doc(db, 'challenges', targetRoomId), (docSnap) => {
-      if (docSnap.exists()) {
-        const data = { id: docSnap.id, ...docSnap.data() } as FriendChallengeDoc;
-        if (createdChallenge && !activeChallengeRoom) {
-          setCreatedChallenge(data);
-          // If a guest just joined and status is active, enter arena!
-          if (data.status === 'active' || (data.guestId && data.status !== 'waiting')) {
+    const unsub = onSnapshot(
+      doc(db, 'challenges', targetRoomId),
+      (docSnap) => {
+        if (docSnap.exists()) {
+          const data = { id: docSnap.id, ...docSnap.data() } as FriendChallengeDoc;
+          if (createdChallenge && !activeChallengeRoom) {
+            setCreatedChallenge(data);
+            // If a guest just joined and status is active, enter arena!
+            if (data.status === 'active' || (data.guestId && data.status !== 'waiting')) {
+              setActiveChallengeRoom(data);
+            }
+          } else if (activeChallengeRoom) {
             setActiveChallengeRoom(data);
           }
-        } else if (activeChallengeRoom) {
-          setActiveChallengeRoom(data);
         }
+      },
+      (error) => {
+        reportFirestoreListenerError(error, OperationType.GET, `challenges/${targetRoomId}`);
       }
-    });
+    );
 
     return () => unsub();
   }, [activeChallengeRoom?.id, createdChallenge?.id]);

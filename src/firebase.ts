@@ -1,6 +1,10 @@
 import { initializeApp } from 'firebase/app';
 import {
   getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+  Firestore,
   doc,
   getDocFromServer,
   getDoc,
@@ -17,7 +21,26 @@ import firebaseConfig from '../firebase-applet-config.json';
 import { SystemSettings, ThemeConfig, SectionItem, ResourceItem, ContentItem, CourseItem } from './types';
 
 export const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+
+let firestoreDb: Firestore;
+try {
+  firestoreDb = initializeFirestore(
+    app,
+    {
+      localCache: persistentLocalCache({
+        tabManager: persistentMultipleTabManager(),
+      }),
+    },
+    firebaseConfig.firestoreDatabaseId
+  );
+} catch {
+  firestoreDb = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+}
+
+export const db = firestoreDb;
+
+export const FIRESTORE_PRICING_URL = 'https://firebase.google.com/pricing#cloud-firestore';
+export const FIRESTORE_UPGRADE_URL = `https://console.firebase.google.com/project/${firebaseConfig.projectId}/firestore/databases/${firebaseConfig.firestoreDatabaseId}/data?openUpgradeDialog=true`;
 
 export enum OperationType {
   CREATE = 'create',
@@ -38,9 +61,40 @@ export interface FirestoreErrorInfo {
   };
 }
 
+type QuotaListener = (exceeded: boolean, message?: string) => void;
+const quotaListeners = new Set<QuotaListener>();
+let quotaExceededState = false;
+let quotaErrorMessage = '';
+
+export function isQuotaExceededError(error: unknown): boolean {
+  if (!error) return false;
+  const code = typeof error === 'object' && error !== null ? String((error as any).code || '') : '';
+  const msg = error instanceof Error ? error.message : String(error);
+  return (
+    code === 'resource-exhausted' ||
+    msg.includes('resource-exhausted') ||
+    msg.includes('Quota exceeded') ||
+    msg.includes('Quota limit exceeded') ||
+    msg.includes('Free daily read units per project')
+  );
+}
+
+export function subscribeQuotaExceeded(listener: QuotaListener): () => void {
+  quotaListeners.add(listener);
+  if (quotaExceededState) {
+    listener(true, quotaErrorMessage);
+  }
+  return () => {
+    quotaListeners.delete(listener);
+  };
+}
+
+let quotaWarningLogged = false;
+
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errorMessage = error instanceof Error ? error.message : String(error);
   const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
+    error: errorMessage,
     authInfo: {
       userId: null,
       email: null,
@@ -48,8 +102,24 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     operationType,
     path
   };
+
+  if (isQuotaExceededError(error)) {
+    quotaExceededState = true;
+    quotaErrorMessage = errorMessage;
+    quotaListeners.forEach((fn) => fn(true, errorMessage));
+    if (!quotaWarningLogged) {
+      quotaWarningLogged = true;
+      console.warn('Firestore free daily read quota reached; falling back to local cache:', path);
+    }
+    return errInfo;
+  }
+
   console.error('Firestore Error: ', JSON.stringify(errInfo));
   return errInfo;
+}
+
+export function reportFirestoreListenerError(error: unknown, operationType: OperationType, path: string | null) {
+  return handleFirestoreError(error, operationType, path);
 }
 
 export interface VideoSourceInput {
@@ -322,23 +392,51 @@ export const INITIAL_RESOURCES: ResourceItem[] = [
 export const INITIAL_CONTENT_ITEMS: ContentItem[] = [];
 
 
-// Test Firestore connection on boot as requested by skill
-export async function testConnection() {
+// Test Firestore connection on boot as requested by skill (once per browser session)
+export async function testConnection(): Promise<boolean> {
+  if (quotaExceededState) return false;
+  try {
+    if (typeof window !== 'undefined' && sessionStorage.getItem('raad_firestore_conn_tested') === 'true') {
+      return true;
+    }
+  } catch {}
   try {
     await getDocFromServer(doc(db, 'system_settings', 'global'));
+    try {
+      if (typeof window !== 'undefined') sessionStorage.setItem('raad_firestore_conn_tested', 'true');
+    } catch {}
+    return true;
   } catch (error) {
+    if (isQuotaExceededError(error)) {
+      handleFirestoreError(error, OperationType.GET, 'system_settings/global');
+      return false;
+    }
     if (error instanceof Error && error.message.includes('the client is offline')) {
       console.warn("Client is offline or network error:", error);
     }
+    return !quotaExceededState;
   }
 }
 
 // Initial seeder so the platform isn't empty upon first boot, with permanent lock
 export async function seedInitialPlatformData() {
   try {
+    if (quotaExceededState) return;
     // Fast path: if already initialized on this browser/session, exit immediately in 0ms!
-    if (typeof window !== 'undefined' && localStorage.getItem('raad_platform_seeder_initialized') === 'true') {
-      return;
+    if (typeof window !== 'undefined') {
+      if (localStorage.getItem('raad_platform_seeder_initialized') === 'true') {
+        return;
+      }
+      const cachedCoursesRaw = localStorage.getItem('raad_cached_courses');
+      if (cachedCoursesRaw) {
+        try {
+          const parsedCourses = JSON.parse(cachedCoursesRaw);
+          if (Array.isArray(parsedCourses) && parsedCourses.length > 0) {
+            localStorage.setItem('raad_platform_seeder_initialized', 'true');
+            return;
+          }
+        } catch {}
+      }
     }
 
     const settingsRef = doc(db, 'system_settings', 'global');
@@ -548,7 +646,11 @@ export async function seedInitialPlatformData() {
       }
     } catch (e) {}
   } catch (err) {
-    console.warn("Seeding notice (might already exist):", err);
+    if (isQuotaExceededError(err)) {
+      handleFirestoreError(err, OperationType.GET, 'system_settings/seeder_lock');
+    } else {
+      console.warn("Seeding notice (might already exist):", err);
+    }
   }
 }
 

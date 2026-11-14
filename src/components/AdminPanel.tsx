@@ -74,7 +74,17 @@ import {
 import { BrandLogo } from './BrandLogo';
 import { CertificateModal } from './CertificateModal';
 import { SmartVideoPlayer } from './SmartVideoPlayer';
-import { db, THEME_PRESETS, DEFAULT_SETTINGS, INITIAL_COURSES, restoreDefaultCoursesAndContent, resolveVideoUrl } from '../firebase';
+import {
+  db,
+  THEME_PRESETS,
+  DEFAULT_SETTINGS,
+  INITIAL_COURSES,
+  restoreDefaultCoursesAndContent,
+  resolveVideoUrl,
+  OperationType,
+  reportFirestoreListenerError,
+} from '../firebase';
+import { bumpCatalogVersion } from '../utils/firestoreCache';
 import {
   collection,
   onSnapshot,
@@ -420,109 +430,140 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     }
   };
 
-  // Run initial refresh on component mount
-  useEffect(() => {
-    handleManualRefreshAllData();
-  }, []);
-
   // Listen to students in real-time
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, 'users'), (snapshot) => {
-      const list: StudentUser[] = [];
-      snapshot.forEach((d) => {
-        list.push({ id: d.id, ...d.data() } as StudentUser);
-      });
-      list.sort((a, b) => {
-        const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-        const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-        return tB - tA;
-      });
-      setStudents(list);
-      try { localStorage.setItem('raad_cached_admin_students', JSON.stringify(list)); } catch (e) {}
-    });
+    const unsub = onSnapshot(
+      collection(db, 'users'),
+      (snapshot) => {
+        const list: StudentUser[] = [];
+        snapshot.forEach((d) => {
+          list.push({ id: d.id, ...d.data() } as StudentUser);
+        });
+        list.sort((a, b) => {
+          const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+          const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          return tB - tA;
+        });
+        setStudents(list);
+        try { localStorage.setItem('raad_cached_admin_students', JSON.stringify(list)); } catch (e) {}
+      },
+      (error) => {
+        reportFirestoreListenerError(error, OperationType.LIST, 'users');
+      }
+    );
     return () => unsub();
   }, []);
 
   // Listen to student exam attempts in real-time
   useEffect(() => {
-    const unsubAttempts = onSnapshot(collection(db, 'exam_attempts'), (snapshot) => {
-      const list: ExamAttempt[] = [];
-      snapshot.forEach((d) => {
-        list.push({ id: d.id, ...d.data() } as ExamAttempt);
-      });
-      list.sort((a, b) => {
-        const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-        const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-        return tB - tA;
-      });
-      setExamAttempts(list);
-    });
+    const unsubAttempts = onSnapshot(
+      collection(db, 'exam_attempts'),
+      (snapshot) => {
+        const list: ExamAttempt[] = [];
+        snapshot.forEach((d) => {
+          list.push({ id: d.id, ...d.data() } as ExamAttempt);
+        });
+        list.sort((a, b) => {
+          const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+          const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          return tB - tA;
+        });
+        setExamAttempts(list);
+      },
+      (error) => {
+        reportFirestoreListenerError(error, OperationType.LIST, 'exam_attempts');
+      }
+    );
     return () => unsubAttempts();
   }, []);
 
   // Listen to sections, resources, items in real-time
   useEffect(() => {
-    const unsubSections = onSnapshot(collection(db, 'sections'), (snap) => {
-      const list: SectionItem[] = [];
-      snap.forEach((d) => list.push({ id: d.id, ...d.data() } as SectionItem));
-      list.sort((a, b) => (a.order || 0) - (b.order || 0));
-      setSections(list);
-      try { localStorage.setItem('raad_cached_admin_sections', JSON.stringify(list)); } catch (e) {}
-      if (list.length > 0 && !selectedSectionId) {
-        setSelectedSectionId(list[0].id);
+    const unsubSections = onSnapshot(
+      collection(db, 'sections'),
+      (snap) => {
+        const list: SectionItem[] = [];
+        snap.forEach((d) => list.push({ id: d.id, ...d.data() } as SectionItem));
+        list.sort((a, b) => (a.order || 0) - (b.order || 0));
+        setSections(list);
+        try { localStorage.setItem('raad_cached_admin_sections', JSON.stringify(list)); } catch (e) {}
+        if (list.length > 0 && !selectedSectionId) {
+          setSelectedSectionId(list[0].id);
+        }
+      },
+      (error) => {
+        reportFirestoreListenerError(error, OperationType.LIST, 'sections');
       }
-    });
+    );
 
-    const unsubResources = onSnapshot(collection(db, 'resources'), (snap) => {
-      const list: ResourceItem[] = [];
-      snap.forEach((d) => list.push({ id: d.id, ...d.data() } as ResourceItem));
-      list.sort((a, b) => (a.order || 0) - (b.order || 0));
-      setResources(list);
-      try { localStorage.setItem('raad_cached_admin_resources', JSON.stringify(list)); } catch (e) {}
-    });
-
-    const unsubItems = onSnapshot(collection(db, 'content_items'), (snap) => {
-      const list: ContentItem[] = [];
-      snap.forEach((d) => list.push({ id: d.id, ...d.data() } as ContentItem));
-      // Sort strictly from oldest to newest (من الأقدم للأحدث)
-      list.sort((a, b) => {
-        const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-        const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-        if (tA !== tB) return tA - tB;
-        return (a.id || '').localeCompare(b.id || '');
-      });
-      setItems(list);
-      try { localStorage.setItem('raad_cached_admin_items', JSON.stringify(list)); } catch (e) {}
-    });
-
-    const unsubCourses = onSnapshot(collection(db, 'courses'), (snap) => {
-      const list: CourseItem[] = [];
-      snap.forEach((d) => list.push({ id: d.id, ...d.data() } as CourseItem));
-      list.sort((a, b) => (a.order || 0) - (b.order || 0));
-      setCourses(list);
-      try {
-        localStorage.setItem('raad_cached_courses', JSON.stringify(list));
-      } catch (e) {}
-
-      if (list.length > 0) {
-        setSelectedIntroCourseId((prev) => {
-          const valid = list.some((c) => c.id === prev) ? prev : list[0].id;
-          const target = list.find((c) => c.id === valid);
-          if (target?.introLesson) {
-            setIntroLessonState(target.introLesson);
-          }
-          return valid;
-        });
-        setSelectedFeaturesCourseId((prev) => {
-          const valid = list.some((c) => c.id === prev) ? prev : list[0].id;
-          const target = list.find((c) => c.id === valid);
-          if (target?.features) {
-            setFeaturesState(target.features);
-          }
-          return valid;
-        });
+    const unsubResources = onSnapshot(
+      collection(db, 'resources'),
+      (snap) => {
+        const list: ResourceItem[] = [];
+        snap.forEach((d) => list.push({ id: d.id, ...d.data() } as ResourceItem));
+        list.sort((a, b) => (a.order || 0) - (b.order || 0));
+        setResources(list);
+        try { localStorage.setItem('raad_cached_admin_resources', JSON.stringify(list)); } catch (e) {}
+      },
+      (error) => {
+        reportFirestoreListenerError(error, OperationType.LIST, 'resources');
       }
-    });
+    );
+
+    const unsubItems = onSnapshot(
+      collection(db, 'content_items'),
+      (snap) => {
+        const list: ContentItem[] = [];
+        snap.forEach((d) => list.push({ id: d.id, ...d.data() } as ContentItem));
+        // Sort strictly from oldest to newest (من الأقدم للأحدث)
+        list.sort((a, b) => {
+          const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+          const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          if (tA !== tB) return tA - tB;
+          return (a.id || '').localeCompare(b.id || '');
+        });
+        setItems(list);
+        try { localStorage.setItem('raad_cached_admin_items', JSON.stringify(list)); } catch (e) {}
+      },
+      (error) => {
+        reportFirestoreListenerError(error, OperationType.LIST, 'content_items');
+      }
+    );
+
+    const unsubCourses = onSnapshot(
+      collection(db, 'courses'),
+      (snap) => {
+        const list: CourseItem[] = [];
+        snap.forEach((d) => list.push({ id: d.id, ...d.data() } as CourseItem));
+        list.sort((a, b) => (a.order || 0) - (b.order || 0));
+        setCourses(list);
+        try {
+          localStorage.setItem('raad_cached_courses', JSON.stringify(list));
+        } catch (e) {}
+
+        if (list.length > 0) {
+          setSelectedIntroCourseId((prev) => {
+            const valid = list.some((c) => c.id === prev) ? prev : list[0].id;
+            const target = list.find((c) => c.id === valid);
+            if (target?.introLesson) {
+              setIntroLessonState(target.introLesson);
+            }
+            return valid;
+          });
+          setSelectedFeaturesCourseId((prev) => {
+            const valid = list.some((c) => c.id === prev) ? prev : list[0].id;
+            const target = list.find((c) => c.id === valid);
+            if (target?.features) {
+              setFeaturesState(target.features);
+            }
+            return valid;
+          });
+        }
+      },
+      (error) => {
+        reportFirestoreListenerError(error, OperationType.LIST, 'courses');
+      }
+    );
 
     return () => {
       unsubCourses();
@@ -1168,6 +1209,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         ).catch(() => {});
       }
 
+      void bumpCatalogVersion();
       notifySave(`تم حفظ وتحديث الحصة التعريفية الخاصة بكورس "${targetCourse.title}" بنجاح 🎬`);
     } catch (err) {
       console.error('Error saving intro lesson:', err);
@@ -1313,6 +1355,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     setIsRestoringCourses(true);
     try {
       const res = await restoreDefaultCoursesAndContent();
+      await bumpCatalogVersion();
       notifySave(res.message);
     } catch (e) {
       console.error(e);
@@ -1350,6 +1393,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       };
 
       await setDoc(courseRef, cleanData, { merge: true });
+      void bumpCatalogVersion();
 
       // Immediate local state update for instant UI feedback
       setCourses((prev) => {
@@ -1469,6 +1513,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         ...folderDeletePromises,
         courseDocPromise,
       ]);
+      void bumpCatalogVersion();
 
       // 9. Update local state immediately for zero-delay UI feedback
       const updatedCourses = courses.filter((c) => c.id !== courseId);
@@ -1510,6 +1555,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         order: Number(newSectionOrder) || sections.length + 1,
         createdAt: new Date().toISOString(),
       });
+      void bumpCatalogVersion();
       setNewSectionTitle('');
       setNewSectionDesc('');
       setNewSectionOrder(sections.length + 2);
@@ -1532,6 +1578,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         order: Number(newSectionOrder) || editingSection.order || 1,
         courseId: editingSection.courseId || selectedCourseId || 'course_default_1',
       });
+      void bumpCatalogVersion();
       setEditingSection(null);
       setNewSectionTitle('');
       setNewSectionDesc('');
@@ -1545,6 +1592,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
   const handleReorderSection = async (secId: string, newOrder: number) => {
     try {
       await updateDoc(doc(db, 'sections', secId), { order: Number(newOrder) });
+      void bumpCatalogVersion();
       notifySave(`تم تعديل ترتيب القسم إلى (${newOrder}) بنجاح`);
     } catch (err) {
       console.error(err);
@@ -1579,6 +1627,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         order: Number(newResourceOrder) || secResources.length + 1,
         createdAt: new Date().toISOString(),
       });
+      void bumpCatalogVersion();
       setNewResourceTitle('');
       setNewResourceDesc('');
       setNewResourceOrder(secResources.length + 2);
@@ -1600,6 +1649,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         description: newResourceDesc.trim(),
         order: Number(newResourceOrder) || editingResource.order || 1,
       });
+      void bumpCatalogVersion();
       setEditingResource(null);
       setNewResourceTitle('');
       setNewResourceDesc('');
@@ -1613,6 +1663,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
   const handleReorderResource = async (resId: string, newOrder: number) => {
     try {
       await updateDoc(doc(db, 'resources', resId), { order: Number(newOrder) });
+      void bumpCatalogVersion();
       notifySave(`تم تعديل ترتيب المصدر إلى (${newOrder}) بنجاح`);
     } catch (err) {
       console.error(err);
@@ -2095,11 +2146,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         return updatedList;
       });
 
-      // 3. Persist to Firestore with merge: true (and updateDoc if editing)
+      // 3. Persist to Firestore with single merge write + notify student caches
       await setDoc(doc(db, 'content_items', targetId), sanitizedPayload, { merge: true });
-      if (editingItem) {
-        await updateDoc(doc(db, 'content_items', targetId), sanitizedPayload).catch(() => {});
-      }
+      void bumpCatalogVersion();
 
       try {
         localStorage.removeItem('admin_draft_item_title');
@@ -2178,6 +2227,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         linkedFileIds: updatedLinkedFiles,
         updatedAt: new Date().toISOString(),
       });
+      void bumpCatalogVersion();
 
       setItems((prev) =>
         prev.map((it) =>
@@ -2360,6 +2410,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         }
         notifySave(`تم حذف "${deleteTarget.title}" بنجاح 🗑️`);
       }
+      void bumpCatalogVersion();
       setDeleteTarget(null);
     } catch (err) {
       console.error('Error during deletion:', err);
@@ -2479,6 +2530,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         ).catch(() => {});
       }
 
+      void bumpCatalogVersion();
       notifySave(`تم حفظ روابط التليجرام والمميزات الخاصة بكورس "${targetCourse.title}" بنجاح ⚡`);
     } catch (err) {
       console.error('Error saving features in admin:', err);

@@ -24,7 +24,7 @@ import {
 import { StudentUser, SystemSettings } from '../types';
 import { BrandLogo } from './BrandLogo';
 import { TelegramLoginCard, TelegramAccount } from './TelegramLoginCard';
-import { db } from '../firebase';
+import { db, OperationType, reportFirestoreListenerError } from '../firebase';
 import {
   collection,
   query,
@@ -326,7 +326,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
         }
       },
       (err) => {
-        console.warn('Telegram session snapshot listener notice:', err);
+        reportFirestoreListenerError(err, OperationType.GET, `telegram_login_sessions/${activeBotSessionId}`);
       }
     );
 
@@ -346,7 +346,9 @@ export const AuthView: React.FC<AuthViewProps> = ({
           }
         }
       },
-      () => {}
+      (err) => {
+        reportFirestoreListenerError(err, OperationType.GET, 'telegram_login_sessions/global_latest');
+      }
     );
 
     // 3. Secondary HTTP polling fallback every 1000ms

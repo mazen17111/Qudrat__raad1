@@ -1035,6 +1035,7 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
           {/* Click & Touch Overlay Shield */}
           {!hasError && (
             <div
+              data-transparent-overlay="true"
               onClick={() => {
                 if (lastPointerTypeRef.current === 'touch' && isPlaying && !controlsVisible) {
                   scheduleHideControls();
@@ -1095,7 +1096,10 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
 
           {/* Buffering Indicator */}
           {isBuffering && isPlaying && !hasError && (
-            <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-black/30">
+            <div
+              data-transparent-overlay="true"
+              className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-black/30"
+            >
               <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-slate-900/90 border border-white/15 text-white text-xs font-bold shadow-xl">
                 <RefreshCw className="w-4 h-4 animate-spin text-amber-400" />
                 <span>جاري التحميل...</span>
@@ -1170,20 +1174,23 @@ export const SmartVideoPlayer: React.FC<SmartVideoPlayerProps> = ({
           {/* Unified Custom Platform Control Bar (Exact match to YouTube custom player + PiP) */}
           {!hasError && (
             <div
+              data-video-controls-bar="true"
               onClick={(e) => e.stopPropagation()}
               className={`absolute inset-x-0 bottom-0 z-30 bg-gradient-to-t from-black via-black/92 to-transparent pt-5 pb-2 px-2 sm:px-4 transition-opacity duration-200 ${
                 controlsVisible || !isPlaying || isFloatingPiP ? 'opacity-100' : 'opacity-0 pointer-events-none'
               }`}
             >
               {/* Touch-Friendly Gradient Seek Slider */}
-              <div className="relative w-full h-7 sm:h-5 flex items-center group/seek mb-1 touch-none" dir="ltr">
-                <div className="w-full h-1.5 rounded-full bg-white/25 overflow-hidden relative">
+              <div data-transparent-overlay="true" className="relative w-full h-7 sm:h-5 flex items-center group/seek mb-1 touch-none" dir="ltr">
+                <div data-progress-track="true" className="w-full h-1.5 rounded-full bg-white/25 overflow-hidden relative">
                   <div
+                    data-seek-fill="true"
                     className="h-full bg-gradient-to-r from-blue-500 via-cyan-400 to-emerald-400 transition-all duration-100"
                     style={{ width: `${progressPct}%` }}
                   />
                 </div>
                 <div
+                  data-seek-fill="true"
                   className="pointer-events-none absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3.5 h-3.5 rounded-full bg-white shadow-md ring-2 ring-blue-500 transition-transform group-hover/seek:scale-110"
                   style={{ left: `${progressPct}%` }}
                 />

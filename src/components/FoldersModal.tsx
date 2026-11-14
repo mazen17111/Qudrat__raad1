@@ -17,14 +17,22 @@ import { StudentUser, FolderItem, FolderQuestionItem, ExamQuestion } from '../ty
 import { db } from '../firebase';
 import { markQuestionAsPermanentlyDeleted } from '../mistakesService';
 import {
+  addLocalFolder,
+  ensureStudentFoldersLoaded,
+  getStudentFoldersSnapshot,
+  removeLocalFolder,
+  removeLocalFolderQuestions,
+  removeLocalFolderQuestionsByFolder,
+  subscribeStudentFolders,
+} from '../utils/studentFoldersStore';
+import {
   collection,
   query,
   where,
   getDocs,
   addDoc,
   deleteDoc,
-  doc,
-  onSnapshot
+  doc
 } from 'firebase/firestore';
 
 interface FoldersModalProps {
@@ -62,28 +70,27 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
   const [folderCounts, setFolderCounts] = useState<Record<string, number>>({});
   const [zoomedImage, setZoomedImage] = useState<string | null>(null);
 
-  // Load folders in real-time strictly for this course
+  // Sync folders, per-folder counts, and selected folder questions from unified studentFoldersStore (zero duplicate listeners!)
   useEffect(() => {
-    if (!isOpen || !currentUser) return;
-    const q = query(
-      collection(db, 'folders'),
-      where('userId', '==', currentUser.id)
-    );
-    const unsub = onSnapshot(q, (snapshot) => {
+    if (!isOpen || !currentUser?.id) return;
+    let isCreatingDefault = false;
+
+    const applyStoreSnapshot = () => {
+      const snap = getStudentFoldersSnapshot(currentUser.id);
       const list: FolderItem[] = [];
       let hasMistakes = false;
-      snapshot.forEach((d) => {
-        const item = { id: d.id, ...d.data() } as FolderItem;
+
+      snap.folders.forEach((orig) => {
+        const item = { ...orig };
         const isMistakes = Boolean(
           item.isDefaultMistakesFolder ||
-          item.title === 'مجلد الاخطاء' ||
-          item.title === 'مجلد الأخطاء' ||
-          item.title === 'مجلد كل الأخطاء' ||
-          item.title === 'دفتر الاخطاء' ||
-          item.title === 'دفتر الأخطاء'
+            item.title === 'مجلد الاخطاء' ||
+            item.title === 'مجلد الأخطاء' ||
+            item.title === 'مجلد كل الأخطاء' ||
+            item.title === 'دفتر الاخطاء' ||
+            item.title === 'دفتر الأخطاء'
         );
         const folderCourse = item.courseId || 'course_default_1';
-        // Strict course separation! Course 1 folders never mix with Course 2 folders
         if (folderCourse === currentCourseId) {
           if (isMistakes) {
             hasMistakes = true;
@@ -94,80 +101,82 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
         }
       });
 
-      // Ensure "مجلد الأخطاء" always exists
-      if (!hasMistakes) {
-        addDoc(collection(db, 'folders'), {
+      // Only provision default mistakes folder once store has finished initial load
+      if (snap.hasLoadedOnce && !hasMistakes && !isCreatingDefault) {
+        isCreatingDefault = true;
+        const createdAt = new Date().toISOString();
+        const payload = {
           userId: currentUser.id,
           courseId: currentCourseId,
           title: 'مجلد الأخطاء',
           isDefaultMistakesFolder: true,
-          createdAt: new Date().toISOString(),
-        });
+          createdAt,
+        };
+        addDoc(collection(db, 'folders'), payload)
+          .then((ref) => {
+            addLocalFolder(currentUser.id, { id: ref.id, ...payload });
+          })
+          .catch(() => {
+            isCreatingDefault = false;
+          });
       }
 
-      // Sort with mistakes folder first
       list.sort((a, b) => {
         if (a.isDefaultMistakesFolder) return -1;
         if (b.isDefaultMistakesFolder) return 1;
         return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
       });
 
+      const counts: Record<string, number> = {};
+      snap.folderQuestions.forEach((qItem) => {
+        if (qItem.folderId) {
+          counts[qItem.folderId] = (counts[qItem.folderId] || 0) + 1;
+        }
+      });
+
       setFolders(list);
+      setFolderCounts(counts);
       setSelectedFolder((prev) => {
         if (prev && list.some((f) => f.id === prev.id)) {
           return list.find((f) => f.id === prev.id) || list[0];
         }
         return list[0] || null;
       });
-    });
+    };
 
-    return () => unsub();
-  }, [isOpen, currentUser, currentCourseId]);
+    applyStoreSnapshot();
+    const unsub = subscribeStudentFolders(currentUser.id, applyStoreSnapshot);
 
-  // Real-time live count of questions per folder
-  useEffect(() => {
-    if (!isOpen || !currentUser) return;
-    const qAll = query(
-      collection(db, 'folder_questions'),
-      where('userId', '==', currentUser.id)
-    );
-    const unsubAll = onSnapshot(qAll, (snap) => {
-      const counts: Record<string, number> = {};
-      snap.forEach((d) => {
-        const data = d.data();
-        if (data.folderId) {
-          counts[data.folderId] = (counts[data.folderId] || 0) + 1;
-        }
-      });
-      setFolderCounts(counts);
-    });
-
-    return () => unsubAll();
-  }, [isOpen, currentUser]);
-
-  // Load questions for selected folder with continuous real-time sync
-  useEffect(() => {
-    if (!selectedFolder?.id) {
-      setFolderQuestions([]);
-      return;
+    if (!getStudentFoldersSnapshot(currentUser.id).hasLoadedOnce) {
+      setLoadingQuestions(true);
     }
-    setLoadingQuestions(true);
-    const q = query(
-      collection(db, 'folder_questions'),
-      where('folderId', '==', selectedFolder.id)
-    );
-    const unsub = onSnapshot(q, (snap) => {
-      const list: FolderQuestionItem[] = [];
-      snap.forEach((d) => {
-        list.push({ id: d.id, ...d.data() } as FolderQuestionItem);
-      });
-      list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      setFolderQuestions(list);
+    ensureStudentFoldersLoaded(currentUser.id).finally(() => {
       setLoadingQuestions(false);
     });
 
     return () => unsub();
-  }, [selectedFolder?.id]);
+  }, [isOpen, currentUser?.id, currentCourseId]);
+
+  // Derive selected folder's questions directly from unified store (0 extra Firestore queries!)
+  useEffect(() => {
+    if (!isOpen || !currentUser?.id || !selectedFolder?.id) {
+      setFolderQuestions([]);
+      return;
+    }
+
+    const syncSelectedQuestions = () => {
+      const { folderQuestions: allQ } = getStudentFoldersSnapshot(currentUser.id);
+      const list = allQ
+        .filter((qItem) => qItem.folderId === selectedFolder.id)
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      setFolderQuestions(list);
+      setLoadingQuestions(false);
+    };
+
+    syncSelectedQuestions();
+    const unsub = subscribeStudentFolders(currentUser.id, syncSelectedQuestions);
+    return () => unsub();
+  }, [isOpen, currentUser?.id, selectedFolder?.id]);
 
   if (!isOpen) return null;
 
@@ -175,13 +184,15 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
     e.preventDefault();
     if (!newFolderTitle.trim()) return;
     try {
-      await addDoc(collection(db, 'folders'), {
+      const payload = {
         userId: currentUser.id,
         courseId: currentCourseId,
         title: newFolderTitle.trim(),
         isDefaultMistakesFolder: false,
         createdAt: new Date().toISOString(),
-      });
+      };
+      const newRef = await addDoc(collection(db, 'folders'), payload);
+      addLocalFolder(currentUser.id, { id: newRef.id, ...payload });
       setNewFolderTitle('');
       setIsCreating(false);
     } catch (err) {
@@ -202,17 +213,25 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
     if (!folderToDelete) return;
     setIsDeletingFolder(true);
     try {
-      // 1. Delete all questions inside this folder
+      // 1. Delete all questions inside this folder (using cached questions list first to avoid unnecessary query)
       try {
-        const qRef = query(collection(db, 'folder_questions'), where('folderId', '==', folderToDelete.id));
-        const qSnap = await getDocs(qRef);
-        await Promise.all(qSnap.docs.map((d) => deleteDoc(doc(db, 'folder_questions', d.id))));
+        const cachedInFolder = getStudentFoldersSnapshot(currentUser.id).folderQuestions.filter(
+          (fq) => fq.folderId === folderToDelete.id
+        );
+        if (cachedInFolder.length > 0) {
+          await Promise.all(cachedInFolder.map((fq) => deleteDoc(doc(db, 'folder_questions', fq.id)).catch(() => {})));
+        } else {
+          const qRef = query(collection(db, 'folder_questions'), where('folderId', '==', folderToDelete.id));
+          const qSnap = await getDocs(qRef);
+          await Promise.all(qSnap.docs.map((d) => deleteDoc(doc(db, 'folder_questions', d.id))));
+        }
       } catch (qErr) {
         console.warn('Error clearing folder questions:', qErr);
       }
 
-      // 2. Delete the folder document itself
+      // 2. Delete the folder document itself & update unified store
       await deleteDoc(doc(db, 'folders', folderToDelete.id));
+      removeLocalFolder(currentUser.id, folderToDelete.id);
       if (selectedFolder?.id === folderToDelete.id) {
         const remaining = folders.filter((f) => f.id !== folderToDelete.id);
         setSelectedFolder(remaining[0] || null);
@@ -229,21 +248,22 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
     try {
       // 1. Delete by direct document ID
       await deleteDoc(doc(db, 'folder_questions', qItem.id));
+      const removedIds = [qItem.id];
 
-      // 2. Clear any lingering duplicates of this question in this folder
+      // 2. Clear any lingering duplicates in this folder using cached list (0 extra reads!)
       if (selectedFolder?.id && qItem.questionText) {
-        const qRef = query(
-          collection(db, 'folder_questions'),
-          where('folderId', '==', selectedFolder.id),
-          where('questionText', '==', qItem.questionText)
+        const duplicates = getStudentFoldersSnapshot(currentUser.id).folderQuestions.filter(
+          (fq) => fq.folderId === selectedFolder.id && fq.questionText === qItem.questionText && fq.id !== qItem.id
         );
-        const snap = await getDocs(qRef);
-        for (const d of snap.docs) {
-          if (d.id !== qItem.id) {
-            await deleteDoc(d.ref).catch(() => {});
-          }
-        }
+        await Promise.all(
+          duplicates.map(async (dup) => {
+            removedIds.push(dup.id);
+            await deleteDoc(doc(db, 'folder_questions', dup.id)).catch(() => {});
+          })
+        );
       }
+
+      removeLocalFolderQuestions(currentUser.id, removedIds);
 
       // 3. Mark permanently deleted so it NEVER returns to this course!
       if (currentUser?.id) {
@@ -252,11 +272,12 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
           courseId: currentCourseId,
           folderId: selectedFolder?.id,
           originalQuestionId: qItem.originalQuestionId,
+          alternateOriginalQuestionId: qItem.originalQuestionId !== qItem.id ? qItem.id : undefined,
           questionText: qItem.questionText,
         });
       }
 
-      setFolderQuestions((prev) => prev.filter((item) => item.id !== qItem.id));
+      setFolderQuestions((prev) => prev.filter((item) => !removedIds.includes(item.id)));
     } catch (err) {
       console.error('Error deleting question:', err);
     }
@@ -266,23 +287,29 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
     if (!selectedFolder) return;
     setIsClearingQuestions(true);
     try {
-      const qRef = query(collection(db, 'folder_questions'), where('folderId', '==', selectedFolder.id));
-      const snap = await getDocs(qRef);
+      const targetQuestions =
+        folderQuestions.length > 0
+          ? folderQuestions
+          : (await getDocs(query(collection(db, 'folder_questions'), where('folderId', '==', selectedFolder.id)))).docs.map(
+              (d) => ({ id: d.id, ...d.data() } as FolderQuestionItem)
+            );
+
       await Promise.all(
-        snap.docs.map(async (d) => {
-          const data = d.data();
+        targetQuestions.map(async (data) => {
           if (currentUser?.id) {
             await markQuestionAsPermanentlyDeleted({
               userId: currentUser.id,
               courseId: currentCourseId,
               folderId: selectedFolder.id,
               originalQuestionId: data.originalQuestionId,
+              alternateOriginalQuestionId: data.originalQuestionId !== data.id ? data.id : undefined,
               questionText: data.questionText,
             });
           }
-          await deleteDoc(d.ref);
+          await deleteDoc(doc(db, 'folder_questions', data.id));
         })
       );
+      removeLocalFolderQuestionsByFolder(currentUser.id, selectedFolder.id);
       setFolderQuestions([]);
       setShowDeleteAllQuestionsModal(false);
       setFolderNotice(`تم حذف جميع الأسئلة من مجلد "${selectedFolder.title}" نهائياً ولن تعود أبداً ✓`);

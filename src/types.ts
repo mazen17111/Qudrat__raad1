@@ -51,10 +51,10 @@ export interface StudentUser {
   isCounterPaused?: boolean; // هل تم قفل وتجميد العداد مؤقتاً
   pausedRemainingDays?: number; // عدد الأيام المتبقية المحفوظة عند قفل العداد
   pausedAt?: string; // تاريخ ووقت قفل العداد
-  preferredThemeColor?: 'default' | 'red' | 'green' | 'blue' | 'purple' | 'pink'; // ثيم ولون الكورس المخصص المختار من الطالب
+  preferredThemeColor?: CourseThemeColor; // ثيم ولون الكورس المخصص المختار من الطالب
 }
 
-export type CourseThemeColor = 'default' | 'red' | 'green' | 'blue' | 'purple' | 'pink';
+export type CourseThemeColor = 'default' | 'red' | 'green' | 'blue' | 'purple' | 'pink' | 'orange' | 'black';
 
 export type ExamSystemType = 'nimr' | 'standard' | 'blue';
 
@@ -274,5 +274,6 @@ export interface SystemSettings {
   introLesson?: IntroLessonConfig;
   features?: FeaturesConfig;
   logoUrl?: string;
+  catalogUpdatedAt?: number;
   updatedAt?: string;
 }

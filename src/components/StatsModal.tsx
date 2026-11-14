@@ -16,8 +16,15 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { StudentUser, ExamAttempt, ContentItem, SectionItem, ResourceItem } from '../types';
-import { db } from '../firebase';
-import { collection, query, where, getDocs, onSnapshot } from 'firebase/firestore';
+import { db, OperationType, reportFirestoreListenerError } from '../firebase';
+import {
+  getCachedExamAttempts,
+  hasSyncedExamAttemptsRecently,
+  markExamAttemptsSynced,
+  mergeRemoteExamAttempts,
+} from '../utils/examAttemptsCache';
+import { loadCachedContentItems } from '../utils/firestoreCache';
+import { collection, query, where, getDocs } from 'firebase/firestore';
 
 interface StatsModalProps {
   isOpen: boolean;
@@ -42,54 +49,67 @@ export const StatsModal: React.FC<StatsModalProps> = ({
   watchedVideoIds: propsWatchedVideoIds,
   onSelectVideo,
 }) => {
-  const [attempts, setAttempts] = useState<ExamAttempt[]>([]);
+  const [attempts, setAttempts] = useState<ExamAttempt[]>(() => getCachedExamAttempts(currentUser?.id));
   const [loadingAttempts, setLoadingAttempts] = useState(false);
-  const [dbItems, setDbItems] = useState<ContentItem[]>([]);
+  const [dbItems, setDbItems] = useState<ContentItem[]>(() => loadCachedContentItems());
   const [activeTab, setActiveTab] = useState<'videos' | 'exams'>('videos');
 
-  // Real-time listener for student exam attempts
+  // Load cached attempts instantaneously; fetch from Firestore at most once per session/TTL
   useEffect(() => {
-    if (!isOpen || !currentUser) return;
-    setLoadingAttempts(true);
-
-    try {
-      const q = query(
-        collection(db, 'exam_attempts'),
-        where('userId', '==', currentUser.id)
-      );
-      const unsub = onSnapshot(
-        q,
-        (snap) => {
-          const list: ExamAttempt[] = [];
-          snap.forEach((doc) => {
-            list.push({ id: doc.id, ...doc.data() } as ExamAttempt);
-          });
-          // Sort strictly by createdAt descending (most recent first)
-          list.sort((a, b) => {
-            const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-            const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-            return timeB - timeA;
-          });
-          setAttempts(list);
-          setLoadingAttempts(false);
-        },
-        (err) => {
-          console.error('Error fetching exam attempts:', err);
-          setLoadingAttempts(false);
-        }
-      );
-
-      return () => unsub();
-    } catch (err) {
-      console.error(err);
-      setLoadingAttempts(false);
+    if (!isOpen || !currentUser?.id) return;
+    const cached = getCachedExamAttempts(currentUser.id);
+    if (cached.length > 0) {
+      setAttempts(cached);
     }
-  }, [isOpen, currentUser]);
 
-  // Fallback to fetch content items from Firestore if not provided via props
+    if (hasSyncedExamAttemptsRecently(currentUser.id)) {
+      setLoadingAttempts(false);
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingAttempts(cached.length === 0);
+
+    (async () => {
+      try {
+        const q = query(
+          collection(db, 'exam_attempts'),
+          where('userId', '==', currentUser.id)
+        );
+        const snap = await getDocs(q);
+        if (cancelled) return;
+        const list: ExamAttempt[] = [];
+        snap.forEach((docSnap) => {
+          list.push({ id: docSnap.id, ...docSnap.data() } as ExamAttempt);
+        });
+        const merged = mergeRemoteExamAttempts(currentUser.id, list);
+        markExamAttemptsSynced(currentUser.id);
+        setAttempts(merged);
+      } catch (err) {
+        if (!cancelled) {
+          reportFirestoreListenerError(err, OperationType.LIST, 'exam_attempts');
+          setAttempts(getCachedExamAttempts(currentUser.id));
+        }
+      } finally {
+        if (!cancelled) setLoadingAttempts(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, currentUser?.id]);
+
+  // Fallback to cached content items if propsItems isn't provided (zero extra Firestore reads)
   useEffect(() => {
     if (!isOpen) return;
     if (propsItems && propsItems.length > 0) return;
+
+    const cachedItems = loadCachedContentItems();
+    if (cachedItems.length > 0) {
+      setDbItems(cachedItems);
+      return;
+    }
 
     const fetchItems = async () => {
       try {
@@ -295,6 +315,7 @@ export const StatsModal: React.FC<StatsModalProps> = ({
 
               {/* Progress Bar Track */}
               <div
+                data-progress-track="true"
                 className={`w-full h-3.5 sm:h-4 rounded-full p-0.5 overflow-hidden border shadow-inner ${
                   isDarkMode
                     ? 'bg-slate-950/80 border-slate-700/60'
@@ -302,11 +323,12 @@ export const StatsModal: React.FC<StatsModalProps> = ({
                 }`}
               >
                 <div
+                  data-seek-fill="true"
                   className="h-full rounded-full bg-gradient-to-r from-blue-600 via-indigo-500 to-cyan-400 transition-all duration-700 shadow-md shadow-blue-500/30 relative"
                   style={{ width: `${Math.max(videoProgressPercent > 0 ? 5 : 0, videoProgressPercent)}%` }}
                 >
                   {videoProgressPercent > 15 && (
-                    <div className="absolute inset-0 bg-white/20 animate-pulse rounded-full" />
+                    <div data-transparent-overlay="true" className="absolute inset-0 bg-white/20 animate-pulse rounded-full" />
                   )}
                 </div>
               </div>
@@ -383,6 +405,7 @@ export const StatsModal: React.FC<StatsModalProps> = ({
 
               {/* Progress Bar Track */}
               <div
+                data-progress-track="true"
                 className={`w-full h-3.5 sm:h-4 rounded-full p-0.5 overflow-hidden border shadow-inner ${
                   isDarkMode
                     ? 'bg-slate-950/80 border-slate-700/60'
@@ -390,11 +413,12 @@ export const StatsModal: React.FC<StatsModalProps> = ({
                 }`}
               >
                 <div
+                  data-seek-fill="true"
                   className="h-full rounded-full bg-gradient-to-r from-emerald-500 via-teal-400 to-amber-400 transition-all duration-700 shadow-md shadow-emerald-500/30 relative"
                   style={{ width: `${Math.max(examProgressPercent > 0 ? 5 : 0, examProgressPercent)}%` }}
                 >
                   {examProgressPercent > 15 && (
-                    <div className="absolute inset-0 bg-white/20 animate-pulse rounded-full" />
+                    <div data-transparent-overlay="true" className="absolute inset-0 bg-white/20 animate-pulse rounded-full" />
                   )}
                 </div>
               </div>
@@ -617,7 +641,7 @@ export const StatsModal: React.FC<StatsModalProps> = ({
             {/* ================= TAB 2: قائمة الاختبارات المحلولة ================= */}
             {activeTab === 'exams' && (
               <div className="space-y-3">
-                {loadingAttempts ? (
+                {loadingAttempts && attempts.length === 0 ? (
                   <div className="py-12 text-center text-xs text-slate-400 flex flex-col items-center justify-center gap-2">
                     <div className="w-6 h-6 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
                     <span>جاري تحميل سجل اختباراتك...</span>

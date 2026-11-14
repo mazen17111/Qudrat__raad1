@@ -180,14 +180,22 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
   return (
     <div
       className={`min-h-screen flex flex-col justify-between transition-colors duration-200 select-none ${
-        isDarkMode ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-900'
+        currentThemeColor === 'black'
+          ? 'bg-black text-white'
+          : isDarkMode
+          ? 'bg-slate-950 text-slate-100'
+          : 'bg-slate-50 text-slate-900'
       }`}
       dir="rtl"
     >
       {/* ================= TOP HEADER ================= */}
       <header
         className={`sticky top-0 z-40 px-3 sm:px-6 md:px-8 py-2.5 sm:py-3.5 border-b backdrop-blur-xl flex items-center justify-between gap-3 shadow-md ${
-          isDarkMode ? 'bg-slate-900/90 border-slate-800' : 'bg-white/95 border-slate-200'
+          currentThemeColor === 'black'
+            ? 'bg-black border-white/20'
+            : isDarkMode
+            ? 'bg-slate-900/90 border-slate-800'
+            : 'bg-white/95 border-slate-200'
         }`}
       >
         {/* Brand: Completely normal text, no pointer or button hover */}

@@ -1,19 +1,77 @@
-import React, { useState, useEffect } from 'react';
-import { StudentUser, SystemSettings, FeaturesConfig, IntroLessonConfig, CourseItem, CourseThemeColor } from './types';
-import { db, testConnection, seedInitialPlatformData, DEFAULT_SETTINGS, INITIAL_COURSES, restoreDefaultCoursesAndContent } from './firebase';
-import { doc, onSnapshot, collection, updateDoc, arrayUnion } from 'firebase/firestore';
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  StudentUser,
+  SystemSettings,
+  FeaturesConfig,
+  IntroLessonConfig,
+  CourseItem,
+  CourseThemeColor,
+  SectionItem,
+  ResourceItem,
+  ContentItem,
+} from './types';
+import {
+  db,
+  testConnection,
+  seedInitialPlatformData,
+  DEFAULT_SETTINGS,
+  OperationType,
+  reportFirestoreListenerError,
+  subscribeQuotaExceeded,
+  FIRESTORE_PRICING_URL,
+  FIRESTORE_UPGRADE_URL,
+} from './firebase';
+import {
+  loadCachedCourses,
+  loadCachedSections,
+  loadCachedResources,
+  loadCachedContentItems,
+  syncCatalogFromFirestore,
+} from './utils/firestoreCache';
+import { doc, onSnapshot, updateDoc, setDoc, arrayUnion } from 'firebase/firestore';
 import { AuthView } from './components/AuthView';
 import { CoursesPortal } from './components/CoursesPortal';
 import { StudentHome } from './components/StudentHome';
 import { AdminPanel } from './components/AdminPanel';
 import { AdminPasswordModal } from './components/AdminPasswordModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { AlertTriangle, X } from 'lucide-react';
 
 const STUDENT_SESSION_KEY = 'raad_student_auth_session';
 const THEME_STORAGE_KEY = 'raad_platform_theme_dark';
 const CACHED_SETTINGS_KEY = 'raad_cached_system_settings';
-const CACHED_COURSES_KEY = 'raad_cached_courses';
 const COURSE_THEME_STORAGE_KEY = 'raad_student_course_theme_color';
+const VALID_THEME_COLORS: CourseThemeColor[] = ['default', 'red', 'green', 'blue', 'purple', 'pink', 'orange', 'black'];
+
+function normalizeThemeColor(value: unknown): CourseThemeColor | null {
+  if (value === 'white') return 'orange';
+  if (typeof value === 'string' && VALID_THEME_COLORS.includes(value as CourseThemeColor)) {
+    return value as CourseThemeColor;
+  }
+  return null;
+}
+
+function getPerUserThemeStorageKey(userId: string): string {
+  return `raad_student_course_theme_${userId}`;
+}
+
+function getSavedThemeForUser(userId?: string | null): CourseThemeColor | null {
+  if (!userId) return null;
+  try {
+    const saved = localStorage.getItem(getPerUserThemeStorageKey(userId));
+    return normalizeThemeColor(saved);
+  } catch (e) {}
+  return null;
+}
+
+function saveThemeForUser(userId: string | null | undefined, color: CourseThemeColor): void {
+  try {
+    localStorage.setItem(COURSE_THEME_STORAGE_KEY, color);
+    if (userId) {
+      localStorage.setItem(getPerUserThemeStorageKey(userId), color);
+    }
+  } catch (e) {}
+}
 
 // Parse Telegram callback parameters from current URL (e.g. /?id=... or /telegram/callback?id=...)
 function parseTelegramAuthFromUrl(): StudentUser | null {
@@ -119,81 +177,104 @@ export default function App() {
 
   // Initialize courses from cached localStorage immediately so updated courses & covers show in 0ms with no stale flash
   const [courses, setCourses] = useState<CourseItem[]>(() => {
-    try {
-      const saved = localStorage.getItem(CACHED_COURSES_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          // If cached courses contains deleted dummy courses (e.g. course_default_2), discard immediately
-          if (parsed.some((c: CourseItem) => c.id === 'course_default_2')) {
-            try { localStorage.removeItem(CACHED_COURSES_KEY); } catch (e) {}
-            return INITIAL_COURSES;
-          }
-          parsed.forEach((c: CourseItem) => {
-            if (c.imageUrl) {
-              const img = new Image();
-              img.src = c.imageUrl;
-            }
-          });
-          return parsed;
-        }
+    const cached = loadCachedCourses();
+    cached.forEach((c: CourseItem) => {
+      if (c.imageUrl) {
+        const img = new Image();
+        img.src = c.imageUrl;
       }
-    } catch (e) {}
-    return INITIAL_COURSES;
+    });
+    return cached;
   });
 
+  // Preloaded sections, resources & content items so entering any course is instantaneous (0ms)
+  const [sections, setSections] = useState<SectionItem[]>(() => loadCachedSections());
+  const [resources, setResources] = useState<ResourceItem[]>(() => loadCachedResources());
+  const [contentItems, setContentItems] = useState<ContentItem[]>(() => loadCachedContentItems());
+
   const [activeCourse, setActiveCourse] = useState<CourseItem | null>(null);
+  const [isQuotaExceeded, setIsQuotaExceeded] = useState<boolean>(false);
+  const [isQuotaBannerDismissed, setIsQuotaBannerDismissed] = useState<boolean>(false);
+  const pendingThemeRef = useRef<{ userId: string; color: CourseThemeColor } | null>(null);
+
+  useEffect(() => {
+    return subscribeQuotaExceeded((exceeded) => {
+      if (exceeded) {
+        setIsQuotaExceeded(true);
+      }
+    });
+  }, []);
 
   // Initialize and test connection on mount
   useEffect(() => {
-    testConnection();
-    seedInitialPlatformData();
+    (async () => {
+      const connected = await testConnection();
+      if (connected) {
+        await seedInitialPlatformData();
+      }
+    })();
 
     // Listen to real-time global settings & theme
-    const unsub = onSnapshot(doc(db, 'system_settings', 'global'), (docSnap) => {
-      if (docSnap.exists()) {
-        const fetched = docSnap.data() as Partial<SystemSettings>;
-        const mergedFeatures: FeaturesConfig = {
-          telegramMainGroupUrl: fetched.features?.telegramMainGroupUrl || DEFAULT_SETTINGS.features?.telegramMainGroupUrl || 'https://t.me/raad_qiyas_main',
-          telegramDiscussionGroupUrl: fetched.features?.telegramDiscussionGroupUrl || DEFAULT_SETTINGS.features?.telegramDiscussionGroupUrl || 'https://t.me/raad_qiyas_discussion',
-          isDiagnosticEnabled: fetched.features?.isDiagnosticEnabled ?? true,
-          isFriendsChallengeEnabled: fetched.features?.isFriendsChallengeEnabled ?? true,
-        };
-        const mergedIntroLesson: IntroLessonConfig = {
-          isActive: fetched.introLesson?.isActive ?? true,
-          title: fetched.introLesson?.title || DEFAULT_SETTINGS.introLesson?.title || 'الحصة التعريفية لشرح المنصة وطريقة الاستفادة منها',
-          videoUrl: fetched.introLesson?.videoUrl || DEFAULT_SETTINGS.introLesson?.videoUrl || '',
-          description: fetched.introLesson?.description || DEFAULT_SETTINGS.introLesson?.description,
-        };
-        const updated = {
-          ...DEFAULT_SETTINGS,
-          ...fetched,
-          features: mergedFeatures,
-          introLesson: mergedIntroLesson,
-        };
-        setSystemSettings(updated);
-        try {
-          localStorage.setItem(CACHED_SETTINGS_KEY, JSON.stringify(updated));
-        } catch (e) {}
-        if (updated.logoUrl) {
-          const img = new Image();
-          img.src = updated.logoUrl;
+    const unsub = onSnapshot(
+      doc(db, 'system_settings', 'global'),
+      (docSnap) => {
+        if (docSnap.exists()) {
+          const fetched = docSnap.data() as Partial<SystemSettings>;
+          const mergedFeatures: FeaturesConfig = {
+            telegramMainGroupUrl: fetched.features?.telegramMainGroupUrl || DEFAULT_SETTINGS.features?.telegramMainGroupUrl || 'https://t.me/raad_qiyas_main',
+            telegramDiscussionGroupUrl: fetched.features?.telegramDiscussionGroupUrl || DEFAULT_SETTINGS.features?.telegramDiscussionGroupUrl || 'https://t.me/raad_qiyas_discussion',
+            isDiagnosticEnabled: fetched.features?.isDiagnosticEnabled ?? true,
+            isFriendsChallengeEnabled: fetched.features?.isFriendsChallengeEnabled ?? true,
+          };
+          const mergedIntroLesson: IntroLessonConfig = {
+            isActive: fetched.introLesson?.isActive ?? true,
+            title: fetched.introLesson?.title || DEFAULT_SETTINGS.introLesson?.title || 'الحصة التعريفية لشرح المنصة وطريقة الاستفادة منها',
+            videoUrl: fetched.introLesson?.videoUrl || DEFAULT_SETTINGS.introLesson?.videoUrl || '',
+            description: fetched.introLesson?.description || DEFAULT_SETTINGS.introLesson?.description,
+          };
+          const updated = {
+            ...DEFAULT_SETTINGS,
+            ...fetched,
+            features: mergedFeatures,
+            introLesson: mergedIntroLesson,
+          };
+          setSystemSettings(updated);
+          try {
+            localStorage.setItem(CACHED_SETTINGS_KEY, JSON.stringify(updated));
+          } catch (e) {}
+          if (updated.logoUrl) {
+            const img = new Image();
+            img.src = updated.logoUrl;
+          }
         }
+      },
+      (error) => {
+        reportFirestoreListenerError(error, OperationType.GET, 'system_settings/global');
       }
-    });
+    );
 
-    // Listen to real-time courses collection (NEVER resurrect deleted courses automatically)
-    const unsubCourses = onSnapshot(collection(db, 'courses'), (snap) => {
-      const list: CourseItem[] = [];
-      snap.forEach((d) => list.push({ id: d.id, ...d.data() } as CourseItem));
-      list.sort((a, b) => (a.order || 0) - (b.order || 0));
-      setCourses(list);
-      try {
-        localStorage.setItem(CACHED_COURSES_KEY, JSON.stringify(list));
-      } catch (e) {}
+    return () => {
+      unsub();
+    };
+  }, []);
 
-      // Preload current course images for 0-latency display
-      list.forEach((c) => {
+  // Smart cached sync for courses, sections, resources & content_items:
+  // Only reads Firestore when user is logged in AND cache is empty, expired, or admin updated catalogUpdatedAt
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    let cancelled = false;
+
+    syncCatalogFromFirestore({
+      remoteVersion: systemSettings.catalogUpdatedAt,
+      includeContent: true,
+    }).then((snapshot) => {
+      if (cancelled) return;
+      setCourses(snapshot.courses);
+      setSections(snapshot.sections);
+      setResources(snapshot.resources);
+      setContentItems(snapshot.contentItems);
+
+      snapshot.courses.forEach((c) => {
         if (c.imageUrl) {
           const img = new Image();
           img.src = c.imageUrl;
@@ -202,16 +283,15 @@ export default function App() {
 
       setActiveCourse((prev) => {
         if (!prev) return prev;
-        const fresh = list.find((c) => c.id === prev.id);
+        const fresh = snapshot.courses.find((c) => c.id === prev.id);
         return fresh || null;
       });
     });
 
     return () => {
-      unsub();
-      unsubCourses();
+      cancelled = true;
     };
-  }, []);
+  }, [currentUser?.id, systemSettings.catalogUpdatedAt]);
 
   // Sync platform logo to browser favicon and shortcuts across all browsers
   useEffect(() => {
@@ -227,12 +307,13 @@ export default function App() {
     } catch (e) {}
   }, [systemSettings.logoUrl]);
 
-  // Sync current user document in real-time when logged in
+  // Sync current user document & preload course contents in real-time when logged in
   useEffect(() => {
     if (!currentUser?.id) return;
+    const uid = currentUser.id;
 
     const unsubUser = onSnapshot(
-      doc(db, 'users', currentUser.id),
+      doc(db, 'users', uid),
       (docSnap) => {
         if (!docSnap.exists() || (docSnap.data() as any)?.isDeleted) {
           // Account was deleted by admin (normal or permanent delete) -> Log out immediately so the platform is closed in real-time!
@@ -243,18 +324,47 @@ export default function App() {
           return;
         }
 
-        const updated = { id: docSnap.id, ...docSnap.data() } as StudentUser;
-        setCurrentUser(updated);
+        const rawRemote = docSnap.data() as Partial<StudentUser>;
+        const updated = { id: docSnap.id, ...rawRemote } as StudentUser;
+        const savedLocal = getSavedThemeForUser(uid);
+        const remoteColor = normalizeThemeColor(updated.preferredThemeColor);
+        const pending = pendingThemeRef.current;
+
+        let resolvedColor: CourseThemeColor;
+        if (pending && pending.userId === uid) {
+          resolvedColor = pending.color;
+          if (remoteColor === pending.color) {
+            pendingThemeRef.current = null;
+          }
+        } else if (savedLocal) {
+          // Local explicit student preference always persists until the student changes it themselves
+          resolvedColor = savedLocal;
+        } else if (remoteColor) {
+          resolvedColor = remoteColor;
+          saveThemeForUser(uid, remoteColor);
+        } else {
+          resolvedColor = 'default';
+        }
+
+        const mergedUser: StudentUser = {
+          ...updated,
+          preferredThemeColor: resolvedColor,
+        };
+
+        setCurrentUser(mergedUser);
+        setCourseThemeColor(resolvedColor);
         try {
-          localStorage.setItem(STUDENT_SESSION_KEY, JSON.stringify(updated));
+          localStorage.setItem(STUDENT_SESSION_KEY, JSON.stringify(mergedUser));
         } catch (e) {}
       },
       (error) => {
-        console.warn('Realtime user sync notice:', error);
+        reportFirestoreListenerError(error, OperationType.GET, `users/${uid}`);
       }
     );
 
-    return () => unsubUser();
+    return () => {
+      unsubUser();
+    };
   }, [currentUser?.id]);
 
   // Sync dark / light theme to document HTML element & localStorage
@@ -285,34 +395,46 @@ export default function App() {
     setIsAdminOpen(true);
   };
 
-  // Student explicit logout: only when the student clicks logout does the session clear!
+  // Student explicit logout: clear session ONLY; preserve per-user preferred theme color permanently
   const handleStudentLogout = () => {
     try {
       localStorage.removeItem(STUDENT_SESSION_KEY);
       localStorage.removeItem(COURSE_THEME_STORAGE_KEY);
     } catch (e) {}
+    pendingThemeRef.current = null;
     setCourseThemeColor('default');
     setCurrentUser(null);
     setActiveCourse(null);
   };
 
-  // Student login success: save to state & localStorage
+  // Student login success: restore saved theme color permanently & enter Courses Portal
   const handleStudentLoginSuccess = (user: StudentUser) => {
-    try {
-      localStorage.setItem(STUDENT_SESSION_KEY, JSON.stringify(user));
-    } catch (e) {}
-    setCurrentUser(user);
-    // Student always starts on the Courses Portal per request
-    setActiveCourse(null);
+    const savedLocal = getSavedThemeForUser(user.id);
+    const remoteColor = normalizeThemeColor(user.preferredThemeColor);
+    const resolvedColor: CourseThemeColor = savedLocal || remoteColor || 'default';
 
-    // Ensure every new account starts with 'default', or loads their own saved choice
-    const userColor = (user.preferredThemeColor && ['default', 'red', 'green', 'blue', 'purple', 'pink'].includes(user.preferredThemeColor))
-      ? user.preferredThemeColor
-      : 'default';
-    setCourseThemeColor(userColor);
+    const syncedUser: StudentUser = {
+      ...user,
+      preferredThemeColor: resolvedColor,
+    };
+
     try {
-      localStorage.setItem(COURSE_THEME_STORAGE_KEY, userColor);
+      localStorage.setItem(STUDENT_SESSION_KEY, JSON.stringify(syncedUser));
     } catch (e) {}
+    saveThemeForUser(user.id, resolvedColor);
+
+    if (resolvedColor === 'black') {
+      setIsDarkMode(true);
+    }
+
+    setCurrentUser(syncedUser);
+    setActiveCourse(null);
+    setCourseThemeColor(resolvedColor);
+
+    // If local saved color differs from user doc, quietly sync back to Firestore
+    if (savedLocal && remoteColor !== savedLocal) {
+      setDoc(doc(db, 'users', user.id), { preferredThemeColor: savedLocal }, { merge: true }).catch(() => {});
+    }
   };
 
   // Course activation handler
@@ -346,43 +468,63 @@ export default function App() {
   };
 
   const [courseThemeColor, setCourseThemeColor] = useState<CourseThemeColor>(() => {
-    if (currentUser?.preferredThemeColor && ['default', 'red', 'green', 'blue', 'purple', 'pink'].includes(currentUser.preferredThemeColor)) {
-      return currentUser.preferredThemeColor as CourseThemeColor;
+    const savedForUser = getSavedThemeForUser(currentUser?.id);
+    if (savedForUser) return savedForUser;
+    const normalizedUserColor = normalizeThemeColor(currentUser?.preferredThemeColor);
+    if (normalizedUserColor) {
+      return normalizedUserColor;
     }
     try {
       const saved = localStorage.getItem(COURSE_THEME_STORAGE_KEY);
-      if (saved && ['default', 'red', 'green', 'blue', 'purple', 'pink'].includes(saved)) {
-        return saved as CourseThemeColor;
+      const normalizedSaved = normalizeThemeColor(saved);
+      if (normalizedSaved) {
+        return normalizedSaved;
       }
     } catch (e) {}
     return 'default';
   });
 
-  // Sync preferredThemeColor if updated in user document or on user change
+  // Sync preferredThemeColor if user changes, never discarding saved per-user preference
   useEffect(() => {
-    if (currentUser) {
-      const userColor = (currentUser.preferredThemeColor && ['default', 'red', 'green', 'blue', 'purple', 'pink'].includes(currentUser.preferredThemeColor))
-        ? currentUser.preferredThemeColor
-        : 'default';
+    if (currentUser?.id) {
+      const savedLocal = getSavedThemeForUser(currentUser.id);
+      const userColor: CourseThemeColor = savedLocal
+        || normalizeThemeColor(currentUser.preferredThemeColor)
+        || 'default';
       setCourseThemeColor(userColor);
-      try {
-        localStorage.setItem(COURSE_THEME_STORAGE_KEY, userColor);
-      } catch (e) {}
+      saveThemeForUser(currentUser.id, userColor);
     } else {
       setCourseThemeColor('default');
     }
-  }, [currentUser?.id, currentUser?.preferredThemeColor]);
+  }, [currentUser?.id]);
+
+  // Apply pure-black mode globally when student's active theme is 'black'
+  useEffect(() => {
+    const isAllBlack = Boolean(currentUser && !isAdminOpen && courseThemeColor === 'black');
+    document.documentElement.classList.toggle('theme-black', isAllBlack);
+  }, [currentUser, isAdminOpen, courseThemeColor]);
 
   const handleSelectCourseThemeColor = async (color: CourseThemeColor) => {
     setCourseThemeColor(color);
-    try {
-      localStorage.setItem(COURSE_THEME_STORAGE_KEY, color);
-    } catch (e) {}
+    saveThemeForUser(currentUser?.id, color);
+
+    if (color === 'black') {
+      setIsDarkMode(true);
+    }
 
     if (currentUser?.id) {
+      pendingThemeRef.current = { userId: currentUser.id, color };
+      setCurrentUser((prev) => {
+        if (!prev) return prev;
+        const updated = { ...prev, preferredThemeColor: color };
+        try {
+          localStorage.setItem(STUDENT_SESSION_KEY, JSON.stringify(updated));
+        } catch (e) {}
+        return updated;
+      });
       try {
         const userRef = doc(db, 'users', currentUser.id);
-        await updateDoc(userRef, { preferredThemeColor: color });
+        await setDoc(userRef, { preferredThemeColor: color }, { merge: true });
       } catch (err) {
         console.warn('Failed to update preferredThemeColor in Firestore:', err);
       }
@@ -435,6 +577,34 @@ export default function App() {
 
   return (
     <div className={isDarkMode ? 'dark min-h-screen bg-slate-950 text-white w-full max-w-full overflow-x-hidden' : 'light min-h-screen bg-white text-slate-900 w-full max-w-full overflow-x-hidden'} dir="rtl">
+      {isQuotaExceeded && !isQuotaBannerDismissed && (
+        <div className="sticky top-0 z-[9999] bg-amber-500/95 text-slate-950 px-4 py-2.5 shadow-lg border-b border-amber-600">
+          <div className="max-w-6xl mx-auto flex items-start sm:items-center justify-between gap-3 text-xs sm:text-sm font-bold">
+            <div className="flex items-start sm:items-center gap-2.5 flex-wrap">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 sm:mt-0 text-slate-950" />
+              <span>
+                تم تجاوز الحد اليومي المجاني لقراءات قاعدة البيانات (Firestore Free Daily Read Quota) — يتم العمل الآن من النسخة المحفوظة مؤقتاً، وسيتم إعادة تعيين الحصة تلقائياً في اليوم التالي.
+              </span>
+              <div className="flex items-center gap-3 underline font-black">
+                <a href={FIRESTORE_UPGRADE_URL} target="_blank" rel="noopener noreferrer" className="hover:opacity-80">
+                  ترقية قاعدة البيانات
+                </a>
+                <a href={FIRESTORE_PRICING_URL} target="_blank" rel="noopener noreferrer" className="hover:opacity-80">
+                  تفاصيل باقة Spark
+                </a>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsQuotaBannerDismissed(true)}
+              className="p-1 rounded-lg hover:bg-black/10 transition shrink-0"
+              aria-label="إغلاق التنبيه"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
       {/* If Admin Panel is open */}
       {isAdminOpen ? (
         <AdminPanel
@@ -473,6 +643,9 @@ export default function App() {
               onBackToCourses={() => setActiveCourse(null)}
               currentThemeColor={courseThemeColor}
               onSelectThemeColor={handleSelectCourseThemeColor}
+              preloadedSections={sections}
+              preloadedResources={resources}
+              preloadedContentItems={contentItems}
             />
           </ErrorBoundary>
         )

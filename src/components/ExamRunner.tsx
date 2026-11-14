@@ -42,7 +42,20 @@ import { Whiteboard } from './Whiteboard';
 import { NimrExamSystem } from './systems/NimrExamSystem';
 import { DefaultExamSystem } from './systems/DefaultExamSystem';
 import { BlueExamSystem } from './systems/BlueExamSystem';
-import { db } from '../firebase';
+import { db, OperationType, reportFirestoreListenerError } from '../firebase';
+import {
+  saveLocalExamAttempt,
+  replaceLocalAttemptId,
+  hasSyncedExamAttemptsRecently,
+} from '../utils/examAttemptsCache';
+import {
+  addLocalFolder,
+  addLocalFolderQuestion,
+  ensureStudentFoldersLoaded,
+  getStudentFoldersSnapshot,
+  removeLocalFolderQuestions,
+  subscribeStudentFolders,
+} from '../utils/studentFoldersStore';
 import {
   transferMistakeImmediately,
   getOrCreateMistakesFolderId,
@@ -58,7 +71,6 @@ import {
   getDocs,
   query,
   where,
-  onSnapshot
 } from 'firebase/firestore';
 
 interface FolderQuestionDoc {
@@ -582,77 +594,48 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
 
   const [timeLeft, setTimeLeft] = useState(totalSeconds);
 
-  // Subscribe to live folders from Firestore so newly created folders appear immediately
+  // Sync folders & folder_questions from unified studentFoldersStore (zero duplicate onSnapshot reads!)
   useEffect(() => {
     if (!currentUser?.id) return;
-    const q = query(
-      collection(db, 'folders'),
-      where('userId', '==', currentUser.id)
-    );
-    const unsub = onSnapshot(
-      q,
-      (snapshot) => {
-        const list: FolderItem[] = [];
-        snapshot.forEach((d) => {
-          const item = { id: d.id, ...d.data() } as FolderItem;
-          // Scope folders strictly to current course (course_default_1 handles legacy records without courseId)
-          const matchesCourse = item.courseId
-            ? item.courseId === currentCourseId
-            : currentCourseId === 'course_default_1';
-          if (!matchesCourse) return;
 
-          if (item.isDefaultMistakesFolder || item.title === 'مجلد الاخطاء' || item.title === 'مجلد الأخطاء') {
-            item.isDefaultMistakesFolder = true;
-          }
-          list.push(item);
-        });
+    const applyStoreSnapshot = () => {
+      const snap = getStudentFoldersSnapshot(currentUser.id);
+      const list: FolderItem[] = [];
+      snap.folders.forEach((orig) => {
+        const item = { ...orig };
+        const matchesCourse = item.courseId
+          ? item.courseId === currentCourseId
+          : currentCourseId === 'course_default_1';
+        if (!matchesCourse) return;
+        if (item.isDefaultMistakesFolder || item.title === 'مجلد الاخطاء' || item.title === 'مجلد الأخطاء') {
+          item.isDefaultMistakesFolder = true;
+        }
+        list.push(item);
+      });
 
-        // Sort with mistakes folder always first
-        list.sort((a, b) => {
-          if (a.isDefaultMistakesFolder) return -1;
-          if (b.isDefaultMistakesFolder) return 1;
-          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-        });
+      list.sort((a, b) => {
+        if (a.isDefaultMistakesFolder) return -1;
+        if (b.isDefaultMistakesFolder) return 1;
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      });
 
-        setUserFolders(list);
-      },
-      (err) => {
-        console.warn('Live folders listener note:', err);
-      }
-    );
+      const records: FolderQuestionDoc[] = snap.folderQuestions.map((fq) => ({
+        id: fq.id,
+        folderId: fq.folderId,
+        originalQuestionId: fq.originalQuestionId,
+        questionText: fq.questionText || '',
+      }));
+
+      setUserFolders(list);
+      setUserFolderQuestions(records);
+    };
+
+    applyStoreSnapshot();
+    const unsub = subscribeStudentFolders(currentUser.id, applyStoreSnapshot);
+    ensureStudentFoldersLoaded(currentUser.id);
 
     return () => unsub();
   }, [currentUser?.id, currentCourseId]);
-
-  // Subscribe to all questions the user has in folders in real-time
-  useEffect(() => {
-    if (!currentUser?.id) return;
-    const qFQ = query(
-      collection(db, 'folder_questions'),
-      where('userId', '==', currentUser.id)
-    );
-    const unsubFQ = onSnapshot(
-      qFQ,
-      (snapshot) => {
-        const records: FolderQuestionDoc[] = [];
-        snapshot.forEach((d) => {
-          const data = d.data();
-          records.push({
-            id: d.id,
-            folderId: data.folderId,
-            originalQuestionId: data.originalQuestionId,
-            questionText: data.questionText || '',
-          });
-        });
-        setUserFolderQuestions(records);
-      },
-      (err) => {
-        console.warn('Live folder_questions listener note:', err);
-      }
-    );
-
-    return () => unsubFQ();
-  }, [currentUser?.id]);
 
   // Timer effect
   useEffect(() => {
@@ -705,7 +688,8 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
     ]);
 
     try {
-      const addedDocRef = await addDoc(collection(db, 'folder_questions'), {
+      const createdAt = new Date().toISOString();
+      const payload = {
         folderId: folder.id,
         courseId: currentCourseId,
         userId: currentUser.id,
@@ -716,10 +700,11 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
         correctOptionIndex: question.correctOptionIndex,
         explanation: question.explanation || '',
         sourceExamTitle: examTitle,
-        createdAt: new Date().toISOString(),
-      });
+        createdAt,
+      };
+      const addedDocRef = await addDoc(collection(db, 'folder_questions'), payload);
 
-      // Update optimistic record with real Firestore id
+      addLocalFolderQuestion(currentUser.id, { id: addedDocRef.id, ...payload });
       setUserFolderQuestions((prev) =>
         prev.map((rec) => (rec.id === optimisticId ? { ...rec, id: addedDocRef.id } : rec))
       );
@@ -728,7 +713,6 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
       setTimeout(() => setFolderActionToast(null), 2500);
     } catch (err) {
       console.error('Error adding question to folder:', err);
-      // Revert optimistic addition on error
       setUserFolderQuestions((prev) => prev.filter((rec) => rec.id !== optimisticId));
       setFolderActionToast({ message: 'حدث خطأ أثناء حفظ السؤال في المجلد', isError: true });
       setTimeout(() => setFolderActionToast(null), 3000);
@@ -739,23 +723,21 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
 
   // Student clicks again to DELETE / REMOVE question from a folder:
   // Hides checkmark, deletes doc from Firestore, and shows toast: "تم حذف السؤال من هذا المجلد"
-  const handleDeleteQuestionFromFolder = async (folderQuestionDocId: string, folderTitle: string, folderId: string) => {
+  const handleDeleteQuestionFromFolder = async (folderQuestionDocId: string, _folderTitle: string, folderId: string) => {
     if (!folderId) return;
     setProcessingFolderIds((prev) => ({ ...prev, [folderId]: true }));
 
-    // Capture previous state for rollback if error
     const prevFolderQuestions = [...userFolderQuestions];
 
-    // Optimistic UI deletion so checkmark disappears immediately
     setUserFolderQuestions((prev) =>
-      prev.filter((fq) => fq.id !== folderQuestionDocId && fq.folderId !== folderId)
+      prev.filter((fq) => fq.id !== folderQuestionDocId)
     );
 
     try {
       if (folderQuestionDocId && !folderQuestionDocId.startsWith('temp_')) {
         await deleteDoc(doc(db, 'folder_questions', folderQuestionDocId));
+        removeLocalFolderQuestions(currentUser.id, [folderQuestionDocId]);
       } else {
-        // Query to find and delete matching records
         const qSnap = await getDocs(
           query(
             collection(db, 'folder_questions'),
@@ -764,18 +746,24 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
             where('questionText', '==', showFolderModalForQ?.questionText || '')
           )
         );
+        const deletedIds: string[] = [];
         for (const docD of qSnap.docs) {
           await deleteDoc(docD.ref);
+          deletedIds.push(docD.id);
         }
+        removeLocalFolderQuestions(currentUser.id, deletedIds);
       }
 
-      // Mark permanently deleted so it NEVER returns to this course's folders!
       if (showFolderModalForQ && currentUser?.id) {
         await markQuestionAsPermanentlyDeleted({
           userId: currentUser.id,
           courseId: currentCourseId,
           folderId,
           originalQuestionId: showFolderModalForQ.id,
+          alternateOriginalQuestionId:
+            folderQuestionDocId && folderQuestionDocId !== showFolderModalForQ.id
+              ? folderQuestionDocId
+              : undefined,
           questionText: showFolderModalForQ.questionText,
           imageUrl: showFolderModalForQ.imageUrl,
         });
@@ -800,23 +788,22 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
     setIsCreatingFolder(true);
 
     try {
-      const newRef = await addDoc(collection(db, 'folders'), {
+      const createdAt = new Date().toISOString();
+      const folderPayload = {
         userId: currentUser.id,
         courseId: currentCourseId,
         title: trimmed,
         isDefaultMistakesFolder: false,
-        createdAt: new Date().toISOString(),
-      });
+        createdAt,
+      };
+      const newRef = await addDoc(collection(db, 'folders'), folderPayload);
 
       const newFolderItem: FolderItem = {
         id: newRef.id,
-        userId: currentUser.id,
-        courseId: currentCourseId,
-        title: trimmed,
-        isDefaultMistakesFolder: false,
-        createdAt: new Date().toISOString(),
+        ...folderPayload,
       };
 
+      addLocalFolder(currentUser.id, newFolderItem);
       setNewFolderNameInput('');
       await handleAddQuestionToFolder(question, newFolderItem);
     } catch (err) {
@@ -889,7 +876,9 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
 
     try {
       if (currentUser?.id) {
-        await addDoc(collection(db, 'exam_attempts'), {
+        const nowIso = new Date().toISOString();
+        const tempAttemptId = `local_att_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+        const attemptPayload = {
           userId: currentUser.id,
           studentName: currentUser.name || 'طالب',
           studentNationalId: nationalId,
@@ -902,26 +891,47 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
           isTimed,
           durationSeconds: elapsed,
           targetPercentage: targetPercentage || 90,
-          createdAt: new Date().toISOString(),
+          createdAt: nowIso,
+        };
+
+        // Save immediately to local cache so it always appears in "قائمة الاختبارات المحلولة" immediately
+        const cachedList = saveLocalExamAttempt(currentUser.id, {
+          id: tempAttemptId,
+          ...attemptPayload,
         });
 
-        const attemptsQuery = query(
-          collection(db, 'exam_attempts'),
-          where('userId', '==', currentUser.id)
-        );
-        const attemptsSnap = await getDocs(attemptsQuery);
-        let totalPerc = 0;
-        let count = 0;
-        attemptsSnap.forEach((docSnap) => {
-          const d = docSnap.data();
-          if (typeof d.percentage === 'number') {
-            totalPerc += d.percentage;
-            count++;
-          }
-        });
+        const addedAttemptRef = await addDoc(collection(db, 'exam_attempts'), attemptPayload);
+        replaceLocalAttemptId(currentUser.id, tempAttemptId, addedAttemptRef.id);
 
-        const updatedCount = count || 1;
-        const updatedAvg = Math.round(totalPerc / updatedCount);
+        let updatedCount = cachedList.length;
+        let updatedAvg =
+          cachedList.length > 0
+            ? Math.round(cachedList.reduce((sum, a) => sum + (a.percentage || 0), 0) / cachedList.length)
+            : percentage;
+
+        // Only query historical exam_attempts once if cache wasn't already synced recently
+        if (!hasSyncedExamAttemptsRecently(currentUser.id)) {
+          try {
+            const attemptsQuery = query(
+              collection(db, 'exam_attempts'),
+              where('userId', '==', currentUser.id)
+            );
+            const attemptsSnap = await getDocs(attemptsQuery);
+            let totalPerc = 0;
+            let count = 0;
+            attemptsSnap.forEach((docSnap) => {
+              const d = docSnap.data();
+              if (typeof d.percentage === 'number') {
+                totalPerc += d.percentage;
+                count++;
+              }
+            });
+            if (count > 0) {
+              updatedCount = count;
+              updatedAvg = Math.round(totalPerc / count);
+            }
+          } catch {}
+        }
 
         const userRef = doc(db, 'users', currentUser.id);
         await updateDoc(userRef, {
@@ -932,7 +942,9 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
 
       onFinishExam();
     } catch (err) {
+      reportFirestoreListenerError(err, OperationType.WRITE, 'exam_attempts');
       console.error('Error saving exam attempt:', err);
+      onFinishExam();
     }
   };
 
@@ -947,6 +959,14 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
     return safeQuestions.filter((q, idx) => selectedAnswers[idx] === q.correctOptionIndex);
   }, [isFolderExam, safeQuestions, selectedAnswers]);
 
+  const wrongOrUnansweredFolderQuestionIds = useMemo(() => {
+    if (!isFolderExam) return [];
+    return safeQuestions
+      .filter((_q, idx) => selectedAnswers[idx] !== safeQuestions[idx].correctOptionIndex)
+      .map((q) => q.id)
+      .filter(Boolean);
+  }, [isFolderExam, safeQuestions, selectedAnswers]);
+
   // Exit request handler: on finished folder exams with at least 1 correct answer,
   // ask the student whether to permanently delete correctly answered questions or keep them.
   const handleRequestExit = () => {
@@ -958,7 +978,7 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
     onExit();
   };
 
-  // Student chose "نعم" — permanently delete correctly answered questions so they never return
+  // Student chose "نعم" — permanently delete ONLY correctly answered questions so they never return
   const handleConfirmDeleteCorrectAndExit = async () => {
     if (isDeletingCorrectQuestions) return;
     if (!currentUser?.id || correctFolderQuestions.length === 0) {
@@ -981,19 +1001,17 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
         courseId: currentCourseId,
         folderId: effectiveFolderId || undefined,
         questions: correctFolderQuestions,
+        excludeIds: wrongOrUnansweredFolderQuestionIds,
       });
 
       const deletedIdSet = new Set(deletedIds);
-      const correctTextSet = new Set(
-        correctFolderQuestions.map((q) => (q.questionText || '').trim()).filter(Boolean)
-      );
+      const excludedIdSet = new Set(wrongOrUnansweredFolderQuestionIds);
 
+      // Remove strictly the deleted doc IDs from local state, never touching wrongly answered questions
       setUserFolderQuestions((prev) =>
         prev.filter((fq) => {
-          if (effectiveFolderId && fq.folderId !== effectiveFolderId) return true;
+          if (excludedIdSet.has(fq.id)) return true;
           if (deletedIdSet.has(fq.id)) return false;
-          if (fq.originalQuestionId && deletedIdSet.has(fq.originalQuestionId)) return false;
-          if (effectiveFolderId && correctTextSet.has((fq.questionText || '').trim())) return false;
           return true;
         })
       );

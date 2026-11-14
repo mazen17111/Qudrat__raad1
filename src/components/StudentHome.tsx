@@ -59,7 +59,15 @@ import {
   CourseThemeColor,
   ExamSystemType
 } from '../types';
-import { db, INITIAL_SECTIONS, INITIAL_RESOURCES, INITIAL_CONTENT_ITEMS, resolveVideoUrl } from '../firebase';
+import {
+  db,
+  INITIAL_SECTIONS,
+  INITIAL_RESOURCES,
+  INITIAL_CONTENT_ITEMS,
+  resolveVideoUrl,
+  OperationType,
+  reportFirestoreListenerError,
+} from '../firebase';
 import {
   collection,
   onSnapshot,
@@ -80,6 +88,11 @@ import { CertificateModal } from './CertificateModal';
 import { SmartVideoPlayer } from './SmartVideoPlayer';
 import { StudentProfileDropdown } from './StudentProfileDropdown';
 import { getEffectiveCourseTheme, getLinkedExamCardTheme, getLinkedFileCardTheme } from '../utils/courseThemes';
+import {
+  ensureStudentFoldersLoaded,
+  getStudentFoldersSnapshot,
+  subscribeStudentFolders,
+} from '../utils/studentFoldersStore';
 
 interface StudentHomeProps {
   currentUser: StudentUser;
@@ -92,6 +105,9 @@ interface StudentHomeProps {
   onBackToCourses?: () => void;
   currentThemeColor?: CourseThemeColor;
   onSelectThemeColor?: (color: CourseThemeColor) => void;
+  preloadedSections?: SectionItem[];
+  preloadedResources?: ResourceItem[];
+  preloadedContentItems?: ContentItem[];
 }
 
 interface SupervisorContactButtonsProps {
@@ -152,6 +168,9 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
   onBackToCourses,
   currentThemeColor = 'default',
   onSelectThemeColor,
+  preloadedSections,
+  preloadedResources,
+  preloadedContentItems,
 }) => {
   // Navigation & Modals
   const [showStatsModal, setShowStatsModal] = useState(false);
@@ -184,14 +203,16 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
     setSelectedExamSystem('nimr');
   };
 
-  // Educational Data with fast authoritative loading and cache validation
+  // Educational Data with instant preloaded data & cache fallback
   const [sections, setSections] = useState<SectionItem[]>(() => {
+    if (preloadedSections && preloadedSections.length > 0) {
+      return preloadedSections;
+    }
     try {
       const cached = localStorage.getItem('raad_cached_sections');
       if (cached) {
         const parsed = JSON.parse(cached);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          // Reject stale cache containing removed sections
           if (parsed.some((s: SectionItem) => s.id === 'sec_hamada')) {
             try { localStorage.removeItem('raad_cached_sections'); } catch (e) {}
             return INITIAL_SECTIONS;
@@ -200,10 +221,13 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
         }
       }
     } catch (e) {}
-    return INITIAL_SECTIONS;
+    return preloadedSections || INITIAL_SECTIONS;
   });
 
   const [resources, setResources] = useState<ResourceItem[]>(() => {
+    if (preloadedResources && preloadedResources.length > 0) {
+      return preloadedResources;
+    }
     try {
       const cached = localStorage.getItem('raad_cached_resources');
       if (cached) {
@@ -217,16 +241,18 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
         }
       }
     } catch (e) {}
-    return INITIAL_RESOURCES;
+    return preloadedResources || INITIAL_RESOURCES;
   });
 
   const [contentItems, setContentItems] = useState<ContentItem[]>(() => {
+    if (preloadedContentItems && preloadedContentItems.length > 0) {
+      return preloadedContentItems;
+    }
     try {
       const cached = localStorage.getItem('raad_cached_content_items');
       if (cached) {
         const parsed = JSON.parse(cached);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          // Reject stale cache containing removed demo items
           if (parsed.some((i: ContentItem) => i.id === 'item_video_1' || i.id === 'item_exam_1' || (i.url && i.url.includes('BigBuckBunny')))) {
             try { localStorage.removeItem('raad_cached_content_items'); } catch (e) {}
             return INITIAL_CONTENT_ITEMS;
@@ -243,7 +269,7 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
         }
       }
     } catch (e) {}
-    return INITIAL_CONTENT_ITEMS;
+    return preloadedContentItems || INITIAL_CONTENT_ITEMS;
   });
 
   const [folders, setFolders] = useState<FolderItem[]>([]);
@@ -355,6 +381,14 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
     }
   }, [activeExam, examToStart]);
 
+  // Preserve original exam shapes & colors when inside an active exam even during all-black theme
+  useEffect(() => {
+    document.documentElement.classList.toggle('in-exam', Boolean(activeExam));
+    return () => {
+      document.documentElement.classList.remove('in-exam');
+    };
+  }, [activeExam]);
+
 
   // Cache selected IDs whenever they change
   useEffect(() => {
@@ -388,70 +422,119 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
     }
   }, [currentUser.watchedVideoIds]);
 
-  // Real-time listener for sections, resources, items with background cache sync
+  // Keep preloaded course data synchronized when passed from App.tsx
   useEffect(() => {
-    const unsubSections = onSnapshot(collection(db, 'sections'), (snap) => {
-      const list: SectionItem[] = [];
-      snap.forEach((d) => list.push({ id: d.id, ...d.data() } as SectionItem));
-      list.sort((a, b) => (a.order || 0) - (b.order || 0));
-      setSections(list);
-      try {
-        localStorage.setItem('raad_cached_sections', JSON.stringify(list));
-      } catch (e) {}
-      if (!selectedSectionId && list.length > 0) {
-        setSelectedSectionId(list[0].id);
-      }
-    });
+    if (preloadedSections) {
+      setSections(preloadedSections);
+    }
+  }, [preloadedSections]);
 
-    const unsubResources = onSnapshot(collection(db, 'resources'), (snap) => {
-      const list: ResourceItem[] = [];
-      snap.forEach((d) => list.push({ id: d.id, ...d.data() } as ResourceItem));
-      list.sort((a, b) => (a.order || 0) - (b.order || 0));
-      setResources(list);
-      try {
-        localStorage.setItem('raad_cached_resources', JSON.stringify(list));
-      } catch (e) {}
-    });
+  useEffect(() => {
+    if (preloadedResources) {
+      setResources(preloadedResources);
+    }
+  }, [preloadedResources]);
 
-    const unsubItems = onSnapshot(collection(db, 'content_items'), (snap) => {
-      const list: ContentItem[] = [];
-      snap.forEach((d) => {
-        const raw = { id: d.id, ...d.data() } as ContentItem;
-        if (raw.type === 'video') {
-          raw.url = resolveVideoUrl(raw);
-          if (raw.backupUrl) {
-            raw.backupUrl = resolveVideoUrl(raw.backupUrl);
+  useEffect(() => {
+    if (preloadedContentItems) {
+      setContentItems(preloadedContentItems);
+    }
+  }, [preloadedContentItems]);
+
+  // Real-time listener for folders (and fallback for sections/resources/items only if not preloaded by App.tsx)
+  useEffect(() => {
+    const unsubs: Array<() => void> = [];
+
+    if (!preloadedSections) {
+      unsubs.push(
+        onSnapshot(
+          collection(db, 'sections'),
+          (snap) => {
+            const list: SectionItem[] = [];
+            snap.forEach((d) => list.push({ id: d.id, ...d.data() } as SectionItem));
+            list.sort((a, b) => (a.order || 0) - (b.order || 0));
+            setSections(list);
+            try {
+              localStorage.setItem('raad_cached_sections', JSON.stringify(list));
+            } catch (e) {}
+            if (!selectedSectionId && list.length > 0) {
+              setSelectedSectionId(list[0].id);
+            }
+          },
+          (error) => {
+            reportFirestoreListenerError(error, OperationType.LIST, 'sections');
           }
-        }
-        list.push(raw);
-      });
-      // Sort strictly from oldest to newest (من الأقدم للأحدث)
-      list.sort((a, b) => {
-        const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-        const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-        if (tA !== tB) return tA - tB;
-        return (a.id || '').localeCompare(b.id || '');
-      });
-      setContentItems(list);
-      try {
-        localStorage.setItem('raad_cached_content_items', JSON.stringify(list));
-      } catch (e) {}
-    });
+        )
+      );
+    }
 
-    const qFolders = query(collection(db, 'folders'), where('userId', '==', currentUser.id));
-    const unsubFolders = onSnapshot(qFolders, (snap) => {
-      const list: FolderItem[] = [];
-      snap.forEach((d) => list.push({ id: d.id, ...d.data() } as FolderItem));
-      setFolders(list);
-    });
+    if (!preloadedResources) {
+      unsubs.push(
+        onSnapshot(
+          collection(db, 'resources'),
+          (snap) => {
+            const list: ResourceItem[] = [];
+            snap.forEach((d) => list.push({ id: d.id, ...d.data() } as ResourceItem));
+            list.sort((a, b) => (a.order || 0) - (b.order || 0));
+            setResources(list);
+            try {
+              localStorage.setItem('raad_cached_resources', JSON.stringify(list));
+            } catch (e) {}
+          },
+          (error) => {
+            reportFirestoreListenerError(error, OperationType.LIST, 'resources');
+          }
+        )
+      );
+    }
+
+    if (!preloadedContentItems) {
+      unsubs.push(
+        onSnapshot(
+          collection(db, 'content_items'),
+          (snap) => {
+            const list: ContentItem[] = [];
+            snap.forEach((d) => {
+              const raw = { id: d.id, ...d.data() } as ContentItem;
+              if (raw.type === 'video') {
+                raw.url = resolveVideoUrl(raw);
+                if (raw.backupUrl) {
+                  raw.backupUrl = resolveVideoUrl(raw.backupUrl);
+                }
+              }
+              list.push(raw);
+            });
+            // Sort strictly from oldest to newest (من الأقدم للأحدث)
+            list.sort((a, b) => {
+              const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+              const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+              if (tA !== tB) return tA - tB;
+              return (a.id || '').localeCompare(b.id || '');
+            });
+            setContentItems(list);
+            try {
+              localStorage.setItem('raad_cached_content_items', JSON.stringify(list));
+            } catch (e) {}
+          },
+          (error) => {
+            reportFirestoreListenerError(error, OperationType.LIST, 'content_items');
+          }
+        )
+      );
+    }
+
+    // Subscribe to unified cached folders store (0 extra Firestore reads!)
+    const syncFoldersFromStore = () => {
+      setFolders(getStudentFoldersSnapshot(currentUser.id).folders);
+    };
+    syncFoldersFromStore();
+    unsubs.push(subscribeStudentFolders(currentUser.id, syncFoldersFromStore));
+    ensureStudentFoldersLoaded(currentUser.id);
 
     return () => {
-      unsubSections();
-      unsubResources();
-      unsubItems();
-      unsubFolders();
+      unsubs.forEach((fn) => fn());
     };
-  }, [currentUser.id]);
+  }, [currentUser.id, !preloadedSections, !preloadedResources, !preloadedContentItems]);
 
   // Ensure selectedSectionId always points to a valid section for the active course
   useEffect(() => {
@@ -1141,7 +1224,9 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
   return (
     <div
       className={`min-h-screen flex flex-col transition-all duration-300 ${
-        isDarkMode
+        currentThemeColor === 'black'
+          ? 'bg-black text-white'
+          : isDarkMode
           ? currentThemeColor && currentThemeColor !== 'default'
             ? `bg-gradient-to-b ${activeTheme.bgGradient} text-slate-100`
             : 'bg-slate-950 text-slate-100'
@@ -1153,9 +1238,13 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
       {/* Top Header: Neat and tight on mobile without gaps */}
       <header
         className={`sticky top-0 z-30 px-2.5 sm:px-4 md:px-8 py-2 sm:py-3 border-b backdrop-blur-xl flex items-center justify-between gap-2 transition-all shadow-sm ${
-          isDarkMode ? 'bg-slate-900/90 border-slate-800' : 'bg-white/95 border-slate-200'
+          currentThemeColor === 'black'
+            ? 'bg-black border-white/20'
+            : isDarkMode
+            ? 'bg-slate-900/90 border-slate-800'
+            : 'bg-white/95 border-slate-200'
         }`}
-        style={currentThemeColor && currentThemeColor !== 'default' ? {
+        style={currentThemeColor && currentThemeColor !== 'default' && currentThemeColor !== 'black' ? {
           borderBottomColor: `${activeTheme?.primary || '#2563eb'}30`,
         } : {}}
       >
@@ -1529,10 +1618,14 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
 
                 {/* Big Progress Bar: Starts from 0 and increases as days elapse */}
                 <div className="space-y-1">
-                  <div className={`w-full h-3.5 sm:h-4 md:h-5 rounded-2xl overflow-hidden p-0.5 border shadow-inner ${
-                    isDarkMode ? 'bg-slate-800/80 border-slate-700/60' : 'bg-slate-100 border-slate-200'
-                  }`}>
+                  <div
+                    data-progress-track="true"
+                    className={`w-full h-3.5 sm:h-4 md:h-5 rounded-2xl overflow-hidden p-0.5 border shadow-inner ${
+                      isDarkMode ? 'bg-slate-800/80 border-slate-700/60' : 'bg-slate-100 border-slate-200'
+                    }`}
+                  >
                     <div
+                      data-progress-fill="true"
                       className={`h-full rounded-xl transition-all duration-300 flex items-center justify-end px-2 text-[10px] font-black text-white shadow-lg ${
                         progressPercentage < 35
                           ? 'bg-gradient-to-r from-blue-600 via-blue-500 to-indigo-500 shadow-blue-500/25'

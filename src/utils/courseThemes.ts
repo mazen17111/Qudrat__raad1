@@ -1,6 +1,6 @@
 import { ThemeConfig } from '../types';
 
-export type CourseThemeColor = 'default' | 'red' | 'green' | 'blue' | 'purple' | 'pink';
+export type CourseThemeColor = 'default' | 'red' | 'green' | 'blue' | 'purple' | 'pink' | 'orange' | 'black';
 
 export interface CourseColorOption {
   id: CourseThemeColor;
@@ -45,6 +45,18 @@ export const COURSE_COLOR_OPTIONS: CourseColorOption[] = [
     label: 'وردي',
     hex: '#ec4899',
     circleClass: 'bg-pink-500 hover:bg-pink-400 border border-pink-300 shadow-sm shadow-pink-500/50',
+  },
+  {
+    id: 'orange',
+    label: 'برتقالي',
+    hex: '#f97316',
+    circleClass: 'bg-orange-500 hover:bg-orange-400 border border-orange-300 shadow-sm shadow-orange-500/50',
+  },
+  {
+    id: 'black',
+    label: 'أسود',
+    hex: '#000000',
+    circleClass: 'bg-black hover:bg-neutral-900 border-2 border-neutral-600 shadow-sm shadow-black/60',
   },
 ];
 
@@ -114,6 +126,32 @@ export const COURSE_COLOR_THEMES: Record<Exclude<CourseThemeColor, 'default'>, T
     badgeBg: 'bg-pink-500/20 text-pink-400 border-pink-500/30',
     buttonGradient: 'from-pink-600 via-rose-600 to-pink-700 hover:from-pink-500 hover:to-rose-500 text-white',
   },
+  orange: {
+    id: 'course-orange',
+    name: 'برتقالي مشرق مخصص للكورس',
+    primary: '#f97316',
+    secondary: '#ea580c',
+    accent: '#fb923c',
+    bgGradient: 'from-slate-950 via-orange-950/40 to-slate-900',
+    cardBg: 'bg-slate-900/90 border-orange-500/25',
+    headerBg: 'bg-slate-900/95 border-orange-500/30',
+    accentBorder: 'border-orange-500/40',
+    badgeBg: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
+    buttonGradient: 'from-orange-600 via-amber-600 to-orange-700 hover:from-orange-500 hover:to-amber-500 text-white',
+  },
+  black: {
+    id: 'course-black',
+    name: 'أسود ملكي مخصص للكورس',
+    primary: '#000000',
+    secondary: '#000000',
+    accent: '#ffffff',
+    bgGradient: 'from-black via-black to-black',
+    cardBg: 'bg-black border-white/20',
+    headerBg: 'bg-black border-white/20',
+    accentBorder: 'border-white/25',
+    badgeBg: 'bg-black text-white border-white/25',
+    buttonGradient: 'from-black via-black to-black hover:from-neutral-950 hover:to-neutral-950 text-white border border-white/30',
+  },
 };
 
 export function getEffectiveCourseTheme(
@@ -138,6 +176,10 @@ export function getEnterPlatformButtonClass(color: CourseThemeColor | undefined)
       return 'bg-gradient-to-r from-purple-600 via-violet-600 to-purple-600 hover:from-purple-500 hover:to-violet-500 text-white shadow-lg shadow-purple-600/30';
     case 'pink':
       return 'bg-gradient-to-r from-pink-600 via-rose-600 to-pink-600 hover:from-pink-500 hover:to-rose-500 text-white shadow-lg shadow-pink-600/30';
+    case 'orange':
+      return 'bg-gradient-to-r from-orange-600 via-amber-500 to-orange-600 hover:from-orange-500 hover:to-amber-400 text-white shadow-lg shadow-orange-600/30';
+    case 'black':
+      return 'bg-black hover:bg-neutral-950 text-white border border-white/30';
     default:
       return 'bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-lg shadow-emerald-600/25';
   }
@@ -232,6 +274,34 @@ export function getLinkedExamCardTheme(color: CourseThemeColor | undefined, isDa
         info: isDarkMode ? 'text-pink-400' : 'text-pink-800',
         button: 'bg-gradient-to-r from-pink-600 via-rose-500 to-pink-600 hover:from-pink-500 hover:to-rose-400 text-white shadow-lg shadow-pink-600/30',
         iconColor: 'text-pink-500 dark:text-pink-400',
+      };
+    case 'orange':
+      return {
+        cardBg: isDarkMode
+          ? 'bg-gradient-to-br from-orange-950/80 via-slate-900 to-amber-900/50 border-orange-500/90 hover:border-orange-400 shadow-orange-500/15'
+          : 'bg-gradient-to-br from-orange-50 via-white to-amber-50/60 border-orange-500 hover:border-orange-600 shadow-orange-500/10',
+        badgeBg: 'bg-orange-500/20',
+        badgeText: 'text-orange-500 dark:text-orange-400',
+        badgeBorder: 'border-orange-500/40',
+        targetBadge: isDarkMode ? 'text-orange-400 bg-black/40 border-orange-500/20' : 'text-orange-900 bg-orange-100 border-orange-300',
+        label: isDarkMode ? 'text-orange-400/90' : 'text-orange-800',
+        titleHover: isDarkMode ? 'group-hover:text-orange-300' : 'group-hover:text-orange-800',
+        info: isDarkMode ? 'text-orange-400' : 'text-orange-800',
+        button: 'bg-gradient-to-r from-orange-600 via-amber-500 to-orange-600 hover:from-orange-500 hover:to-amber-400 text-white shadow-lg shadow-orange-600/30',
+        iconColor: 'text-orange-500 dark:text-orange-400',
+      };
+    case 'black':
+      return {
+        cardBg: 'bg-black border-white/25 hover:border-white/50 text-white',
+        badgeBg: 'bg-black',
+        badgeText: 'text-white',
+        badgeBorder: 'border-white/25',
+        targetBadge: 'text-white bg-black border-white/25',
+        label: 'text-white',
+        titleHover: 'group-hover:text-white',
+        info: 'text-white',
+        button: 'bg-black hover:bg-neutral-950 text-white border border-white/30',
+        iconColor: 'text-white',
       };
     default:
       // Default natural amber styling for exam box
@@ -328,6 +398,34 @@ export function getLinkedFileCardTheme(color: CourseThemeColor | undefined, isDa
         info: isDarkMode ? 'text-rose-400' : 'text-rose-800',
         button: 'bg-gradient-to-r from-rose-600 via-pink-500 to-rose-600 hover:from-rose-500 hover:to-pink-400 text-white shadow-lg shadow-rose-600/30',
         iconColor: 'text-rose-500 dark:text-rose-400',
+      };
+    case 'orange':
+      return {
+        cardBg: isDarkMode
+          ? 'bg-gradient-to-br from-orange-950/80 via-slate-900 to-amber-900/50 border-orange-500/90 hover:border-orange-400 shadow-orange-500/15'
+          : 'bg-gradient-to-br from-orange-50 via-white to-amber-50/60 border-orange-500 hover:border-orange-600 shadow-orange-500/10',
+        badgeBg: 'bg-orange-500/20',
+        badgeText: 'text-orange-500 dark:text-orange-400',
+        badgeBorder: 'border-orange-500/40',
+        targetBadge: isDarkMode ? 'text-orange-400 bg-black/40 border-orange-500/20' : 'text-orange-900 bg-orange-100 border-orange-300',
+        label: isDarkMode ? 'text-orange-400/90' : 'text-orange-800',
+        titleHover: isDarkMode ? 'group-hover:text-orange-300' : 'group-hover:text-orange-800',
+        info: isDarkMode ? 'text-orange-400' : 'text-orange-800',
+        button: 'bg-gradient-to-r from-orange-600 via-amber-500 to-orange-600 hover:from-orange-500 hover:to-amber-400 text-white shadow-lg shadow-orange-600/30',
+        iconColor: 'text-orange-500 dark:text-orange-400',
+      };
+    case 'black':
+      return {
+        cardBg: 'bg-black border-white/25 hover:border-white/50 text-white',
+        badgeBg: 'bg-black',
+        badgeText: 'text-white',
+        badgeBorder: 'border-white/25',
+        targetBadge: 'text-white bg-black border-white/25',
+        label: 'text-white',
+        titleHover: 'group-hover:text-white',
+        info: 'text-white',
+        button: 'bg-black hover:bg-neutral-950 text-white border border-white/30',
+        iconColor: 'text-white',
       };
     default:
       // Default natural emerald styling for file box

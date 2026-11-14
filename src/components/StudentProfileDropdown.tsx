@@ -201,8 +201,8 @@ export const StudentProfileDropdown: React.FC<StudentProfileDropdownProps> = ({
               </span>
             </div>
 
-            {/* صف الدوائر الصغيرة للألوان الستة: احمر، اخضر، ازرق، بنفسجي، وردي، والافتراضي */}
-            <div className="flex items-center justify-between gap-1.5 pt-1 px-1">
+            {/* شبكة الدوائر للألوان الثمانية: الافتراضي، أحمر، أخضر، أزرق، بنفسجي، وردي، برتقالي، أسود */}
+            <div className="grid grid-cols-4 gap-2 pt-1 px-1">
               {COURSE_COLOR_OPTIONS.map((option) => {
                 const isSelected = currentThemeColor === option.id;
                 return (
@@ -214,6 +214,7 @@ export const StudentProfileDropdown: React.FC<StudentProfileDropdownProps> = ({
                     title={option.label}
                   >
                     <div
+                      data-theme-swatch="true"
                       className={`w-7 h-7 rounded-full flex items-center justify-center transition-all duration-200 ${option.circleClass} ${
                         isSelected
                           ? 'ring-2 ring-offset-2 ring-offset-slate-900 ring-white scale-110 shadow-lg'

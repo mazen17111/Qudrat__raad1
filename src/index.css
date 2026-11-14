@@ -107,3 +107,118 @@ html.light .light-card {
   border-color: #e2e8f0 !important;
   color: #000000 !important;
 }
+
+/* ========================================================
+   الوضع الأسود الكامل (All-Black Theme) - كل شيء أسود والكلام فقط أبيض
+   ======================================================== */
+
+html.theme-black:not(.in-exam),
+html.theme-black:not(.in-exam) body,
+html.theme-black:not(.in-exam) #root,
+html.theme-black:not(.in-exam) #root > div {
+  background-color: #000000 !important;
+  background-image: none !important;
+  color: #ffffff !important;
+}
+
+/* Force all containers, cards, headers, footers, tabs, buttons, and inputs to pure black */
+html.theme-black:not(.in-exam) div:not([data-theme-swatch]):not([data-transparent-overlay]):not([data-video-controls-bar]):not([data-progress-track]):not([data-progress-fill]):not([data-seek-fill]),
+html.theme-black:not(.in-exam) header,
+html.theme-black:not(.in-exam) footer,
+html.theme-black:not(.in-exam) main,
+html.theme-black:not(.in-exam) nav,
+html.theme-black:not(.in-exam) section,
+html.theme-black:not(.in-exam) article,
+html.theme-black:not(.in-exam) aside,
+html.theme-black:not(.in-exam) button:not([data-theme-swatch]),
+html.theme-black:not(.in-exam) a,
+html.theme-black:not(.in-exam) ul,
+html.theme-black:not(.in-exam) li,
+html.theme-black:not(.in-exam) form,
+html.theme-black:not(.in-exam) table,
+html.theme-black:not(.in-exam) thead,
+html.theme-black:not(.in-exam) tbody,
+html.theme-black:not(.in-exam) tr,
+html.theme-black:not(.in-exam) th,
+html.theme-black:not(.in-exam) td,
+html.theme-black:not(.in-exam) input,
+html.theme-black:not(.in-exam) textarea,
+html.theme-black:not(.in-exam) select {
+  background-color: #000000 !important;
+  background-image: none !important;
+  color: #ffffff !important;
+}
+
+/* Preserve transparent overlays (video click shields, iframe wrappers) & control bar bottom fade */
+html.theme-black:not(.in-exam) [data-transparent-overlay="true"] {
+  background-color: transparent !important;
+  background-image: none !important;
+}
+
+html.theme-black:not(.in-exam) [data-video-controls-bar="true"] {
+  background-color: transparent !important;
+  background-image: linear-gradient(to top, rgba(0, 0, 0, 0.96), rgba(0, 0, 0, 0.8), transparent) !important;
+}
+
+/* Keep progress bars & video seek bars clearly legible on pure black */
+html.theme-black:not(.in-exam) [data-progress-track="true"] {
+  background-color: #000000 !important;
+  background-image: none !important;
+  border: 1px solid rgba(255, 255, 255, 0.28) !important;
+}
+
+html.theme-black:not(.in-exam) [data-progress-fill="true"] {
+  background-color: rgba(255, 255, 255, 0.28) !important;
+  background-image: none !important;
+  border: 1px solid rgba(255, 255, 255, 0.65) !important;
+  color: #ffffff !important;
+}
+
+html.theme-black:not(.in-exam) [data-seek-fill="true"] {
+  background-color: #ffffff !important;
+  background-image: none !important;
+}
+
+/* Keep badges black with subtle white outline and pure white text */
+html.theme-black:not(.in-exam) span:not([data-theme-swatch]),
+html.theme-black:not(.in-exam) p,
+html.theme-black:not(.in-exam) h1,
+html.theme-black:not(.in-exam) h2,
+html.theme-black:not(.in-exam) h3,
+html.theme-black:not(.in-exam) h4,
+html.theme-black:not(.in-exam) h5,
+html.theme-black:not(.in-exam) h6,
+html.theme-black:not(.in-exam) label,
+html.theme-black:not(.in-exam) strong,
+html.theme-black:not(.in-exam) small {
+  color: #ffffff !important;
+}
+
+html.theme-black:not(.in-exam) span[class*="bg-"]:not([data-theme-swatch]),
+html.theme-black:not(.in-exam) span[class*="border"]:not([data-theme-swatch]) {
+  background-color: #000000 !important;
+  background-image: none !important;
+  color: #ffffff !important;
+}
+
+/* Keep crisp subtle borders so cards, tabs, buttons, and inputs remain well-defined on pure black */
+html.theme-black:not(.in-exam) *[class*="border"]:not([data-theme-swatch]),
+html.theme-black:not(.in-exam) button:not([data-theme-swatch]),
+html.theme-black:not(.in-exam) input,
+html.theme-black:not(.in-exam) textarea,
+html.theme-black:not(.in-exam) select {
+  border-color: rgba(255, 255, 255, 0.22) !important;
+  box-shadow: none !important;
+}
+
+/* Icons remain white with transparent background */
+html.theme-black:not(.in-exam) svg {
+  color: #ffffff !important;
+  background-color: transparent !important;
+}
+
+/* Readable placeholder text on black inputs */
+html.theme-black:not(.in-exam) input::placeholder,
+html.theme-black:not(.in-exam) textarea::placeholder {
+  color: rgba(255, 255, 255, 0.6) !important;
+}
