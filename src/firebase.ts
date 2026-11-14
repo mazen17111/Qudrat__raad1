@@ -392,12 +392,19 @@ export const INITIAL_RESOURCES: ResourceItem[] = [
 export const INITIAL_CONTENT_ITEMS: ContentItem[] = [];
 
 
-// Test Firestore connection on boot as requested by skill (once per browser session)
+// Test Firestore connection on boot (skip extra server read if cached settings/seeder already exist and onSnapshot handles sync)
 export async function testConnection(): Promise<boolean> {
   if (quotaExceededState) return false;
   try {
-    if (typeof window !== 'undefined' && sessionStorage.getItem('raad_firestore_conn_tested') === 'true') {
-      return true;
+    if (typeof window !== 'undefined') {
+      if (
+        sessionStorage.getItem('raad_firestore_conn_tested') === 'true' ||
+        localStorage.getItem('raad_cached_system_settings') ||
+        localStorage.getItem('raad_platform_seeder_initialized') === 'true'
+      ) {
+        sessionStorage.setItem('raad_firestore_conn_tested', 'true');
+        return true;
+      }
     }
   } catch {}
   try {

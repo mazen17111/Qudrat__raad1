@@ -22,7 +22,7 @@ interface UserFoldersBucket {
   deletedSyncedThisSession: boolean;
 }
 
-const FOLDERS_CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
+const FOLDERS_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours (local store stays synced on every mutation)
 
 const getFoldersKey = (userId: string) => `raad_cached_folders_${userId}`;
 const getFolderQuestionsKey = (userId: string) => `raad_cached_folder_questions_${userId}`;

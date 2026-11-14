@@ -84,10 +84,17 @@ import {
   OperationType,
   reportFirestoreListenerError,
 } from '../firebase';
-import { bumpCatalogVersion } from '../utils/firestoreCache';
+import {
+  bumpCatalogVersion,
+  loadCachedCourses,
+  loadCachedSections,
+  loadCachedResources,
+  loadCachedContentItems,
+  saveCatalogToCache,
+  syncCatalogFromFirestore,
+} from '../utils/firestoreCache';
 import {
   collection,
-  onSnapshot,
   doc,
   updateDoc,
   deleteDoc,
@@ -98,6 +105,12 @@ import {
   where
 } from 'firebase/firestore';
 
+const ADMIN_STUDENTS_SYNCED_AT_KEY = 'raad_cached_admin_students_at';
+const ADMIN_ATTEMPTS_CACHE_KEY = 'raad_cached_admin_exam_attempts';
+const ADMIN_STUDENTS_TTL_MS = 30 * 60 * 1000; // 30 minutes
+let adminStudentsSyncedThisSession = false;
+const syncedAdminStudentAttemptIds = new Set<string>();
+
 interface AdminPanelProps {
   onExit: () => void;
   systemSettings: SystemSettings;
@@ -106,8 +119,11 @@ interface AdminPanelProps {
 export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }) => {
   const [activeTab, setActiveTab] = useState<'courses' | 'students' | 'platform_lock' | 'announcement' | 'live_stream' | 'content' | 'designs' | 'intro_lesson' | 'features'>('courses');
 
-  // Courses management state
-  const [courses, setCourses] = useState<CourseItem[]>(INITIAL_COURSES);
+  // Courses management state (initialized immediately from shared local cache)
+  const [courses, setCourses] = useState<CourseItem[]>(() => {
+    const cached = loadCachedCourses();
+    return cached.length > 0 ? cached : INITIAL_COURSES;
+  });
   const [selectedCourseId, setSelectedCourseId] = useState<string>('course_default_1');
 
   // Course Add/Edit Modal
@@ -165,7 +181,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
 
   // Student Expanded Dossier (Watched videos, solved exams, red message, certificate issuance)
   const [expandedStudentId, setExpandedStudentId] = useState<string | null>(null);
-  const [examAttempts, setExamAttempts] = useState<ExamAttempt[]>([]);
+  const [examAttempts, setExamAttempts] = useState<ExamAttempt[]>(() => {
+    try {
+      const cached = localStorage.getItem(ADMIN_ATTEMPTS_CACHE_KEY);
+      if (cached) return JSON.parse(cached);
+    } catch (e) {}
+    return [];
+  });
   const [studentRedMessageInput, setStudentRedMessageInput] = useState<{ [id: string]: string }>({});
   const [isSavingRedMessage, setIsSavingRedMessage] = useState<{ [id: string]: boolean }>({});
   const [issuingCertStudent, setIssuingCertStudent] = useState<StudentUser | null>(null);
@@ -239,25 +261,31 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
   );
   const [isSavingFeatures, setIsSavingFeatures] = useState(false);
 
-  // Content Management: Sections, Resources, Items with instant cached rendering
+  // Content Management: Sections, Resources, Items initialized from shared cached catalog
   const [sections, setSections] = useState<SectionItem[]>(() => {
+    const cached = loadCachedSections();
+    if (cached.length > 0) return cached;
     try {
-      const cached = localStorage.getItem('raad_cached_admin_sections');
-      if (cached) return JSON.parse(cached);
+      const adminCached = localStorage.getItem('raad_cached_admin_sections');
+      if (adminCached) return JSON.parse(adminCached);
     } catch (e) {}
     return [];
   });
   const [resources, setResources] = useState<ResourceItem[]>(() => {
+    const cached = loadCachedResources();
+    if (cached.length > 0) return cached;
     try {
-      const cached = localStorage.getItem('raad_cached_admin_resources');
-      if (cached) return JSON.parse(cached);
+      const adminCached = localStorage.getItem('raad_cached_admin_resources');
+      if (adminCached) return JSON.parse(adminCached);
     } catch (e) {}
     return [];
   });
   const [items, setItems] = useState<ContentItem[]>(() => {
+    const cached = loadCachedContentItems();
+    if (cached.length > 0) return cached;
     try {
-      const cached = localStorage.getItem('raad_cached_admin_items');
-      if (cached) return JSON.parse(cached);
+      const adminCached = localStorage.getItem('raad_cached_admin_items');
+      if (adminCached) return JSON.parse(adminCached);
     } catch (e) {}
     return [];
   });
@@ -400,16 +428,28 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
   const [saveToastDetails, setSaveToastDetails] = useState<{ title: string; subtitle?: string; variant?: 'success' | 'error' } | null>(null);
   const toastTimerRef = useRef<number | null>(null);
 
-  // Manual Full Data Refresh with instant feedback
+  // Helper to update students in both React state and localStorage cache synchronously
+  const updateLocalStudents = (updater: (prev: StudentUser[]) => StudentUser[]) => {
+    setStudents((prev) => {
+      const next = updater(prev);
+      try {
+        localStorage.setItem('raad_cached_admin_students', JSON.stringify(next));
+      } catch (e) {}
+      return next;
+    });
+  };
+
+  // Manual Full Data Refresh with instant feedback (only reads Firestore when explicitly clicked)
   const handleManualRefreshAllData = async () => {
     setIsRefreshingData(true);
     try {
-      const [uSnap, sSnap, rSnap, iSnap, cSnap] = await Promise.all([
+      const [uSnap, catalogSnap] = await Promise.all([
         getDocs(collection(db, 'users')),
-        getDocs(collection(db, 'sections')),
-        getDocs(collection(db, 'resources')),
-        getDocs(collection(db, 'content_items')),
-        getDocs(collection(db, 'courses')),
+        syncCatalogFromFirestore({
+          force: true,
+          remoteVersion: systemSettings.catalogUpdatedAt,
+          includeContent: true,
+        }),
       ]);
 
       const userList: StudentUser[] = [];
@@ -420,39 +460,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         return tB - tA;
       });
       setStudents(userList);
-      try { localStorage.setItem('raad_cached_admin_students', JSON.stringify(userList)); } catch (e) {}
+      adminStudentsSyncedThisSession = true;
+      syncedAdminStudentAttemptIds.clear();
+      try {
+        localStorage.setItem('raad_cached_admin_students', JSON.stringify(userList));
+        localStorage.setItem(ADMIN_STUDENTS_SYNCED_AT_KEY, String(Date.now()));
+      } catch (e) {}
 
-      const secList: SectionItem[] = [];
-      sSnap.forEach((d) => secList.push({ id: d.id, ...d.data() } as SectionItem));
-      secList.sort((a, b) => (a.order || 0) - (b.order || 0));
-      setSections(secList);
-      try { localStorage.setItem('raad_cached_admin_sections', JSON.stringify(secList)); } catch (e) {}
-
-      const resList: ResourceItem[] = [];
-      rSnap.forEach((d) => resList.push({ id: d.id, ...d.data() } as ResourceItem));
-      resList.sort((a, b) => (a.order || 0) - (b.order || 0));
-      setResources(resList);
-      try { localStorage.setItem('raad_cached_admin_resources', JSON.stringify(resList)); } catch (e) {}
-
-      const itmList: ContentItem[] = [];
-      iSnap.forEach((d) => itmList.push({ id: d.id, ...d.data() } as ContentItem));
-      itmList.sort((a, b) => {
-        const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-        const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-        if (tA !== tB) return tA - tB;
-        return (a.id || '').localeCompare(b.id || '');
-      });
-      setItems(itmList);
-      try { localStorage.setItem('raad_cached_admin_items', JSON.stringify(itmList)); } catch (e) {}
-
-      const crsList: CourseItem[] = [];
-      cSnap.forEach((d) => crsList.push({ id: d.id, ...d.data() } as CourseItem));
-      crsList.sort((a, b) => (a.order || 0) - (b.order || 0));
-      if (crsList.length > 0) {
-        setCourses(crsList);
+      setSections(catalogSnap.sections);
+      setResources(catalogSnap.resources);
+      setItems(catalogSnap.contentItems);
+      if (catalogSnap.courses.length > 0) {
+        setCourses(catalogSnap.courses);
       }
 
-      notifySave(`تم التحديث بنجاح! متصل بـ ${userList.length} طالب و ${itmList.length} عنصر.`);
+      notifySave(`تم التحديث بنجاح! متصل بـ ${userList.length} طالب و ${catalogSnap.contentItems.length} عنصر.`);
     } catch (err: any) {
       console.warn('Manual refresh error:', err);
       notifySave('حدث خطأ أثناء جلب التحديثات');
@@ -461,148 +483,122 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     }
   };
 
-  // Listen to students in real-time
+  // Load catalog (0 reads when cache matches catalogUpdatedAt) + load students at most once per session/TTL
   useEffect(() => {
-    const unsub = onSnapshot(
-      collection(db, 'users'),
-      (snapshot) => {
-        const list: StudentUser[] = [];
-        snapshot.forEach((d) => {
-          list.push({ id: d.id, ...d.data() } as StudentUser);
+    let cancelled = false;
+
+    // 1. Sync catalog from shared versioned cache (0 Firestore reads if unchanged)
+    syncCatalogFromFirestore({
+      remoteVersion: systemSettings.catalogUpdatedAt,
+      includeContent: true,
+    }).then((snap) => {
+      if (cancelled) return;
+      setSections(snap.sections);
+      setResources(snap.resources);
+      setItems(snap.contentItems);
+      if (snap.courses.length > 0) {
+        setCourses(snap.courses);
+        setSelectedIntroCourseId((prev) => {
+          const valid = snap.courses.some((c) => c.id === prev) ? prev : snap.courses[0].id;
+          const target = snap.courses.find((c) => c.id === valid);
+          if (target?.introLesson) {
+            setIntroLessonState(target.introLesson);
+          }
+          return valid;
         });
-        list.sort((a, b) => {
-          const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-          const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-          return tB - tA;
+        setSelectedFeaturesCourseId((prev) => {
+          const valid = snap.courses.some((c) => c.id === prev) ? prev : snap.courses[0].id;
+          const target = snap.courses.find((c) => c.id === valid);
+          if (target?.features) {
+            setFeaturesState(target.features);
+          }
+          return valid;
         });
-        setStudents(list);
-        try { localStorage.setItem('raad_cached_admin_students', JSON.stringify(list)); } catch (e) {}
-      },
-      (error) => {
-        reportFirestoreListenerError(error, OperationType.LIST, 'users');
       }
-    );
-    return () => unsub();
-  }, []);
-
-  // Listen to student exam attempts in real-time
-  useEffect(() => {
-    const unsubAttempts = onSnapshot(
-      collection(db, 'exam_attempts'),
-      (snapshot) => {
-        const list: ExamAttempt[] = [];
-        snapshot.forEach((d) => {
-          list.push({ id: d.id, ...d.data() } as ExamAttempt);
-        });
-        list.sort((a, b) => {
-          const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-          const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-          return tB - tA;
-        });
-        setExamAttempts(list);
-      },
-      (error) => {
-        reportFirestoreListenerError(error, OperationType.LIST, 'exam_attempts');
+      if (snap.sections.length > 0 && !selectedSectionId) {
+        setSelectedSectionId(snap.sections[0].id);
       }
-    );
-    return () => unsubAttempts();
-  }, []);
+    });
 
-  // Listen to sections, resources, items in real-time
-  useEffect(() => {
-    const unsubSections = onSnapshot(
-      collection(db, 'sections'),
-      (snap) => {
-        const list: SectionItem[] = [];
-        snap.forEach((d) => list.push({ id: d.id, ...d.data() } as SectionItem));
-        list.sort((a, b) => (a.order || 0) - (b.order || 0));
-        setSections(list);
-        try { localStorage.setItem('raad_cached_admin_sections', JSON.stringify(list)); } catch (e) {}
-        if (list.length > 0 && !selectedSectionId) {
-          setSelectedSectionId(list[0].id);
-        }
-      },
-      (error) => {
-        reportFirestoreListenerError(error, OperationType.LIST, 'sections');
+    // 2. Load students once per session / 30m TTL (replaces heavy real-time onSnapshot on entire users collection)
+    const cachedAtRaw = (() => {
+      try {
+        return Number(localStorage.getItem(ADMIN_STUDENTS_SYNCED_AT_KEY) || '0');
+      } catch {
+        return 0;
       }
-    );
+    })();
+    const hasFreshStudentsCache =
+      adminStudentsSyncedThisSession ||
+      (students.length > 0 && cachedAtRaw > 0 && Date.now() - cachedAtRaw < ADMIN_STUDENTS_TTL_MS);
 
-    const unsubResources = onSnapshot(
-      collection(db, 'resources'),
-      (snap) => {
-        const list: ResourceItem[] = [];
-        snap.forEach((d) => list.push({ id: d.id, ...d.data() } as ResourceItem));
-        list.sort((a, b) => (a.order || 0) - (b.order || 0));
-        setResources(list);
-        try { localStorage.setItem('raad_cached_admin_resources', JSON.stringify(list)); } catch (e) {}
-      },
-      (error) => {
-        reportFirestoreListenerError(error, OperationType.LIST, 'resources');
-      }
-    );
-
-    const unsubItems = onSnapshot(
-      collection(db, 'content_items'),
-      (snap) => {
-        const list: ContentItem[] = [];
-        snap.forEach((d) => list.push({ id: d.id, ...d.data() } as ContentItem));
-        // Sort strictly from oldest to newest (من الأقدم للأحدث)
-        list.sort((a, b) => {
-          const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-          const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-          if (tA !== tB) return tA - tB;
-          return (a.id || '').localeCompare(b.id || '');
-        });
-        setItems(list);
-        try { localStorage.setItem('raad_cached_admin_items', JSON.stringify(list)); } catch (e) {}
-      },
-      (error) => {
-        reportFirestoreListenerError(error, OperationType.LIST, 'content_items');
-      }
-    );
-
-    const unsubCourses = onSnapshot(
-      collection(db, 'courses'),
-      (snap) => {
-        const list: CourseItem[] = [];
-        snap.forEach((d) => list.push({ id: d.id, ...d.data() } as CourseItem));
-        list.sort((a, b) => (a.order || 0) - (b.order || 0));
-        setCourses(list);
-        try {
-          localStorage.setItem('raad_cached_courses', JSON.stringify(list));
-        } catch (e) {}
-
-        if (list.length > 0) {
-          setSelectedIntroCourseId((prev) => {
-            const valid = list.some((c) => c.id === prev) ? prev : list[0].id;
-            const target = list.find((c) => c.id === valid);
-            if (target?.introLesson) {
-              setIntroLessonState(target.introLesson);
-            }
-            return valid;
+    if (!hasFreshStudentsCache) {
+      getDocs(collection(db, 'users'))
+        .then((snapshot) => {
+          if (cancelled) return;
+          const list: StudentUser[] = [];
+          snapshot.forEach((d) => {
+            list.push({ id: d.id, ...d.data() } as StudentUser);
           });
-          setSelectedFeaturesCourseId((prev) => {
-            const valid = list.some((c) => c.id === prev) ? prev : list[0].id;
-            const target = list.find((c) => c.id === valid);
-            if (target?.features) {
-              setFeaturesState(target.features);
-            }
-            return valid;
+          list.sort((a, b) => {
+            const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+            const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+            return tB - tA;
           });
-        }
-      },
-      (error) => {
-        reportFirestoreListenerError(error, OperationType.LIST, 'courses');
-      }
-    );
+          adminStudentsSyncedThisSession = true;
+          setStudents(list);
+          try {
+            localStorage.setItem('raad_cached_admin_students', JSON.stringify(list));
+            localStorage.setItem(ADMIN_STUDENTS_SYNCED_AT_KEY, String(Date.now()));
+          } catch (e) {}
+        })
+        .catch((error) => {
+          reportFirestoreListenerError(error, OperationType.LIST, 'users');
+        });
+    } else {
+      adminStudentsSyncedThisSession = true;
+    }
 
     return () => {
-      unsubCourses();
-      unsubSections();
-      unsubResources();
-      unsubItems();
+      cancelled = true;
     };
-  }, []);
+  }, [systemSettings.catalogUpdatedAt]);
+
+  // Lazy load exam_attempts ONLY for the single student whose dossier the admin expands (0 reads on Admin open!)
+  useEffect(() => {
+    if (!expandedStudentId) return;
+    if (syncedAdminStudentAttemptIds.has(expandedStudentId)) return;
+
+    let cancelled = false;
+    getDocs(query(collection(db, 'exam_attempts'), where('userId', '==', expandedStudentId)))
+      .then((snapshot) => {
+        if (cancelled) return;
+        const studentList: ExamAttempt[] = [];
+        snapshot.forEach((d) => {
+          studentList.push({ id: d.id, ...d.data() } as ExamAttempt);
+        });
+        syncedAdminStudentAttemptIds.add(expandedStudentId);
+        setExamAttempts((prev) => {
+          const others = prev.filter((a) => a.userId !== expandedStudentId);
+          const merged = [...studentList, ...others].sort((a, b) => {
+            const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+            const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+            return tB - tA;
+          });
+          try {
+            localStorage.setItem(ADMIN_ATTEMPTS_CACHE_KEY, JSON.stringify(merged.slice(0, 500)));
+          } catch (e) {}
+          return merged;
+        });
+      })
+      .catch((error) => {
+        reportFirestoreListenerError(error, OperationType.LIST, 'exam_attempts');
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [expandedStudentId]);
 
   // Sync settings when props change
   useEffect(() => {
@@ -675,37 +671,42 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
   // 1. Set Subscription Days, VIP, or Unlimited for student
   const handleSaveStudentDays = async (isUnlimited = false, isVip = false) => {
     if (!studentForDaysModal) return;
+    const targetId = studentForDaysModal.id;
+    const targetName = studentForDaysModal.name;
     try {
       if (isVip) {
-        await updateDoc(doc(db, 'users', studentForDaysModal.id), {
+        const patch: Partial<StudentUser> = {
           isVip: true,
           isUnlimited: true,
           daysAllowed: 0,
           subscriptionStatus: 'vip',
           subscriptionStartDate: new Date().toISOString(),
-          subscriptionEndDate: null,
+          subscriptionEndDate: '',
           isCounterPaused: false,
           pausedRemainingDays: 0,
-        });
-        notifySave(`تمت ترقية حساب الطالب "${studentForDaysModal.name}" إلى VIP ماسي بنجاح 👑!`);
+        };
+        await updateDoc(doc(db, 'users', targetId), { ...patch, subscriptionEndDate: null });
+        updateLocalStudents((prev) => prev.map((s) => (s.id === targetId ? { ...s, ...patch } : s)));
+        notifySave(`تمت ترقية حساب الطالب "${targetName}" إلى VIP ماسي بنجاح 👑!`);
       } else if (isUnlimited) {
-        await updateDoc(doc(db, 'users', studentForDaysModal.id), {
+        const patch: Partial<StudentUser> = {
           isUnlimited: true,
           isVip: false,
           daysAllowed: 0,
           subscriptionStatus: 'active',
           subscriptionStartDate: new Date().toISOString(),
-          subscriptionEndDate: null,
+          subscriptionEndDate: '',
           isCounterPaused: false,
           pausedRemainingDays: 0,
-        });
-        notifySave(`تم إلغاء الاشتراك وفتح المنصة للطالب "${studentForDaysModal.name}" بشكل مفتوح دائم ⚡`);
+        };
+        await updateDoc(doc(db, 'users', targetId), { ...patch, subscriptionEndDate: null });
+        updateLocalStudents((prev) => prev.map((s) => (s.id === targetId ? { ...s, ...patch } : s)));
+        notifySave(`تم إلغاء الاشتراك وفتح المنصة للطالب "${targetName}" بشكل مفتوح دائم ⚡`);
       } else {
         const days = Number(selectedDaysAmount);
         const startDate = new Date().toISOString();
         const endDate = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
-
-        await updateDoc(doc(db, 'users', studentForDaysModal.id), {
+        const patch: Partial<StudentUser> = {
           isUnlimited: false,
           isVip: false,
           daysAllowed: days,
@@ -714,8 +715,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
           subscriptionEndDate: endDate,
           isCounterPaused: false,
           pausedRemainingDays: 0,
-        });
-        notifySave(`تم تحديد ${days} يوماً للاشتراك للطالب "${studentForDaysModal.name}" بنجاح!`);
+        };
+        await updateDoc(doc(db, 'users', targetId), patch);
+        updateLocalStudents((prev) => prev.map((s) => (s.id === targetId ? { ...s, ...patch } : s)));
+        notifySave(`تم تحديد ${days} يوماً للاشتراك للطالب "${targetName}" بنجاح!`);
       }
 
       setStudentForDaysModal(null);
@@ -728,7 +731,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
   // Reset student back to "غير محدد"
   const handleResetToUnspecified = async (studentId: string, studentName: string) => {
     try {
-      await updateDoc(doc(db, 'users', studentId), {
+      const patch: Partial<StudentUser> = {
         daysAllowed: 0,
         isUnlimited: false,
         isVip: false,
@@ -737,7 +740,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         subscriptionEndDate: '',
         isCounterPaused: false,
         pausedRemainingDays: 0,
-      });
+      };
+      await updateDoc(doc(db, 'users', studentId), patch);
+      updateLocalStudents((prev) => prev.map((s) => (s.id === studentId ? { ...s, ...patch } : s)));
       notifySave(`تم إعادة حساب الطالب "${studentName}" لحالة "غير محدد" بنجاح ⏳`);
       setStudentForDaysModal(null);
     } catch (err) {
@@ -750,11 +755,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
   const handleToggleVip = async (student: StudentUser) => {
     try {
       const willBeVip = !student.isVip;
-      await updateDoc(doc(db, 'users', student.id), {
+      const patch: Partial<StudentUser> = {
         isVip: willBeVip,
         isUnlimited: willBeVip,
         subscriptionStatus: willBeVip ? 'vip' : 'unspecified',
-      });
+      };
+      await updateDoc(doc(db, 'users', student.id), patch);
+      updateLocalStudents((prev) => prev.map((s) => (s.id === student.id ? { ...s, ...patch } : s)));
       notifySave(
         willBeVip
           ? `تمت ترقية الطالب "${student.name}" إلى VIP ماسي 👑!`
@@ -779,23 +786,27 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
           remainingDays = student.daysAllowed;
         }
 
-        await updateDoc(doc(db, 'users', student.id), {
+        const patch: Partial<StudentUser> = {
           isCounterPaused: true,
           pausedRemainingDays: remainingDays,
           pausedAt: new Date().toISOString(),
           subscriptionStatus: 'paused',
-        });
+        };
+        await updateDoc(doc(db, 'users', student.id), patch);
+        updateLocalStudents((prev) => prev.map((s) => (s.id === student.id ? { ...s, ...patch } : s)));
         notifySave(`تم قفل وتجميد العداد للطالب "${student.name}" بنجاح ⏸️ (تبقى له ${remainingDays} يوم محفوظة)`);
       } else {
         // استئناف وإرجاع العداد
         const daysToRestore = student.pausedRemainingDays || student.daysAllowed || 30;
         const newEndDate = new Date(Date.now() + daysToRestore * 24 * 60 * 60 * 1000).toISOString();
 
-        await updateDoc(doc(db, 'users', student.id), {
+        const patch: Partial<StudentUser> = {
           isCounterPaused: false,
           subscriptionEndDate: newEndDate,
           subscriptionStatus: 'active',
-        });
+        };
+        await updateDoc(doc(db, 'users', student.id), patch);
+        updateLocalStudents((prev) => prev.map((s) => (s.id === student.id ? { ...s, ...patch } : s)));
         notifySave(`تم استئناف وتشغيل العداد للطالب "${student.name}" بنجاح ▶️`);
       }
     } catch (err) {
@@ -807,13 +818,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
   // 2. Individual Student Block Modal Handlers
   const handleSaveIndividualBlock = async () => {
     if (!studentForBlockModal) return;
+    const targetId = studentForBlockModal.id;
+    const targetName = studentForBlockModal.name;
     try {
-      await updateDoc(doc(db, 'users', studentForBlockModal.id), {
+      const patch: Partial<StudentUser> = {
         isIndividuallyBlocked: true,
         blockedReason: blockReasonType,
         blockedCustomMessage: blockCustomMessage.trim(),
-      });
-      notifySave(`تم قفل المنصة على الطالب "${studentForBlockModal.name}" بنجاح.`);
+      };
+      await updateDoc(doc(db, 'users', targetId), patch);
+      updateLocalStudents((prev) => prev.map((s) => (s.id === targetId ? { ...s, ...patch } : s)));
+      notifySave(`تم قفل المنصة على الطالب "${targetName}" بنجاح.`);
       setStudentForBlockModal(null);
     } catch (err) {
       console.error(err);
@@ -828,6 +843,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         blockedReason: null,
         blockedCustomMessage: '',
       });
+      updateLocalStudents((prev) =>
+        prev.map((s) =>
+          s.id === studentId
+            ? { ...s, isIndividuallyBlocked: false, blockedReason: undefined, blockedCustomMessage: '' }
+            : s
+        )
+      );
       notifySave('تم فك القفل وفتح المنصة للطالب بنجاح');
       if (studentForBlockModal?.id === studentId) {
         setStudentForBlockModal(null);
@@ -854,10 +876,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         blockedReason: null,
         blockedCustomMessage: '',
       });
-      setStudents((prev) =>
+      updateLocalStudents((prev) =>
         prev.map((s) =>
           s.id === studentForCourseActivation.id
-            ? { ...s, enrolledCourseIds: selectedCoursesForStudent, isIndividuallyBlocked: false }
+            ? { ...s, enrolledCourseIds: selectedCoursesForStudent, isIndividuallyBlocked: false, blockedCustomMessage: '' }
             : s
         )
       );
@@ -874,9 +896,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
   // 3. Toggle Whitelist (when platform is globally locked)
   const handleToggleStudentWhitelist = async (student: StudentUser) => {
     try {
+      const nextVal = !student.isIndividuallyWhitelisted;
       await updateDoc(doc(db, 'users', student.id), {
-        isIndividuallyWhitelisted: !student.isIndividuallyWhitelisted,
+        isIndividuallyWhitelisted: nextVal,
       });
+      updateLocalStudents((prev) =>
+        prev.map((s) => (s.id === student.id ? { ...s, isIndividuallyWhitelisted: nextVal } : s))
+      );
       notifySave('تم تحديث حالة استثناء الطالب بنجاح');
     } catch (err) {
       console.error(err);
@@ -904,7 +930,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
 
       // 2. Permanently remove the user document from Firestore
       await deleteDoc(doc(db, 'users', deletingStudent.id));
-      setStudents((prev) => prev.filter((st) => st.id !== deletingStudent.id));
+      updateLocalStudents((prev) => prev.filter((st) => st.id !== deletingStudent.id));
       setDeletingStudent(null);
       notifySave(isPermanent ? 'تم الحذف الدائم وحظر البريد وإخراج الطالب فورياً 🗑️' : 'تم الحذف العادي للحساب وإخراج الطالب فورياً 🗑️');
     } catch (err) {
@@ -922,7 +948,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         customRedMessage: cleanMsg,
         isRedMessageActive: cleanMsg ? true : false,
       });
-      setStudents((prev) =>
+      updateLocalStudents((prev) =>
         prev.map((s) =>
           s.id === studentId
             ? { ...s, customRedMessage: cleanMsg, isRedMessageActive: cleanMsg ? true : false }
@@ -945,7 +971,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       await updateDoc(doc(db, 'users', studentId), {
         isRedMessageActive: nextStatus,
       });
-      setStudents((prev) =>
+      updateLocalStudents((prev) =>
         prev.map((s) => (s.id === studentId ? { ...s, isRedMessageActive: nextStatus } : s))
       );
       notifySave(nextStatus ? 'تم تشغيل وتفعيل التنبيه للطالب 🟢' : 'تم إيقاف التنبيه مؤقتاً ⏸️');
@@ -963,7 +989,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         customRedMessage: '',
         isRedMessageActive: false,
       });
-      setStudents((prev) =>
+      updateLocalStudents((prev) =>
         prev.map((s) =>
           s.id === studentId ? { ...s, customRedMessage: '', isRedMessageActive: false } : s
         )
@@ -984,7 +1010,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       await updateDoc(doc(db, 'users', student.id), {
         certificateIssued: null,
       });
-      setStudents((prev) =>
+      updateLocalStudents((prev) =>
         prev.map((s) => (s.id === student.id ? { ...s, certificateIssued: null } : s))
       );
       notifySave(`تم حذف وإلغاء الشهادة من حساب الطالب "${student.name}" بنجاح 🗑️`);
@@ -1038,7 +1064,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         certificateIssued: certData,
       });
 
-      setStudents((prev) =>
+      updateLocalStudents((prev) =>
         prev.map((s) => (s.id === issuingCertStudent.id ? { ...s, certificateIssued: certData } : s))
       );
 
@@ -1245,10 +1271,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         { merge: true }
       );
 
-      // 2. Immediate local state update
-      setCourses((prev) =>
-        prev.map((c) => (c.id === targetCourse.id ? { ...c, introLesson: cleanIntro } : c))
+      // 2. Immediate local state + shared cache update
+      const updatedCoursesForIntro = courses.map((c) =>
+        c.id === targetCourse.id ? { ...c, introLesson: cleanIntro } : c
       );
+      setCourses(updatedCoursesForIntro);
 
       // 3. Keep global fallback updated for primary course
       if (targetCourse.id === 'course_default_1') {
@@ -1262,7 +1289,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         ).catch(() => {});
       }
 
-      void bumpCatalogVersion();
+      void bumpCatalogVersion({ courses: updatedCoursesForIntro });
       notifySave(`تم حفظ وتحديث الحصة التعريفية الخاصة بكورس "${targetCourse.title}" بنجاح 🎬`);
     } catch (err) {
       console.error('Error saving intro lesson:', err);
@@ -1418,7 +1445,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     setIsRestoringCourses(true);
     try {
       const res = await restoreDefaultCoursesAndContent();
-      await bumpCatalogVersion();
+      const freshSnap = await syncCatalogFromFirestore({ force: true, includeContent: true });
+      setCourses(freshSnap.courses);
+      setSections(freshSnap.sections);
+      setResources(freshSnap.resources);
+      setItems(freshSnap.contentItems);
+      await bumpCatalogVersion(freshSnap);
       notifySave(res.message);
     } catch (e) {
       console.error(e);
@@ -1456,16 +1488,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       };
 
       await setDoc(courseRef, cleanData, { merge: true });
-      void bumpCatalogVersion();
 
-      // Immediate local state update for instant UI feedback
-      setCourses((prev) => {
-        const exists = prev.some((c) => c.id === courseId);
-        if (exists) {
-          return prev.map((c) => (c.id === courseId ? ({ ...c, ...cleanData } as CourseItem) : c));
-        }
-        return [...prev, cleanData as CourseItem].sort((a, b) => (a.order || 0) - (b.order || 0));
-      });
+      // Immediate local state + shared cache update
+      const exists = courses.some((c) => c.id === courseId);
+      const updatedCourses = exists
+        ? courses.map((c) => (c.id === courseId ? ({ ...c, ...cleanData } as CourseItem) : c))
+        : [...courses, cleanData as CourseItem].sort((a, b) => (a.order || 0) - (b.order || 0));
+      setCourses(updatedCourses);
+      void bumpCatalogVersion({ courses: updatedCourses });
       setSelectedCourseId(courseId);
 
       setIsAddingCourse(false);
@@ -1576,18 +1606,22 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         ...folderDeletePromises,
         courseDocPromise,
       ]);
-      void bumpCatalogVersion();
 
-      // 9. Update local state immediately for zero-delay UI feedback
+      // 9. Update local state + shared cache immediately for zero-delay UI feedback
       const updatedCourses = courses.filter((c) => c.id !== courseId);
+      const updatedSections = sections.filter((s) => !sectionIds.has(s.id) && s.courseId !== courseId);
+      const updatedResources = resources.filter((r) => !resourceIds.has(r.id));
+      const updatedItems = items.filter((i) => !itemIds.has(i.id) && !resourceIds.has(i.resourceId));
       setCourses(updatedCourses);
-      try {
-        localStorage.setItem('raad_cached_courses', JSON.stringify(updatedCourses));
-      } catch (e) {}
-
-      setSections((prev) => prev.filter((s) => !sectionIds.has(s.id) && s.courseId !== courseId));
-      setResources((prev) => prev.filter((r) => !resourceIds.has(r.id)));
-      setItems((prev) => prev.filter((i) => !itemIds.has(i.id) && !resourceIds.has(i.resourceId)));
+      setSections(updatedSections);
+      setResources(updatedResources);
+      setItems(updatedItems);
+      void bumpCatalogVersion({
+        courses: updatedCourses,
+        sections: updatedSections,
+        resources: updatedResources,
+        contentItems: updatedItems,
+      });
 
       if (selectedCourseId === courseId) {
         setSelectedCourseId(updatedCourses.length > 0 ? updatedCourses[0].id : '');
@@ -1610,18 +1644,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     if (!newSectionTitle.trim()) return;
     try {
       const newRef = doc(collection(db, 'sections'));
-      await setDoc(newRef, {
+      const newSec: SectionItem = {
         id: newRef.id,
         courseId: selectedCourseId || 'course_default_1',
         title: newSectionTitle.trim(),
         description: newSectionDesc.trim(),
         order: Number(newSectionOrder) || sections.length + 1,
         createdAt: new Date().toISOString(),
-      });
-      void bumpCatalogVersion();
+      };
+      await setDoc(newRef, newSec);
+      const updatedSections = [...sections, newSec].sort((a, b) => (a.order || 0) - (b.order || 0));
+      setSections(updatedSections);
+      void bumpCatalogVersion({ sections: updatedSections });
       setNewSectionTitle('');
       setNewSectionDesc('');
-      setNewSectionOrder(sections.length + 2);
+      setNewSectionOrder(updatedSections.length + 1);
       setIsAddingSection(false);
       setSelectedSectionId(newRef.id);
       notifySave('تم إضافة القسم بنجاح');
@@ -1635,13 +1672,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     e.preventDefault();
     if (!editingSection || !newSectionTitle.trim()) return;
     try {
-      await updateDoc(doc(db, 'sections', editingSection.id), {
+      const patch = {
         title: newSectionTitle.trim(),
         description: newSectionDesc.trim(),
         order: Number(newSectionOrder) || editingSection.order || 1,
         courseId: editingSection.courseId || selectedCourseId || 'course_default_1',
-      });
-      void bumpCatalogVersion();
+      };
+      await updateDoc(doc(db, 'sections', editingSection.id), patch);
+      const updatedSections = sections
+        .map((s) => (s.id === editingSection.id ? { ...s, ...patch } : s))
+        .sort((a, b) => (a.order || 0) - (b.order || 0));
+      setSections(updatedSections);
+      void bumpCatalogVersion({ sections: updatedSections });
       setEditingSection(null);
       setNewSectionTitle('');
       setNewSectionDesc('');
@@ -1654,9 +1696,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
 
   const handleReorderSection = async (secId: string, newOrder: number) => {
     try {
-      await updateDoc(doc(db, 'sections', secId), { order: Number(newOrder) });
-      void bumpCatalogVersion();
-      notifySave(`تم تعديل ترتيب القسم إلى (${newOrder}) بنجاح`);
+      const orderNum = Number(newOrder);
+      await updateDoc(doc(db, 'sections', secId), { order: orderNum });
+      const updatedSections = sections
+        .map((s) => (s.id === secId ? { ...s, order: orderNum } : s))
+        .sort((a, b) => (a.order || 0) - (b.order || 0));
+      setSections(updatedSections);
+      void bumpCatalogVersion({ sections: updatedSections });
+      notifySave(`تم تعديل ترتيب القسم إلى (${orderNum}) بنجاح`);
     } catch (err) {
       console.error(err);
       notifySave('حدث خطأ أثناء تحديث الترتيب');
@@ -1681,7 +1728,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     try {
       const newRef = doc(collection(db, 'resources'));
       const secResources = resources.filter((r) => r.sectionId === targetSecId);
-      await setDoc(newRef, {
+      const newRes: ResourceItem = {
         id: newRef.id,
         courseId: selectedCourseId || 'course_default_1',
         sectionId: targetSecId,
@@ -1689,8 +1736,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         description: newResourceDesc.trim(),
         order: Number(newResourceOrder) || secResources.length + 1,
         createdAt: new Date().toISOString(),
-      });
-      void bumpCatalogVersion();
+      };
+      await setDoc(newRef, newRes);
+      const updatedResources = [...resources, newRes].sort((a, b) => (a.order || 0) - (b.order || 0));
+      setResources(updatedResources);
+      void bumpCatalogVersion({ resources: updatedResources });
       setNewResourceTitle('');
       setNewResourceDesc('');
       setNewResourceOrder(secResources.length + 2);
@@ -1707,12 +1757,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     e.preventDefault();
     if (!editingResource || !newResourceTitle.trim()) return;
     try {
-      await updateDoc(doc(db, 'resources', editingResource.id), {
+      const patch = {
         title: newResourceTitle.trim(),
         description: newResourceDesc.trim(),
         order: Number(newResourceOrder) || editingResource.order || 1,
-      });
-      void bumpCatalogVersion();
+      };
+      await updateDoc(doc(db, 'resources', editingResource.id), patch);
+      const updatedResources = resources
+        .map((r) => (r.id === editingResource.id ? { ...r, ...patch } : r))
+        .sort((a, b) => (a.order || 0) - (b.order || 0));
+      setResources(updatedResources);
+      void bumpCatalogVersion({ resources: updatedResources });
       setEditingResource(null);
       setNewResourceTitle('');
       setNewResourceDesc('');
@@ -1725,9 +1780,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
 
   const handleReorderResource = async (resId: string, newOrder: number) => {
     try {
-      await updateDoc(doc(db, 'resources', resId), { order: Number(newOrder) });
-      void bumpCatalogVersion();
-      notifySave(`تم تعديل ترتيب المصدر إلى (${newOrder}) بنجاح`);
+      const orderNum = Number(newOrder);
+      await updateDoc(doc(db, 'resources', resId), { order: orderNum });
+      const updatedResources = resources
+        .map((r) => (r.id === resId ? { ...r, order: orderNum } : r))
+        .sort((a, b) => (a.order || 0) - (b.order || 0));
+      setResources(updatedResources);
+      void bumpCatalogVersion({ resources: updatedResources });
+      notifySave(`تم تعديل ترتيب المصدر إلى (${orderNum}) بنجاح`);
     } catch (err) {
       console.error(err);
       notifySave('حدث خطأ أثناء تحديث الترتيب');
@@ -2011,6 +2071,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
 
   // Execute Save: persists to Firestore and updates all state
   const executeSaveContentItem = async () => {
+    let createdAutoResource: ResourceItem | null = null;
     let targetResId = modalResourceId || (editingItem ? editingItem.resourceId : '') || selectedResourceId || effectiveResourceId;
     if (!targetResId) {
       const secId = modalSectionId || selectedSectionId || effectiveSectionId;
@@ -2021,7 +2082,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         } else {
           const secObj = sections.find((s) => s.id === secId);
           const newResRef = doc(collection(db, 'resources'));
-          await setDoc(newResRef, {
+          createdAutoResource = {
             id: newResRef.id,
             courseId: selectedCourseId || 'course_default_1',
             sectionId: secId,
@@ -2029,7 +2090,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
             description: 'تم إنشاؤه تلقائياً لتضمين المحتوى المنفصل لهذا الكورس',
             order: 1,
             createdAt: new Date().toISOString(),
-          });
+          };
+          await setDoc(newResRef, createdAutoResource);
           targetResId = newResRef.id;
           setSelectedResourceId(targetResId);
         }
@@ -2162,6 +2224,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         }
       }
 
+      let linkedVideoPatch: { id: string; linkedExamIds: string[]; linkedFileIds: string[] } | null = null;
       if (attachToVideoId && (itemType === 'exam' || itemType === 'file')) {
         const vid = items.find((i) => i.id === attachToVideoId);
         if (vid) {
@@ -2174,6 +2237,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
             ? [...currentFileIds, targetId]
             : currentFileIds;
 
+          linkedVideoPatch = { id: attachToVideoId, linkedExamIds: newExamIds, linkedFileIds: newFileIds };
           await updateDoc(doc(db, 'content_items', attachToVideoId), {
             linkedExamIds: newExamIds,
             linkedFileIds: newFileIds,
@@ -2192,7 +2256,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
 
       // 1. Immediately switch active selectedResourceId and section so user views the saved item right away
       setSelectedResourceId(targetResId);
-      const parentRes = resources.find((r) => r.id === targetResId);
+      const effectiveResources = createdAutoResource ? [...resources, createdAutoResource] : resources;
+      if (createdAutoResource) {
+        setResources(effectiveResources);
+      }
+      const parentRes = effectiveResources.find((r) => r.id === targetResId);
       if (parentRes?.sectionId) {
         setSelectedSectionId(parentRes.sectionId);
         const parentSec = sections.find((s) => s.id === parentRes.sectionId);
@@ -2201,26 +2269,30 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         }
       }
 
-      // 2. Instant optimistic local state update for zero-delay UI feedback
-      setItems((prev) => {
-        const index = prev.findIndex((i) => i.id === targetId);
-        let updatedList: ContentItem[];
-        if (index >= 0) {
-          const next = [...prev];
-          next[index] = { ...prev[index], ...sanitizedPayload };
-          updatedList = next;
-        } else {
-          updatedList = [sanitizedPayload, ...prev];
-        }
-        try {
-          localStorage.setItem('raad_cached_content_items', JSON.stringify(updatedList));
-        } catch (e) {}
-        return updatedList;
-      });
+      // 2. Compute updated items list cleanly and update both React state and shared cache
+      const existingIdx = items.findIndex((i) => i.id === targetId);
+      let updatedItems: ContentItem[];
+      if (existingIdx >= 0) {
+        updatedItems = items.map((it) => (it.id === targetId ? { ...it, ...sanitizedPayload } : it));
+      } else {
+        updatedItems = [...items, sanitizedPayload as ContentItem];
+      }
+      if (linkedVideoPatch) {
+        const patch = linkedVideoPatch;
+        updatedItems = updatedItems.map((it) =>
+          it.id === patch.id
+            ? { ...it, linkedExamIds: patch.linkedExamIds, linkedFileIds: patch.linkedFileIds }
+            : it
+        );
+      }
+      setItems(updatedItems);
 
-      // 3. Persist to Firestore with single merge write + notify student caches
+      // 3. Persist to Firestore with single merge write + sync shared cache without self re-read
       await setDoc(doc(db, 'content_items', targetId), sanitizedPayload, { merge: true });
-      void bumpCatalogVersion();
+      void bumpCatalogVersion({
+        contentItems: updatedItems,
+        ...(createdAutoResource ? { resources: effectiveResources } : {}),
+      });
 
       try {
         localStorage.removeItem('admin_draft_item_title');
@@ -2307,15 +2379,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         linkedFileIds: updatedLinkedFiles,
         updatedAt: new Date().toISOString(),
       });
-      void bumpCatalogVersion();
 
-      setItems((prev) =>
-        prev.map((it) =>
-          it.id === quickLinkVideoId
-            ? { ...it, linkedExamIds: updatedLinkedExams, linkedFileIds: updatedLinkedFiles }
-            : it
-        )
+      const updatedItems = items.map((it) =>
+        it.id === quickLinkVideoId
+          ? { ...it, linkedExamIds: updatedLinkedExams, linkedFileIds: updatedLinkedFiles }
+          : it
       );
+      setItems(updatedItems);
+      void bumpCatalogVersion({ contentItems: updatedItems });
 
       notifySave(`تم ربط الاختبار والملف باسم الفيديو "${vid.title}" بنجاح! ⚡`);
       setIsQuickLinkModalOpen(false);
@@ -2445,6 +2516,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     if (!deleteTarget) return;
     setIsDeletingTarget(true);
     try {
+      let nextSections = sections;
+      let nextResources = resources;
+      let nextItems = items;
+
       if (deleteTarget.type === 'section') {
         const secId = deleteTarget.id;
         // 1. Delete Section doc
@@ -2460,12 +2535,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         for (const it of itemsToDelete) {
           await deleteDoc(doc(db, 'content_items', it.id)).catch(() => {});
         }
-        setSections((prev) => prev.filter((s) => s.id !== secId));
-        setResources((prev) => prev.filter((r) => r.sectionId !== secId));
-        setItems((prev) => prev.filter((it) => !resToDelete.some((r) => r.id === it.resourceId)));
+        nextSections = sections.filter((s) => s.id !== secId);
+        nextResources = resources.filter((r) => r.sectionId !== secId);
+        nextItems = items.filter((it) => !resToDelete.some((r) => r.id === it.resourceId));
+        setSections(nextSections);
+        setResources(nextResources);
+        setItems(nextItems);
         if (selectedSectionId === secId) {
-          const remainingSec = sections.filter((s) => s.id !== secId);
-          setSelectedSectionId(remainingSec.length > 0 ? remainingSec[0].id : '');
+          setSelectedSectionId(nextSections.length > 0 ? nextSections[0].id : '');
           setSelectedResourceId('');
         }
         notifySave(`تم حذف القسم "${deleteTarget.title}" وكافة محتوياته بنجاح 🗑️`);
@@ -2478,8 +2555,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         for (const it of itemsToDelete) {
           await deleteDoc(doc(db, 'content_items', it.id)).catch(() => {});
         }
-        setResources((prev) => prev.filter((r) => r.id !== resId));
-        setItems((prev) => prev.filter((it) => it.resourceId !== resId));
+        nextResources = resources.filter((r) => r.id !== resId);
+        nextItems = items.filter((it) => it.resourceId !== resId);
+        setResources(nextResources);
+        setItems(nextItems);
         if (selectedResourceId === resId) {
           setSelectedResourceId('');
         }
@@ -2487,14 +2566,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       } else if (deleteTarget.type === 'item') {
         const itemId = deleteTarget.id;
         await deleteDoc(doc(db, 'content_items', itemId));
-        setItems((prev) => prev.filter((it) => it.id !== itemId));
+        nextItems = items.filter((it) => it.id !== itemId);
+        setItems(nextItems);
         if (editingItem?.id === itemId) {
           setIsAddingItem(false);
           setEditingItem(null);
         }
         notifySave(`تم حذف "${deleteTarget.title}" بنجاح 🗑️`);
       }
-      void bumpCatalogVersion();
+      void bumpCatalogVersion({
+        sections: nextSections,
+        resources: nextResources,
+        contentItems: nextItems,
+      });
       setDeleteTarget(null);
     } catch (err) {
       console.error('Error during deletion:', err);
@@ -2597,10 +2681,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         { merge: true }
       );
 
-      // 2. Immediate local state update
-      setCourses((prev) =>
-        prev.map((c) => (c.id === targetCourse.id ? { ...c, features: cleanFeatures } : c))
+      // 2. Immediate local state + shared cache update
+      const updatedCoursesForFeatures = courses.map((c) =>
+        c.id === targetCourse.id ? { ...c, features: cleanFeatures } : c
       );
+      setCourses(updatedCoursesForFeatures);
 
       // 3. Keep global fallback updated for primary course
       if (targetCourse.id === 'course_default_1') {
@@ -2614,7 +2699,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         ).catch(() => {});
       }
 
-      void bumpCatalogVersion();
+      void bumpCatalogVersion({ courses: updatedCoursesForFeatures });
       notifySave(`تم حفظ روابط التليجرام والمميزات الخاصة بكورس "${targetCourse.title}" بنجاح ⚡`);
     } catch (err) {
       console.error('Error saving features in admin:', err);

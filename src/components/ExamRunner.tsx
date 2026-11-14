@@ -37,7 +37,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { StudentUser, ExamQuestion, FolderItem, ExamSystemType } from '../types';
+import { StudentUser, ExamAttempt, ExamQuestion, FolderItem, ExamSystemType } from '../types';
 import { Whiteboard } from './Whiteboard';
 import { NimrExamSystem } from './systems/NimrExamSystem';
 import { DefaultExamSystem } from './systems/DefaultExamSystem';
@@ -47,6 +47,8 @@ import {
   saveLocalExamAttempt,
   replaceLocalAttemptId,
   hasSyncedExamAttemptsRecently,
+  markExamAttemptsSynced,
+  mergeRemoteExamAttempts,
 } from '../utils/examAttemptsCache';
 import {
   addLocalFolder,
@@ -738,20 +740,36 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
         await deleteDoc(doc(db, 'folder_questions', folderQuestionDocId));
         removeLocalFolderQuestions(currentUser.id, [folderQuestionDocId]);
       } else {
-        const qSnap = await getDocs(
-          query(
-            collection(db, 'folder_questions'),
-            where('userId', '==', currentUser.id),
-            where('folderId', '==', folderId),
-            where('questionText', '==', showFolderModalForQ?.questionText || '')
-          )
+        const cachedMatches = getStudentFoldersSnapshot(currentUser.id).folderQuestions.filter(
+          (fq) =>
+            fq.folderId === folderId &&
+            fq.questionText === (showFolderModalForQ?.questionText || '') &&
+            fq.id &&
+            !fq.id.startsWith('temp_')
         );
-        const deletedIds: string[] = [];
-        for (const docD of qSnap.docs) {
-          await deleteDoc(docD.ref);
-          deletedIds.push(docD.id);
+        if (cachedMatches.length > 0) {
+          const deletedIds: string[] = [];
+          for (const item of cachedMatches) {
+            await deleteDoc(doc(db, 'folder_questions', item.id)).catch(() => {});
+            deletedIds.push(item.id);
+          }
+          removeLocalFolderQuestions(currentUser.id, deletedIds);
+        } else if (!getStudentFoldersSnapshot(currentUser.id).hasLoadedOnce) {
+          const qSnap = await getDocs(
+            query(
+              collection(db, 'folder_questions'),
+              where('userId', '==', currentUser.id),
+              where('folderId', '==', folderId),
+              where('questionText', '==', showFolderModalForQ?.questionText || '')
+            )
+          );
+          const deletedIds: string[] = [];
+          for (const docD of qSnap.docs) {
+            await deleteDoc(docD.ref);
+            deletedIds.push(docD.id);
+          }
+          removeLocalFolderQuestions(currentUser.id, deletedIds);
         }
-        removeLocalFolderQuestions(currentUser.id, deletedIds);
       }
 
       if (showFolderModalForQ && currentUser?.id) {
@@ -917,18 +935,16 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
               where('userId', '==', currentUser.id)
             );
             const attemptsSnap = await getDocs(attemptsQuery);
-            let totalPerc = 0;
-            let count = 0;
+            const remoteAttempts: ExamAttempt[] = [];
             attemptsSnap.forEach((docSnap) => {
-              const d = docSnap.data();
-              if (typeof d.percentage === 'number') {
-                totalPerc += d.percentage;
-                count++;
-              }
+              remoteAttempts.push({ id: docSnap.id, ...docSnap.data() } as ExamAttempt);
             });
-            if (count > 0) {
-              updatedCount = count;
-              updatedAvg = Math.round(totalPerc / count);
+            const mergedAttempts = mergeRemoteExamAttempts(currentUser.id, remoteAttempts);
+            markExamAttemptsSynced(currentUser.id);
+            if (mergedAttempts.length > 0) {
+              const totalPerc = mergedAttempts.reduce((sum, a) => sum + (a.percentage || 0), 0);
+              updatedCount = mergedAttempts.length;
+              updatedAvg = Math.round(totalPerc / mergedAttempts.length);
             }
           } catch {}
         }

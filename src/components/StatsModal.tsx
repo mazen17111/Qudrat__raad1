@@ -23,7 +23,12 @@ import {
   markExamAttemptsSynced,
   mergeRemoteExamAttempts,
 } from '../utils/examAttemptsCache';
-import { loadCachedContentItems } from '../utils/firestoreCache';
+import {
+  loadCachedContentItems,
+  hasRealCachedContent,
+  hasCatalogSyncedInSession,
+  syncCatalogFromFirestore,
+} from '../utils/firestoreCache';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 
 interface StatsModalProps {
@@ -106,22 +111,25 @@ export const StatsModal: React.FC<StatsModalProps> = ({
     if (propsItems && propsItems.length > 0) return;
 
     const cachedItems = loadCachedContentItems();
-    if (cachedItems.length > 0) {
+    if (cachedItems.length > 0 || hasRealCachedContent() || hasCatalogSyncedInSession()) {
       setDbItems(cachedItems);
       return;
     }
 
-    const fetchItems = async () => {
-      try {
-        const snap = await getDocs(collection(db, 'content_items'));
-        const list: ContentItem[] = [];
-        snap.forEach((d) => list.push({ id: d.id, ...d.data() } as ContentItem));
-        setDbItems(list);
-      } catch (e) {
+    let cancelled = false;
+    syncCatalogFromFirestore({ includeContent: true })
+      .then((snap) => {
+        if (!cancelled) {
+          setDbItems(snap.contentItems);
+        }
+      })
+      .catch((e) => {
         console.error('Error fetching items for stats:', e);
-      }
+      });
+
+    return () => {
+      cancelled = true;
     };
-    fetchItems();
   }, [isOpen, propsItems]);
 
   const allItems = useMemo(() => {

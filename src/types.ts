@@ -101,6 +101,7 @@ export interface SectionItem {
 
 export interface ResourceItem {
   id: string;
+  courseId?: string;
   sectionId: string;
   title: string;
   description?: string;

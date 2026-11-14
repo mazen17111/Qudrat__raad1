@@ -330,28 +330,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
       }
     );
 
-    // 2. Real-time fallback snapshot on global_latest
-    const unsubGlobal = onSnapshot(
-      doc(db, 'telegram_login_sessions', 'global_latest'),
-      (snap) => {
-        if (isDone) return;
-        if (snap.exists()) {
-          const data = snap.data();
-          if (data.status === 'authenticated' && data.user) {
-            // Check if authenticated in the last 2 minutes
-            const authTime = data.authenticatedAt ? new Date(data.authenticatedAt).getTime() : 0;
-            if (Date.now() - authTime < 120000) {
-              handleLoginComplete(data.user);
-            }
-          }
-        }
-      },
-      (err) => {
-        reportFirestoreListenerError(err, OperationType.GET, 'telegram_login_sessions/global_latest');
-      }
-    );
-
-    // 3. Secondary HTTP polling fallback every 1000ms
+    // 2. Secondary HTTP polling fallback every 4000ms (server checks memory first, then throttled Firestore)
     const interval = setInterval(async () => {
       if (isDone) return;
       try {
@@ -363,13 +342,12 @@ export const AuthView: React.FC<AuthViewProps> = ({
           }
         }
       } catch (e) {}
-    }, 1000);
+    }, 4000);
 
     return () => {
       isDone = true;
       clearInterval(interval);
       unsubSession();
-      unsubGlobal();
     };
   }, [isWaitingForBotAuth, activeBotSessionId, onSuccessAuth]);
 

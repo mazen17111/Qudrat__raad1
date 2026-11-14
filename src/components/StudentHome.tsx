@@ -93,6 +93,7 @@ import {
   getStudentFoldersSnapshot,
   subscribeStudentFolders,
 } from '../utils/studentFoldersStore';
+import { saveCatalogToCache } from '../utils/firestoreCache';
 
 interface StudentHomeProps {
   currentUser: StudentUser;
@@ -732,6 +733,13 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
           const data = snap.data();
           if (Array.isArray(data.questions) && data.questions.length > 0) {
             finalQuestions = data.questions;
+            setContentItems((prev) => {
+              const updated = prev.map((it) =>
+                it.id === examToStart.id ? { ...it, questions: data.questions } : it
+              );
+              saveCatalogToCache({ contentItems: updated }, { emit: false, markSynced: false });
+              return updated;
+            });
           }
         }
       } catch (err) {

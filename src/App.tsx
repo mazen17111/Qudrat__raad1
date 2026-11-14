@@ -27,6 +27,7 @@ import {
   loadCachedResources,
   loadCachedContentItems,
   syncCatalogFromFirestore,
+  subscribeCatalogUpdated,
 } from './utils/firestoreCache';
 import { doc, onSnapshot, updateDoc, setDoc, arrayUnion } from 'firebase/firestore';
 import { AuthView } from './components/AuthView';
@@ -288,8 +289,21 @@ export default function App() {
       });
     });
 
+    const unsubLocalCatalog = subscribeCatalogUpdated((snapshot) => {
+      if (cancelled) return;
+      setCourses(snapshot.courses);
+      setSections(snapshot.sections);
+      setResources(snapshot.resources);
+      setContentItems(snapshot.contentItems);
+      setActiveCourse((prev) => {
+        if (!prev) return prev;
+        return snapshot.courses.find((c) => c.id === prev.id) || null;
+      });
+    });
+
     return () => {
       cancelled = true;
+      unsubLocalCatalog();
     };
   }, [currentUser?.id, systemSettings.catalogUpdatedAt]);
 
@@ -440,17 +454,17 @@ export default function App() {
   // Course activation handler
   const handleActivateCourse = async (courseId: string) => {
     if (!currentUser) return;
-    try {
-      const userRef = doc(db, 'users', currentUser.id);
-      await updateDoc(userRef, {
-        enrolledCourseIds: arrayUnion(courseId)
-      });
-    } catch (err) {
-      console.error('Error updating enrolled courses in Firestore:', err);
-    }
-
     const currentEnrolled = currentUser.enrolledCourseIds || [];
     if (!currentEnrolled.includes(courseId)) {
+      try {
+        const userRef = doc(db, 'users', currentUser.id);
+        await updateDoc(userRef, {
+          enrolledCourseIds: arrayUnion(courseId)
+        });
+      } catch (err) {
+        console.error('Error updating enrolled courses in Firestore:', err);
+      }
+
       const updatedUser: StudentUser = {
         ...currentUser,
         enrolledCourseIds: [...currentEnrolled, courseId]

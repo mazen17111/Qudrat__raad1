@@ -87,7 +87,7 @@ const getAttemptsSyncMetaKey = (userId: string) => `raad_exam_attempts_synced_at
 
 export function hasSyncedExamAttemptsRecently(
   userId?: string,
-  maxAgeMs = 15 * 60 * 1000
+  maxAgeMs = 6 * 60 * 60 * 1000
 ): boolean {
   if (!userId || typeof window === 'undefined') return false;
   if (syncedAttemptUsersInSession.has(userId)) return true;

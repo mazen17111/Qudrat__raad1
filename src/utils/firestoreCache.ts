@@ -18,9 +18,10 @@ export const CACHED_RESOURCES_KEY = 'raad_cached_resources';
 export const CACHED_CONTENT_ITEMS_KEY = 'raad_cached_content_items';
 const CATALOG_META_KEY = 'raad_catalog_cache_meta';
 
-// Long TTL when version matches systemSettings.catalogUpdatedAt; shorter fallback TTL otherwise
-const VERSIONED_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
-const UNVERSIONED_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+// When systemSettings.catalogUpdatedAt matches our cached version, cache stays valid indefinitely (0 reads until real admin update).
+// Fallback TTL applies only when no catalogUpdatedAt exists yet on system_settings/global.
+const UNVERSIONED_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const CATALOG_UPDATED_EVENT = 'raad-catalog-updated';
 
 interface CatalogCacheMeta {
   coursesFetchedAt: number;
@@ -152,6 +153,12 @@ export function hasRealCachedContent(): boolean {
   }
 }
 
+let catalogSyncedThisSession = false;
+
+export function hasCatalogSyncedInSession(): boolean {
+  return catalogSyncedThisSession;
+}
+
 export function isCatalogCacheFresh(remoteVersion?: number, includeContent = true): boolean {
   const meta = readMeta();
   const fetchedAt = includeContent ? meta.contentFetchedAt : meta.coursesFetchedAt;
@@ -161,15 +168,88 @@ export function isCatalogCacheFresh(remoteVersion?: number, includeContent = tru
     return false;
   }
 
-  const now = Date.now();
+  // If systemSettings has a catalogUpdatedAt version and our local cache already matches it,
+  // NEVER re-fetch from Firestore until an admin makes a real update and bumps the version!
   if (remoteVersion && remoteVersion > 0) {
-    if (meta.version !== remoteVersion) {
-      return false;
-    }
-    return now - fetchedAt < VERSIONED_CACHE_TTL_MS;
+    return meta.version === remoteVersion;
   }
 
-  return now - fetchedAt < UNVERSIONED_CACHE_TTL_MS;
+  // When no remoteVersion is set yet, reuse session cache or 24-hour localStorage cache
+  if (catalogSyncedThisSession) {
+    return true;
+  }
+
+  return Date.now() - fetchedAt < UNVERSIONED_CACHE_TTL_MS;
+}
+
+export function getCachedCatalogSnapshot(): CatalogSnapshot {
+  return {
+    courses: loadCachedCourses(),
+    sections: loadCachedSections(),
+    resources: loadCachedResources(),
+    contentItems: loadCachedContentItems(),
+  };
+}
+
+export function saveCatalogToCache(
+  partial: Partial<CatalogSnapshot>,
+  options: { version?: number; emit?: boolean; markSynced?: boolean } = {}
+): CatalogSnapshot {
+  const { version, emit = true, markSynced = true } = options;
+
+  if (typeof window !== 'undefined') {
+    try {
+      if (partial.courses) {
+        localStorage.setItem(CACHED_COURSES_KEY, JSON.stringify(partial.courses));
+        if (partial.courses.length > 0) {
+          localStorage.setItem('raad_platform_seeder_initialized', 'true');
+        }
+      }
+      if (partial.sections) {
+        localStorage.setItem(CACHED_SECTIONS_KEY, JSON.stringify(partial.sections));
+        localStorage.setItem('raad_cached_admin_sections', JSON.stringify(partial.sections));
+      }
+      if (partial.resources) {
+        localStorage.setItem(CACHED_RESOURCES_KEY, JSON.stringify(partial.resources));
+        localStorage.setItem('raad_cached_admin_resources', JSON.stringify(partial.resources));
+      }
+      if (partial.contentItems) {
+        const normalized = normalizeContentItems(partial.contentItems);
+        localStorage.setItem(CACHED_CONTENT_ITEMS_KEY, JSON.stringify(normalized));
+        localStorage.setItem('raad_cached_admin_items', JSON.stringify(normalized));
+      }
+    } catch {}
+  }
+
+  if (markSynced) {
+    const now = Date.now();
+    catalogSyncedThisSession = true;
+    writeMeta({
+      coursesFetchedAt: now,
+      contentFetchedAt: now,
+      ...(version ? { version } : {}),
+    });
+  }
+
+  const snapshot = getCachedCatalogSnapshot();
+
+  if (emit && typeof window !== 'undefined') {
+    try {
+      window.dispatchEvent(new CustomEvent(CATALOG_UPDATED_EVENT, { detail: snapshot }));
+    } catch {}
+  }
+
+  return snapshot;
+}
+
+export function subscribeCatalogUpdated(listener: (snapshot: CatalogSnapshot) => void): () => void {
+  if (typeof window === 'undefined') return () => {};
+  const handler = (event: Event) => {
+    const detail = (event as CustomEvent<CatalogSnapshot>).detail;
+    listener(detail || getCachedCatalogSnapshot());
+  };
+  window.addEventListener(CATALOG_UPDATED_EVENT, handler);
+  return () => window.removeEventListener(CATALOG_UPDATED_EVENT, handler);
 }
 
 let inFlightSync: Promise<CatalogSnapshot> | null = null;
@@ -185,12 +265,8 @@ export async function syncCatalogFromFirestore({
   includeContent?: boolean;
 } = {}): Promise<CatalogSnapshot> {
   if (!force && isCatalogCacheFresh(remoteVersion, includeContent)) {
-    return {
-      courses: loadCachedCourses(),
-      sections: loadCachedSections(),
-      resources: loadCachedResources(),
-      contentItems: loadCachedContentItems(),
-    };
+    catalogSyncedThisSession = true;
+    return getCachedCatalogSnapshot();
   }
 
   // Deduplicate concurrent calls within the same tick/render cycle
@@ -253,22 +329,17 @@ export async function syncCatalogFromFirestore({
         itemsList = list;
       }
 
-      try {
-        localStorage.setItem(CACHED_COURSES_KEY, JSON.stringify(coursesList));
-        if (coursesList.length > 0) {
-          localStorage.setItem('raad_platform_seeder_initialized', 'true');
-        }
-        if (sectionsSnap) {
-          localStorage.setItem(CACHED_SECTIONS_KEY, JSON.stringify(sectionsList));
-        }
-        if (resourcesSnap) {
-          localStorage.setItem(CACHED_RESOURCES_KEY, JSON.stringify(resourcesList));
-        }
-        if (itemsSnap) {
-          localStorage.setItem(CACHED_CONTENT_ITEMS_KEY, JSON.stringify(itemsList));
-        }
-      } catch {}
+      saveCatalogToCache(
+        {
+          courses: coursesList,
+          ...(sectionsSnap ? { sections: sectionsList } : {}),
+          ...(resourcesSnap ? { resources: resourcesList } : {}),
+          ...(itemsSnap ? { contentItems: itemsList } : {}),
+        },
+        { version: remoteVersion, emit: false, markSynced: false }
+      );
 
+      catalogSyncedThisSession = true;
       const now = Date.now();
       writeMeta({
         coursesFetchedAt: now,
@@ -288,12 +359,7 @@ export async function syncCatalogFromFirestore({
       } else {
         console.warn('Catalog sync fallback to cache:', err);
       }
-      return {
-        courses: loadCachedCourses(),
-        sections: loadCachedSections(),
-        resources: loadCachedResources(),
-        contentItems: loadCachedContentItems(),
-      };
+      return getCachedCatalogSnapshot();
     } finally {
       inFlightSync = null;
     }
@@ -304,12 +370,19 @@ export async function syncCatalogFromFirestore({
 
 /**
  * Called from AdminPanel whenever admin creates, edits, or deletes
- * a course, section, resource, or content item so connected students
- * refresh their catalog cache immediately via the single system_settings listener.
+ * a course, section, resource, or content item.
+ * Keeps the admin's own local cache up-to-date (0 self re-reads!) while bumping
+ * system_settings/global.catalogUpdatedAt so remote students sync only on real updates.
  */
-export async function bumpCatalogVersion(): Promise<void> {
+export async function bumpCatalogVersion(updatedSnapshot?: Partial<CatalogSnapshot>): Promise<void> {
   const version = Date.now();
-  writeMeta({ version: 0, coursesFetchedAt: 0, contentFetchedAt: 0 });
+  if (updatedSnapshot) {
+    saveCatalogToCache(updatedSnapshot, { version, emit: true, markSynced: true });
+  } else {
+    const now = Date.now();
+    catalogSyncedThisSession = true;
+    writeMeta({ version, coursesFetchedAt: now, contentFetchedAt: now });
+  }
   try {
     await setDoc(
       doc(db, 'system_settings', 'global'),

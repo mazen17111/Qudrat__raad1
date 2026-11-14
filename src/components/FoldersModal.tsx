@@ -215,12 +215,13 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
     try {
       // 1. Delete all questions inside this folder (using cached questions list first to avoid unnecessary query)
       try {
-        const cachedInFolder = getStudentFoldersSnapshot(currentUser.id).folderQuestions.filter(
+        const storeSnap = getStudentFoldersSnapshot(currentUser.id);
+        const cachedInFolder = storeSnap.folderQuestions.filter(
           (fq) => fq.folderId === folderToDelete.id
         );
         if (cachedInFolder.length > 0) {
           await Promise.all(cachedInFolder.map((fq) => deleteDoc(doc(db, 'folder_questions', fq.id)).catch(() => {})));
-        } else {
+        } else if (!storeSnap.hasLoadedOnce) {
           const qRef = query(collection(db, 'folder_questions'), where('folderId', '==', folderToDelete.id));
           const qSnap = await getDocs(qRef);
           await Promise.all(qSnap.docs.map((d) => deleteDoc(doc(db, 'folder_questions', d.id))));
@@ -287,9 +288,13 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
     if (!selectedFolder) return;
     setIsClearingQuestions(true);
     try {
+      const storeSnap = getStudentFoldersSnapshot(currentUser.id);
+      const cachedForFolder = storeSnap.folderQuestions.filter((fq) => fq.folderId === selectedFolder.id);
       const targetQuestions =
         folderQuestions.length > 0
           ? folderQuestions
+          : cachedForFolder.length > 0 || storeSnap.hasLoadedOnce
+          ? cachedForFolder
           : (await getDocs(query(collection(db, 'folder_questions'), where('folderId', '==', selectedFolder.id)))).docs.map(
               (d) => ({ id: d.id, ...d.data() } as FolderQuestionItem)
             );

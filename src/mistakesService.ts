@@ -191,8 +191,8 @@ export async function deleteCorrectQuestionsFromFolderPermanently({
       folderId ? fq.folderId === folderId : true
     );
 
-    // Fallback query only if store had zero items for this folder (e.g. external edge case)
-    if (candidateDocs.length === 0) {
+    // Fallback query only if store has never synced yet
+    if (candidateDocs.length === 0 && !getStudentFoldersSnapshot(userId).hasLoadedOnce) {
       const folderQuery = folderId
         ? query(
             collection(db, 'folder_questions'),

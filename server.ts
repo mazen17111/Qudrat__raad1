@@ -742,12 +742,16 @@ app.get('/api/media/:mediaId', async (req: Request, res: Response) => {
     }
 
     let meta = mediaMetadataCache.get(mediaId);
-    if (!meta && telegramDb) {
+    const missingTs = missingMediaCache.get(mediaId);
+    const isNegativelyCached = Boolean(missingTs && Date.now() - missingTs < MISSING_MEDIA_TTL_MS);
+    if (!meta && !isNegativelyCached && telegramDb) {
       try {
         const snap = await getDoc(doc(telegramDb, 'media_files', mediaId));
         if (snap.exists()) {
           meta = snap.data();
           persistLocalMediaEntry(meta);
+        } else {
+          missingMediaCache.set(mediaId, Date.now());
         }
       } catch (fsErr: any) {
         console.warn(`[Media Lookup] Firestore lookup warning for ${mediaId}:`, fsErr.message);
@@ -1397,15 +1401,19 @@ app.get('/api/stream', async (req: Request, res: Response) => {
     return;
   }
 
-  // 2. Check Firebase Firestore chunks if previously mirrored
+  // 2. Check Firebase Firestore chunks if previously mirrored (with negative cache to avoid repeated Range request reads)
   if (telegramDb) {
     try {
       let meta = mediaMetadataCache.get(cacheKey);
-      if (!meta) {
+      const missingTs = missingMediaCache.get(cacheKey);
+      const isNegativelyCached = Boolean(missingTs && Date.now() - missingTs < MISSING_MEDIA_TTL_MS);
+      if (!meta && !isNegativelyCached) {
         const snap = await getDoc(doc(telegramDb, 'media_files', cacheKey));
         if (snap.exists()) {
           meta = snap.data();
           mediaMetadataCache.set(cacheKey, meta);
+        } else {
+          missingMediaCache.set(cacheKey, Date.now());
         }
       }
       if (meta && meta.storedInFirestore) {
@@ -1433,12 +1441,22 @@ interface TelegramSessionData {
 }
 
 const activeTelegramSessions = new Map<string, TelegramSessionData>();
+const missingMediaCache = new Map<string, number>();
+const MISSING_MEDIA_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const sessionFirestoreCheckAt = new Map<string, number>();
+const SESSION_FIRESTORE_THROTTLE_MS = 10 * 1000; // Check Firestore at most every 10s per pending session
 let latestPendingSessionId: string | null = null;
 let cachedBotToken: string | null = process.env.TELEGRAM_BOT_TOKEN || null;
+let lastBotTokenLookupAt = 0;
+const BOT_TOKEN_NEGATIVE_TTL_MS = 5 * 60 * 1000;
 
 // Helper to resolve bot token from env or Firestore
 async function getTelegramBotToken(): Promise<string | null> {
   if (cachedBotToken) return cachedBotToken;
+  if (Date.now() - lastBotTokenLookupAt < BOT_TOKEN_NEGATIVE_TTL_MS) {
+    return null;
+  }
+  lastBotTokenLookupAt = Date.now();
   if (telegramDb) {
     try {
       const snap = await getDoc(doc(telegramDb, 'system_settings', 'telegram_bot'));
@@ -1502,15 +1520,18 @@ app.get('/api/telegram/check-session', async (req: Request, res: Response) => {
     return;
   }
 
-  // 1. In-memory check (instant)
+  // 1. In-memory check (instant, 0 Firestore reads)
   const memSession = activeTelegramSessions.get(sessionId) || activeTelegramSessions.get('global_latest') || activeTelegramSessions.get('default');
   if (memSession && memSession.status === 'authenticated' && memSession.user) {
     res.json({ authenticated: true, user: memSession.user });
     return;
   }
 
-  // 2. Check Firestore session document
-  if (telegramDb) {
+  // 2. Throttled Firestore fallback check (max once every 10s per sessionId)
+  const now = Date.now();
+  const lastCheck = sessionFirestoreCheckAt.get(sessionId) || 0;
+  if (telegramDb && now - lastCheck >= SESSION_FIRESTORE_THROTTLE_MS) {
+    sessionFirestoreCheckAt.set(sessionId, now);
     try {
       // Check requested sessionId
       const snap = await getDoc(doc(telegramDb, 'telegram_login_sessions', sessionId));
