@@ -23,10 +23,12 @@ import { SystemSettings, ThemeConfig, SectionItem, ResourceItem, ContentItem, Co
 export const app = initializeApp(firebaseConfig);
 
 let firestoreDb: Firestore;
+const isBrowserEnv = typeof window !== 'undefined';
 try {
   firestoreDb = initializeFirestore(
     app,
     {
+      ...(isBrowserEnv ? { experimentalForceLongPolling: true } : {}),
       localCache: persistentLocalCache({
         tabManager: persistentMultipleTabManager(),
       }),
@@ -34,7 +36,15 @@ try {
     firebaseConfig.firestoreDatabaseId
   );
 } catch {
-  firestoreDb = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+  try {
+    firestoreDb = initializeFirestore(
+      app,
+      isBrowserEnv ? { experimentalForceLongPolling: true } : {},
+      firebaseConfig.firestoreDatabaseId
+    );
+  } catch {
+    firestoreDb = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+  }
 }
 
 export const db = firestoreDb;
@@ -418,8 +428,11 @@ export async function testConnection(): Promise<boolean> {
       handleFirestoreError(error, OperationType.GET, 'system_settings/global');
       return false;
     }
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.warn("Client is offline or network error:", error);
+    const code = typeof error === 'object' && error !== null ? String((error as any).code || '') : '';
+    const msg = error instanceof Error ? error.message : String(error);
+    if (code === 'unavailable' || msg.includes('the client is offline') || msg.includes('Could not reach Cloud Firestore backend')) {
+      console.warn('Firestore is currently offline or unreachable:', msg);
+      return false;
     }
     return !quotaExceededState;
   }
