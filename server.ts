@@ -1450,9 +1450,76 @@ let cachedBotToken: string | null = process.env.TELEGRAM_BOT_TOKEN || null;
 let lastBotTokenLookupAt = 0;
 const BOT_TOKEN_NEGATIVE_TTL_MS = 5 * 60 * 1000;
 
+// Persistent Local Telegram User Cache (keeps Telegram login seamless even during Firestore quota limits)
+const telegramUsersCachePath = path.join(uploadBaseDir, '.telegram-users-cache.json');
+const telegramUsersCache = new Map<string, any>();
+let firestoreQuotaBackoffUntil = 0;
+const FIRESTORE_QUOTA_BACKOFF_MS = 5 * 60 * 1000;
+
+function isServerQuotaError(err: any): boolean {
+  if (!err) return false;
+  const code = String(err.code || '');
+  const msg = String(err.message || err || '');
+  return (
+    code === 'resource-exhausted' ||
+    msg.includes('resource-exhausted') ||
+    msg.includes('Quota exceeded') ||
+    msg.includes('Quota limit exceeded') ||
+    msg.includes('Free daily read units per project')
+  );
+}
+
+function isServerFirestoreQuotaBackedOff(): boolean {
+  return Date.now() < firestoreQuotaBackoffUntil;
+}
+
+function noteServerFirestoreError(err: any) {
+  if (isServerQuotaError(err)) {
+    firestoreQuotaBackoffUntil = Date.now() + FIRESTORE_QUOTA_BACKOFF_MS;
+  }
+}
+
+function loadLocalTelegramUsersCache() {
+  try {
+    if (fs.existsSync(telegramUsersCachePath)) {
+      const parsed = JSON.parse(fs.readFileSync(telegramUsersCachePath, 'utf8'));
+      if (parsed && typeof parsed === 'object') {
+        for (const [k, v] of Object.entries(parsed)) {
+          if (v && typeof v === 'object') {
+            telegramUsersCache.set(String(k), v);
+          }
+        }
+      }
+    }
+  } catch (err: any) {
+    console.warn('[Telegram Cache] Could not load local cache:', err.message);
+  }
+}
+
+function persistTelegramUserEntry(user: any) {
+  if (!user || !user.telegramId) return;
+  const key = String(user.telegramId).trim();
+  if (!key) return;
+  telegramUsersCache.set(key, user);
+  try {
+    const obj: Record<string, any> = {};
+    telegramUsersCache.forEach((val, k) => {
+      obj[k] = val;
+    });
+    const tmpPath = `${telegramUsersCachePath}.tmp`;
+    fs.writeFileSync(tmpPath, JSON.stringify(obj), 'utf8');
+    fs.renameSync(tmpPath, telegramUsersCachePath);
+  } catch (err: any) {
+    console.warn('[Telegram Cache] Could not persist local cache:', err.message);
+  }
+}
+
+loadLocalTelegramUsersCache();
+
 // Helper to resolve bot token from env or Firestore
 async function getTelegramBotToken(): Promise<string | null> {
   if (cachedBotToken) return cachedBotToken;
+  if (isServerFirestoreQuotaBackedOff()) return null;
   if (Date.now() - lastBotTokenLookupAt < BOT_TOKEN_NEGATIVE_TTL_MS) {
     return null;
   }
@@ -1470,7 +1537,7 @@ async function getTelegramBotToken(): Promise<string | null> {
         return cachedBotToken;
       }
     } catch (e) {
-      // Ignore read errors
+      noteServerFirestoreError(e);
     }
   }
   return null;
@@ -1527,10 +1594,10 @@ app.get('/api/telegram/check-session', async (req: Request, res: Response) => {
     return;
   }
 
-  // 2. Throttled Firestore fallback check (max once every 10s per sessionId)
+  // 2. Throttled Firestore fallback check (max once every 10s per sessionId, skipped if quota backed off)
   const now = Date.now();
   const lastCheck = sessionFirestoreCheckAt.get(sessionId) || 0;
-  if (telegramDb && now - lastCheck >= SESSION_FIRESTORE_THROTTLE_MS) {
+  if (telegramDb && !isServerFirestoreQuotaBackedOff() && now - lastCheck >= SESSION_FIRESTORE_THROTTLE_MS) {
     sessionFirestoreCheckAt.set(sessionId, now);
     try {
       // Check requested sessionId
@@ -1538,6 +1605,7 @@ app.get('/api/telegram/check-session', async (req: Request, res: Response) => {
       if (snap.exists()) {
         const data = snap.data();
         if (data.status === 'authenticated' && data.user) {
+          persistTelegramUserEntry(data.user);
           activeTelegramSessions.set(sessionId, {
             sessionId,
             status: 'authenticated',
@@ -1560,17 +1628,99 @@ app.get('/api/telegram/check-session', async (req: Request, res: Response) => {
           // If authenticated within the last 2 minutes
           const authTime = data.authenticatedAt ? new Date(data.authenticatedAt).getTime() : 0;
           if (Date.now() - authTime < 120000) {
+            persistTelegramUserEntry(data.user);
             res.json({ authenticated: true, user: data.user });
             return;
           }
         }
       }
     } catch (e) {
-      // Ignore read errors
+      noteServerFirestoreError(e);
     }
   }
 
   res.json({ authenticated: false });
+});
+
+// Resolve or cache Telegram student profile smoothly even when Firestore quota is temporarily reached
+app.post('/api/telegram/resolve-user', async (req: Request, res: Response) => {
+  const { telegramId, name, username, photoUrl, user } = req.body || {};
+  const tgIdStr = String(telegramId || user?.telegramId || '').trim();
+  if (!tgIdStr) {
+    res.status(400).json({ ok: false, error: 'Missing telegramId' });
+    return;
+  }
+
+  // If client passed a freshly authenticated/synced user, cache it locally
+  if (user && typeof user === 'object' && user.id) {
+    persistTelegramUserEntry({ ...user, telegramId: tgIdStr });
+    res.json({ ok: true, user: telegramUsersCache.get(tgIdStr), source: 'cached' });
+    return;
+  }
+
+  // Check server's persistent cache first
+  const cached = telegramUsersCache.get(tgIdStr);
+  if (cached) {
+    res.json({
+      ok: true,
+      user: {
+        ...cached,
+        telegramUsername: username || cached.telegramUsername || '',
+        photoUrl: photoUrl || cached.photoUrl || '',
+        lastLoginAt: new Date().toISOString(),
+      },
+      source: 'server-cache',
+    });
+    return;
+  }
+
+  // Try Firestore only if not quota backed off
+  if (telegramDb && !isServerFirestoreQuotaBackedOff()) {
+    try {
+      let snap = await getDocs(query(collection(telegramDb, 'users'), where('telegramId', '==', tgIdStr)));
+      if (snap.empty && /^\d+$/.test(tgIdStr)) {
+        snap = await getDocs(query(collection(telegramDb, 'users'), where('telegramId', '==', Number(tgIdStr))));
+      }
+      if (!snap.empty) {
+        const d = snap.docs[0];
+        const resolved = { id: d.id, ...d.data(), telegramId: tgIdStr, lastLoginAt: new Date().toISOString() };
+        persistTelegramUserEntry(resolved);
+        res.json({ ok: true, user: resolved, source: 'firestore' });
+        return;
+      }
+    } catch (err) {
+      noteServerFirestoreError(err);
+    }
+  }
+
+  const fallbackUser = {
+    id: `tg_${tgIdStr}`,
+    name: name || username || `طالب_${tgIdStr}`,
+    email: username ? `${String(username).toLowerCase()}@telegram.raad` : `tg_${tgIdStr}@telegram.raad`,
+    password: `tg_${tgIdStr}_pass`,
+    telegramId: tgIdStr,
+    telegramUsername: username || '',
+    photoUrl: photoUrl || '',
+    daysAllowed: 0,
+    isUnlimited: false,
+    isVip: false,
+    subscriptionStatus: 'unspecified',
+    subscriptionStartDate: '',
+    subscriptionEndDate: '',
+    isCounterPaused: false,
+    pausedRemainingDays: 0,
+    isIndividuallyBlocked: false,
+    isIndividuallyWhitelisted: false,
+    watchedVideoIds: [],
+    totalExamsTaken: 0,
+    averageScore: 0,
+    enrolledCourseIds: [],
+    preferredThemeColor: 'default',
+    createdAt: new Date().toISOString(),
+    lastLoginAt: new Date().toISOString(),
+  };
+  persistTelegramUserEntry(fallbackUser);
+  res.json({ ok: true, user: fallbackUser, source: 'fallback' });
 });
 
 // Helper to send Telegram message to student chat
@@ -1637,8 +1787,9 @@ app.post('/api/telegram/webhook', async (req: Request, res: Response) => {
 
     let authenticatedUser: any = null;
 
-    // 1. Firestore persistence: update/create user and save chat ID
-    if (telegramDb) {
+    // 1. Firestore persistence: update/create user and save chat ID (unless quota backed off)
+    const cachedExistingTgUser = telegramUsersCache.get(String(telegramId));
+    if (telegramDb && !isServerFirestoreQuotaBackedOff()) {
       try {
         // Search by numeric ID OR string ID to guarantee finding existing student
         const qNum = query(collection(telegramDb, 'users'), where('telegramId', '==', Number(telegramId)));
@@ -1725,7 +1876,7 @@ app.post('/api/telegram/webhook', async (req: Request, res: Response) => {
           setDoc(doc(telegramDb, 'telegram_login_sessions', 'default'), sessionPayload),
         ]);
 
-        // Also update any other pending sessions created within the last 30 minutes
+        // Also update any other pending sessions
         try {
           const pendingQuery = query(
             collection(telegramDb, 'telegram_login_sessions'),
@@ -1745,30 +1896,44 @@ app.post('/api/telegram/webhook', async (req: Request, res: Response) => {
           console.warn('[Telegram Webhook] Notice updating pending docs:', penErr);
         }
       } catch (dbErr) {
-        console.error('[Telegram Webhook] Firestore error:', dbErr);
+        noteServerFirestoreError(dbErr);
+        console.warn('[Telegram Webhook] Firestore quota/fallback notice:', (dbErr as any)?.message || dbErr);
       }
     }
 
     if (!authenticatedUser) {
-      authenticatedUser = {
-        id: `tg_${telegramId}`,
-        name: fullName,
-        email: `tg_${telegramId}@raad.platform`,
-        daysAllowed: 0,
-        isUnlimited: false,
-        isVip: false,
-        subscriptionStatus: 'unspecified',
-        subscriptionStartDate: '',
-        subscriptionEndDate: '',
-        isCounterPaused: false,
-        pausedRemainingDays: 0,
-        telegramId: String(telegramId),
-        telegramChatId: String(chatId),
-        telegramUsername: username,
-        createdAt: new Date().toISOString(),
-        lastLoginAt: new Date().toISOString(),
-      };
+      if (cachedExistingTgUser) {
+        authenticatedUser = {
+          ...cachedExistingTgUser,
+          telegramId: String(telegramId),
+          telegramChatId: String(chatId),
+          telegramUsername: username || cachedExistingTgUser.telegramUsername || '',
+          lastLoginAt: new Date().toISOString(),
+        };
+      } else {
+        authenticatedUser = {
+          id: `tg_${telegramId}`,
+          name: fullName,
+          email: `tg_${telegramId}@raad.platform`,
+          daysAllowed: 0,
+          isUnlimited: false,
+          isVip: false,
+          subscriptionStatus: 'unspecified',
+          subscriptionStartDate: '',
+          subscriptionEndDate: '',
+          isCounterPaused: false,
+          pausedRemainingDays: 0,
+          enrolledCourseIds: [],
+          telegramId: String(telegramId),
+          telegramChatId: String(chatId),
+          telegramUsername: username,
+          createdAt: new Date().toISOString(),
+          lastLoginAt: new Date().toISOString(),
+        };
+      }
     }
+
+    persistTelegramUserEntry(authenticatedUser);
 
     // 3. Save in memory for instant local polling
     const sessionRecord: TelegramSessionData = {

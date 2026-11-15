@@ -29,6 +29,12 @@ import {
   syncCatalogFromFirestore,
   subscribeCatalogUpdated,
 } from './utils/firestoreCache';
+import {
+  saveCachedTelegramUser,
+  getCachedTelegramUser,
+  buildFallbackTelegramUser,
+  clearTelegramUserPendingSync,
+} from './utils/telegramUserCache';
 import { doc, onSnapshot, updateDoc, setDoc, arrayUnion } from 'firebase/firestore';
 import { AuthView } from './components/AuthView';
 import { CoursesPortal } from './components/CoursesPortal';
@@ -206,19 +212,18 @@ export default function App() {
     });
   }, []);
 
-  // Initialize and test connection on mount
+  // Initialize and test connection on mount (only run seeder automatically if DB is completely uninitialized)
   useEffect(() => {
-    (async () => {
-      const connected = await testConnection();
-      if (connected) {
-        await seedInitialPlatformData();
-      }
-    })();
+    void testConnection();
 
     // Listen to real-time global settings & theme
     const unsub = onSnapshot(
       doc(db, 'system_settings', 'global'),
       (docSnap) => {
+        if (!docSnap.exists()) {
+          void seedInitialPlatformData();
+          return;
+        }
         if (docSnap.exists()) {
           const fetched = docSnap.data() as Partial<SystemSettings>;
           const mergedFeatures: FeaturesConfig = {
@@ -370,6 +375,10 @@ export default function App() {
         try {
           localStorage.setItem(STUDENT_SESSION_KEY, JSON.stringify(mergedUser));
         } catch (e) {}
+        if (mergedUser.telegramId) {
+          saveCachedTelegramUser(mergedUser);
+          clearTelegramUserPendingSync(mergedUser.telegramId);
+        }
       },
       (error) => {
         reportFirestoreListenerError(error, OperationType.GET, `users/${uid}`);
@@ -435,6 +444,9 @@ export default function App() {
     try {
       localStorage.setItem(STUDENT_SESSION_KEY, JSON.stringify(syncedUser));
     } catch (e) {}
+    if (syncedUser.telegramId) {
+      saveCachedTelegramUser(syncedUser);
+    }
     saveThemeForUser(user.id, resolvedColor);
 
     if (resolvedColor === 'black') {
@@ -555,28 +567,14 @@ export default function App() {
       if (!tgUser || !tgUser.id) return;
       const fullName = [tgUser.first_name, tgUser.last_name].filter(Boolean).join(' ') || tgUser.username || `طالب_${tgUser.id}`;
       const telegramIdStr = String(tgUser.id);
-      const studentUser: StudentUser = {
-        id: `tg_${telegramIdStr}`,
-        name: fullName,
-        email: tgUser.username ? `${tgUser.username.toLowerCase()}@telegram.user` : `tg_${telegramIdStr}@raad.platform`,
-        password: `auto_tg_${telegramIdStr}`,
+      const cached = getCachedTelegramUser(telegramIdStr);
+      const studentUser = buildFallbackTelegramUser({
         telegramId: telegramIdStr,
-        telegramUsername: tgUser.username || '',
+        name: fullName,
+        username: tgUser.username || '',
         photoUrl: tgUser.photo_url || '',
-        daysAllowed: 365,
-        isUnlimited: true,
-        subscriptionStartDate: new Date().toISOString(),
-        subscriptionEndDate: '',
-        isIndividuallyBlocked: false,
-        isIndividuallyWhitelisted: true,
-        watchedVideoIds: [],
-        totalExamsTaken: 0,
-        averageScore: 0,
-        enrolledCourseIds: ['course_default_1'],
-        preferredThemeColor: 'default',
-        createdAt: new Date().toISOString(),
-        lastLoginAt: new Date().toISOString(),
-      };
+        existing: cached,
+      });
       handleStudentLoginSuccess(studentUser);
     };
 

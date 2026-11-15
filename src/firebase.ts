@@ -89,6 +89,26 @@ export function isQuotaExceededError(error: unknown): boolean {
   );
 }
 
+export function isQuotaExceededActive(): boolean {
+  return quotaExceededState;
+}
+
+export function isTransientFirestoreError(error: unknown): boolean {
+  if (isQuotaExceededError(error)) return true;
+  if (!error) return false;
+  const code = typeof error === 'object' && error !== null ? String((error as any).code || '') : '';
+  const msg = error instanceof Error ? error.message : String(error);
+  return (
+    code === 'unavailable' ||
+    code === 'deadline-exceeded' ||
+    code === 'aborted' ||
+    msg.includes('the client is offline') ||
+    msg.includes('Could not reach Cloud Firestore backend') ||
+    msg.includes('Failed to get document because the client is offline') ||
+    msg.includes('network')
+  );
+}
+
 export function subscribeQuotaExceeded(listener: QuotaListener): () => void {
   quotaListeners.add(listener);
   if (quotaExceededState) {
@@ -459,21 +479,24 @@ export async function seedInitialPlatformData() {
       }
     }
 
-    const settingsRef = doc(db, 'system_settings', 'global');
-    const settingsSnap = await getDoc(settingsRef);
-    if (!settingsSnap.exists()) {
-      await setDoc(settingsRef, DEFAULT_SETTINGS);
-    }
-
-    // 1. Strict Permanent Seeder Lock: Once the platform is initialized, NEVER re-seed or resurrect anything
+    // 1. Strict Permanent Seeder Lock first: avoids extra system_settings/global read when already initialized
     const lockRef = doc(db, 'system_settings', 'seeder_lock');
     const lockSnap = await getDoc(lockRef);
     if (lockSnap.exists() && lockSnap.data()?.isInitialized) {
-      // Platform already initialized! Whatever is deleted stays deleted permanently.
       try {
         if (typeof window !== 'undefined') localStorage.setItem('raad_platform_seeder_initialized', 'true');
       } catch (e) {}
       return;
+    }
+
+    const hasCachedSettings =
+      typeof window !== 'undefined' && Boolean(localStorage.getItem('raad_cached_system_settings'));
+    if (!hasCachedSettings) {
+      const settingsRef = doc(db, 'system_settings', 'global');
+      const settingsSnap = await getDoc(settingsRef);
+      if (!settingsSnap.exists()) {
+        await setDoc(settingsRef, DEFAULT_SETTINGS);
+      }
     }
 
     const sectionsSnap = await getDocs(collection(db, 'sections'));

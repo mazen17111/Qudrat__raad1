@@ -24,18 +24,36 @@ import {
 import { StudentUser, SystemSettings } from '../types';
 import { BrandLogo } from './BrandLogo';
 import { TelegramLoginCard, TelegramAccount } from './TelegramLoginCard';
-import { db, OperationType, reportFirestoreListenerError } from '../firebase';
+import {
+  db,
+  OperationType,
+  reportFirestoreListenerError,
+  isQuotaExceededError,
+  isQuotaExceededActive,
+  isTransientFirestoreError,
+  handleFirestoreError,
+} from '../firebase';
 import {
   collection,
   query,
   where,
+  getDoc,
+  getDocFromCache,
   getDocs,
+  getDocsFromCache,
   doc,
   setDoc,
   addDoc,
   updateDoc,
   onSnapshot
 } from 'firebase/firestore';
+import {
+  getCachedTelegramUser,
+  saveCachedTelegramUser,
+  markTelegramUserPendingSync,
+  clearTelegramUserPendingSync,
+  buildFallbackTelegramUser,
+} from '../utils/telegramUserCache';
 import { PlatformFooter } from './PlatformFooter';
 
 interface AuthViewProps {
@@ -90,28 +108,174 @@ export const AuthView: React.FC<AuthViewProps> = ({
   const [activeBotSessionId, setActiveBotSessionId] = useState<string>('');
   const telegramContainerRef = useRef<HTMLDivElement>(null);
 
+  // Helper to resolve a Telegram student from IndexedDB cache, localStorage, server cache, or deterministic fallback
+  const resolveTelegramFallbackUser = async (params: {
+    telegramIdStr: string;
+    name?: string;
+    username?: string;
+    photoUrl?: string;
+  }): Promise<StudentUser> => {
+    const { telegramIdStr, name, username, photoUrl } = params;
+
+    // 1. Try Firestore IndexedDB local cache first (0 network reads)
+    try {
+      const q = query(collection(db, 'users'), where('telegramId', '==', telegramIdStr));
+      const cachedSnap = await getDocsFromCache(q);
+      if (!cachedSnap.empty) {
+        const d = cachedSnap.docs[0];
+        return buildFallbackTelegramUser({
+          telegramId: telegramIdStr,
+          name,
+          username,
+          photoUrl,
+          existing: { id: d.id, ...d.data() } as StudentUser,
+        });
+      }
+    } catch {}
+
+    // 2. Try localStorage saved Telegram profiles
+    const localCached = getCachedTelegramUser(telegramIdStr);
+    if (localCached) {
+      return buildFallbackTelegramUser({
+        telegramId: telegramIdStr,
+        name,
+        username,
+        photoUrl,
+        existing: localCached,
+      });
+    }
+
+    // 3. Try server's persistent Telegram user cache (/api/telegram/resolve-user)
+    try {
+      const resp = await fetch('/api/telegram/resolve-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          telegramId: telegramIdStr,
+          name,
+          username,
+          photoUrl,
+        }),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data?.ok && data.user) {
+          return buildFallbackTelegramUser({
+            telegramId: telegramIdStr,
+            name,
+            username,
+            photoUrl,
+            existing: data.user as StudentUser,
+          });
+        }
+      }
+    } catch {}
+
+    // 4. Deterministic fallback so student enters smoothly
+    return buildFallbackTelegramUser({
+      telegramId: telegramIdStr,
+      name,
+      username,
+      photoUrl,
+      existing: null,
+    });
+  };
+
+  // Helper to complete Telegram login and update all local + server caches cleanly
+  const finalizeTelegramLogin = (authenticatedUser: StudentUser) => {
+    try {
+      localStorage.setItem('raad_student_auth_session', JSON.stringify(authenticatedUser));
+      localStorage.setItem('raad_student_session', JSON.stringify(authenticatedUser));
+    } catch (e) {}
+
+    const updatedAccounts = saveCachedTelegramUser(authenticatedUser);
+    if (updatedAccounts.length > 0) {
+      setSavedTelegramAccounts(updatedAccounts);
+    }
+
+    // Warm server's local Telegram cache in background (0 Firestore reads)
+    fetch('/api/telegram/resolve-user', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        telegramId: authenticatedUser.telegramId,
+        user: authenticatedUser,
+      }),
+    }).catch(() => {});
+
+    setIsAddingNewTelegram(false);
+    onSuccessAuth(authenticatedUser);
+  };
+
   // Handle Telegram Authentication Callback from Widget
   const handleTelegramAuthSuccess = async (tgUser: any) => {
     if (!tgUser || !tgUser.id) return;
     setTelegramLoading(true);
     setError('');
 
-    try {
-      const telegramIdStr = String(tgUser.id);
-      const fullName = [tgUser.first_name, tgUser.last_name].filter(Boolean).join(' ') || tgUser.username || `طالب_${tgUser.id}`;
+    const telegramIdStr = String(tgUser.id);
+    const fullName = [tgUser.first_name, tgUser.last_name].filter(Boolean).join(' ') || tgUser.username || `طالب_${tgUser.id}`;
+    const localCached = getCachedTelegramUser(telegramIdStr);
 
-      // 1. Check if Telegram ID already exists in users collection in Firestore
-      const usersRef = collection(db, 'users');
-      const q = query(usersRef, where('telegramId', '==', telegramIdStr));
-      let snap = await getDocs(q);
+    try {
+      // Fast fallback if Firestore quota is already known to be exceeded
+      if (isQuotaExceededActive()) {
+        const fallbackUser = await resolveTelegramFallbackUser({
+          telegramIdStr,
+          name: fullName,
+          username: tgUser.username || '',
+          photoUrl: tgUser.photo_url || '',
+        });
+        if (fallbackUser.isDeleted) {
+          setError('هذا الحساب تم حظره أو حذفه من قبل الإدارة.');
+          return;
+        }
+        markTelegramUserPendingSync(fallbackUser);
+        finalizeTelegramLogin(fallbackUser);
+        return;
+      }
+
+      let existingDocId: string | null = null;
+      let existingData: StudentUser | null = null;
+
+      // 1. If we already know the student's real Firestore doc ID from local cache, read 1 doc directly
+      if (localCached?.id && !localCached.id.startsWith('tg_')) {
+        try {
+          const singleSnap = await getDoc(doc(db, 'users', localCached.id));
+          if (singleSnap.exists()) {
+            existingDocId = singleSnap.id;
+            existingData = { id: singleSnap.id, ...singleSnap.data() } as StudentUser;
+          }
+        } catch (singleErr) {
+          if (isQuotaExceededError(singleErr) || isTransientFirestoreError(singleErr)) {
+            try {
+              const cachedDoc = await getDocFromCache(doc(db, 'users', localCached.id));
+              if (cachedDoc.exists()) {
+                existingDocId = cachedDoc.id;
+                existingData = { id: cachedDoc.id, ...cachedDoc.data() } as StudentUser;
+              }
+            } catch {}
+            if (!existingData) throw singleErr;
+          }
+        }
+      }
+
+      // 2. Otherwise query by telegramId (string, then numeric fallback if needed)
+      if (!existingData) {
+        const usersRef = collection(db, 'users');
+        let snap = await getDocs(query(usersRef, where('telegramId', '==', telegramIdStr)));
+        if (snap.empty && /^\d+$/.test(telegramIdStr)) {
+          snap = await getDocs(query(usersRef, where('telegramId', '==', Number(telegramIdStr))));
+        }
+        if (!snap.empty) {
+          existingDocId = snap.docs[0].id;
+          existingData = { id: snap.docs[0].id, ...snap.docs[0].data() } as StudentUser;
+        }
+      }
 
       let authenticatedUser: StudentUser;
 
-      if (!snap.empty) {
-        // User already exists in Firestore!
-        const userDoc = snap.docs[0];
-        const existingData = { id: userDoc.id, ...userDoc.data() } as StudentUser;
-
+      if (existingData && existingDocId) {
         if (existingData.isDeleted) {
           setError('هذا الحساب تم حظره أو حذفه من قبل الإدارة.');
           setTelegramLoading(false);
@@ -129,7 +293,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
         }
 
         try {
-          await updateDoc(doc(db, 'users', userDoc.id), updates as any);
+          await updateDoc(doc(db, 'users', existingDocId), updates as any);
         } catch (e) {
           console.warn('Update user last login note:', e);
         }
@@ -137,10 +301,11 @@ export const AuthView: React.FC<AuthViewProps> = ({
         authenticatedUser = {
           ...existingData,
           ...updates,
-          id: userDoc.id,
+          id: existingDocId,
         };
+        clearTelegramUserPendingSync(telegramIdStr);
       } else {
-        // User does not exist -> Create brand new document!
+        // User does not exist in Firestore -> Create brand new document (or fallback smoothly if quota/network blocked)
         const newUserRef = doc(collection(db, 'users'));
         const newStudent: StudentUser = {
           id: newUserRef.id,
@@ -169,53 +334,60 @@ export const AuthView: React.FC<AuthViewProps> = ({
           lastLoginAt: new Date().toISOString(),
         };
 
-        await setDoc(newUserRef, newStudent);
-
-        // Provision default mistakes folder for this student
-        await addDoc(collection(db, 'folders'), {
-          userId: newStudent.id,
-          courseId: 'course_default_1',
-          title: 'مجلد الاخطاء',
-          isDefaultMistakesFolder: true,
-          createdAt: new Date().toISOString(),
-        });
-
-        authenticatedUser = newStudent;
+        try {
+          await setDoc(newUserRef, newStudent);
+          // Provision default mistakes folder for this student
+          await addDoc(collection(db, 'folders'), {
+            userId: newStudent.id,
+            courseId: 'course_default_1',
+            title: 'مجلد الاخطاء',
+            isDefaultMistakesFolder: true,
+            createdAt: new Date().toISOString(),
+          }).catch(() => {});
+          clearTelegramUserPendingSync(telegramIdStr);
+          authenticatedUser = newStudent;
+        } catch (writeErr) {
+          if (isQuotaExceededError(writeErr) || isTransientFirestoreError(writeErr)) {
+            if (isQuotaExceededError(writeErr)) {
+              handleFirestoreError(writeErr, OperationType.WRITE, `users/${newUserRef.id}`);
+            }
+            const fallbackUser = await resolveTelegramFallbackUser({
+              telegramIdStr,
+              name: fullName,
+              username: tgUser.username || '',
+              photoUrl: tgUser.photo_url || '',
+            });
+            markTelegramUserPendingSync(fallbackUser);
+            finalizeTelegramLogin(fallbackUser);
+            return;
+          }
+          throw writeErr;
+        }
       }
 
-      // 4. Save session in localStorage so student stays logged in
-      try {
-        localStorage.setItem('raad_student_session', JSON.stringify(authenticatedUser));
-      } catch (e) {}
-
-      // Save to device's list of saved telegram accounts
-      try {
-        const newAcc: TelegramAccount = {
-          id: telegramIdStr,
-          name: authenticatedUser.name,
-          username: authenticatedUser.telegramUsername || '',
-          photoUrl: authenticatedUser.photoUrl || '',
-        };
-        const currentList: TelegramAccount[] = (() => {
-          try {
-            const raw = localStorage.getItem('raad_saved_telegram_accounts');
-            return raw ? JSON.parse(raw) : [];
-          } catch {
-            return [];
-          }
-        })();
-        const updated = [newAcc, ...currentList.filter((a) => String(a.id) !== telegramIdStr)];
-        localStorage.setItem('raad_saved_telegram_accounts', JSON.stringify(updated));
-        setSavedTelegramAccounts(updated);
-      } catch (e) {}
-
-      setIsAddingNewTelegram(false);
-
-      // 5. Automatic redirect: immediately transfer student to Courses Portal!
-      onSuccessAuth(authenticatedUser);
+      finalizeTelegramLogin(authenticatedUser);
     } catch (err: any) {
-      console.error('Telegram Auth Error:', err);
-      setError('حدث خطأ أثناء ربط بيانات تيليجرام بقاعدة البيانات، يرجى المحاولة ثانية.');
+      if (isQuotaExceededError(err)) {
+        handleFirestoreError(err, OperationType.GET, 'users');
+      } else {
+        console.warn('Telegram Auth fallback activated:', err);
+      }
+
+      // Smooth fallback on quota exceeded, offline, or temporary Firestore connectivity failure
+      const fallbackUser = await resolveTelegramFallbackUser({
+        telegramIdStr,
+        name: fullName,
+        username: tgUser.username || '',
+        photoUrl: tgUser.photo_url || '',
+      });
+      if (fallbackUser.isDeleted) {
+        setError('هذا الحساب تم حظره أو حذفه من قبل الإدارة.');
+        return;
+      }
+      if (isQuotaExceededError(err) || isTransientFirestoreError(err)) {
+        markTelegramUserPendingSync(fallbackUser);
+      }
+      finalizeTelegramLogin(fallbackUser);
     } finally {
       setTelegramLoading(false);
     }
@@ -225,15 +397,55 @@ export const AuthView: React.FC<AuthViewProps> = ({
   const handleSavedTelegramLogin = async (account: TelegramAccount) => {
     setTelegramLoading(true);
     setError('');
-    try {
-      const telegramIdStr = String(account.id);
-      const usersRef = collection(db, 'users');
-      const q = query(usersRef, where('telegramId', '==', telegramIdStr));
-      const snap = await getDocs(q);
+    const telegramIdStr = String(account.id);
+    const localCached = getCachedTelegramUser(telegramIdStr);
 
-      if (!snap.empty) {
-        const userDoc = snap.docs[0];
-        const existingData = { id: userDoc.id, ...userDoc.data() } as StudentUser;
+    try {
+      if (isQuotaExceededActive()) {
+        const fallbackUser = await resolveTelegramFallbackUser({
+          telegramIdStr,
+          name: account.name,
+          username: account.username || '',
+          photoUrl: account.photoUrl || '',
+        });
+        if (fallbackUser.isDeleted) {
+          setError('هذا الحساب تم حظره أو حذفه من قبل الإدارة.');
+          return;
+        }
+        finalizeTelegramLogin(fallbackUser);
+        return;
+      }
+
+      let existingDocId: string | null = null;
+      let existingData: StudentUser | null = null;
+
+      if (localCached?.id && !localCached.id.startsWith('tg_')) {
+        try {
+          const singleSnap = await getDoc(doc(db, 'users', localCached.id));
+          if (singleSnap.exists()) {
+            existingDocId = singleSnap.id;
+            existingData = { id: singleSnap.id, ...singleSnap.data() } as StudentUser;
+          }
+        } catch (singleErr) {
+          if (isQuotaExceededError(singleErr) || isTransientFirestoreError(singleErr)) {
+            throw singleErr;
+          }
+        }
+      }
+
+      if (!existingData) {
+        const usersRef = collection(db, 'users');
+        let snap = await getDocs(query(usersRef, where('telegramId', '==', telegramIdStr)));
+        if (snap.empty && /^\d+$/.test(telegramIdStr)) {
+          snap = await getDocs(query(usersRef, where('telegramId', '==', Number(telegramIdStr))));
+        }
+        if (!snap.empty) {
+          existingDocId = snap.docs[0].id;
+          existingData = { id: snap.docs[0].id, ...snap.docs[0].data() } as StudentUser;
+        }
+      }
+
+      if (existingData && existingDocId) {
         if (existingData.isDeleted) {
           setError('هذا الحساب تم حظره أو حذفه من قبل الإدارة.');
           setTelegramLoading(false);
@@ -241,30 +453,45 @@ export const AuthView: React.FC<AuthViewProps> = ({
         }
 
         try {
-          await updateDoc(doc(db, 'users', userDoc.id), {
+          await updateDoc(doc(db, 'users', existingDocId), {
             lastLoginAt: new Date().toISOString(),
           });
         } catch (e) {}
 
-        const authenticatedUser = {
+        const authenticatedUser: StudentUser = {
           ...existingData,
           lastLoginAt: new Date().toISOString(),
-          id: userDoc.id,
+          id: existingDocId,
         };
-
-        try {
-          localStorage.setItem('raad_student_session', JSON.stringify(authenticatedUser));
-        } catch (e) {}
-
-        onSuccessAuth(authenticatedUser);
+        finalizeTelegramLogin(authenticatedUser);
+      } else if (localCached) {
+        finalizeTelegramLogin({
+          ...localCached,
+          lastLoginAt: new Date().toISOString(),
+        });
       } else {
-        // Account document not in firestore, activate widget
+        // Account document not in firestore and not cached locally, activate widget
         setIsAddingNewTelegram(true);
         setError('يرجى الضغط على زر تليجرام أدناه لربط الحساب وتأكيد الدخول.');
       }
     } catch (err) {
-      console.error('Error logging in with saved telegram account:', err);
-      setError('حدث خطأ أثناء تسجيل الدخول بحساب تليجرام، يرجى المحاولة ثانية.');
+      if (isQuotaExceededError(err)) {
+        handleFirestoreError(err, OperationType.GET, 'users');
+      } else {
+        console.warn('Saved Telegram login fallback activated:', err);
+      }
+
+      const fallbackUser = await resolveTelegramFallbackUser({
+        telegramIdStr,
+        name: account.name,
+        username: account.username || '',
+        photoUrl: account.photoUrl || '',
+      });
+      if (fallbackUser.isDeleted) {
+        setError('هذا الحساب تم حظره أو حذفه من قبل الإدارة.');
+        return;
+      }
+      finalizeTelegramLogin(fallbackUser);
     } finally {
       setTelegramLoading(false);
     }
@@ -309,6 +536,12 @@ export const AuthView: React.FC<AuthViewProps> = ({
         localStorage.setItem('raad_student_auth_session', JSON.stringify(authenticatedUser));
         localStorage.setItem('raad_student_session', JSON.stringify(authenticatedUser));
       } catch (e) {}
+      if (authenticatedUser?.telegramId) {
+        const updatedAccs = saveCachedTelegramUser(authenticatedUser);
+        if (updatedAccs.length > 0) {
+          setSavedTelegramAccounts(updatedAccs);
+        }
+      }
 
       onSuccessAuth(authenticatedUser);
     };
@@ -388,7 +621,16 @@ export const AuthView: React.FC<AuthViewProps> = ({
     try {
       // 1. Check if email is in permanently banned emails
       const bannedQuery = query(collection(db, 'banned_emails'), where('email', '==', cleanEmail));
-      const bannedSnap = await getDocs(bannedQuery);
+      let bannedSnap;
+      try {
+        bannedSnap = await getDocs(bannedQuery);
+      } catch (banErr) {
+        if (isQuotaExceededError(banErr) || isTransientFirestoreError(banErr)) {
+          bannedSnap = await getDocsFromCache(bannedQuery).catch(() => ({ empty: true } as any));
+        } else {
+          throw banErr;
+        }
+      }
 
       if (!bannedSnap.empty) {
         setError('هذا الحساب تم حظره نهائياً من قبل الإدارة.');
@@ -455,7 +697,16 @@ export const AuthView: React.FC<AuthViewProps> = ({
           collection(db, 'users'),
           where('email', '==', cleanEmail)
         );
-        const userSnap = await getDocs(userQuery);
+        let userSnap;
+        try {
+          userSnap = await getDocs(userQuery);
+        } catch (queryErr) {
+          if (isQuotaExceededError(queryErr) || isTransientFirestoreError(queryErr)) {
+            userSnap = await getDocsFromCache(userQuery);
+          } else {
+            throw queryErr;
+          }
+        }
 
         if (userSnap.empty) {
           setError('البريد الإلكتروني أو كلمة المرور غير صحيحة، أو الحساب غير موجود');
@@ -480,8 +731,13 @@ export const AuthView: React.FC<AuthViewProps> = ({
         onSuccessAuth(foundUser);
       }
     } catch (err: any) {
-      console.error('Auth Error:', err);
-      setError('حدث خطأ أثناء الاتصال بقاعدة البيانات، يرجى المحاولة ثانية');
+      if (isQuotaExceededError(err)) {
+        handleFirestoreError(err, OperationType.GET, 'users');
+        setError('تم الوصول للحد اليومي المجاني لقراءات قاعدة البيانات مؤقتاً، يمكنك الدخول بحساب تيليجرام أو المحاولة لاحقاً.');
+      } else {
+        console.error('Auth Error:', err);
+        setError('حدث خطأ أثناء الاتصال بقاعدة البيانات، يرجى المحاولة ثانية');
+      }
     } finally {
       setLoading(false);
     }

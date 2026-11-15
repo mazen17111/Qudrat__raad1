@@ -1,8 +1,9 @@
-import { collection, doc, getDocs, setDoc } from 'firebase/firestore';
+import { collection, doc, getDocs, getDocsFromCache, setDoc } from 'firebase/firestore';
 import {
   db,
   resolveVideoUrl,
   isQuotaExceededError,
+  isQuotaExceededActive,
   handleFirestoreError,
   OperationType,
   INITIAL_COURSES,
@@ -171,7 +172,16 @@ export function isCatalogCacheFresh(remoteVersion?: number, includeContent = tru
   // If systemSettings has a catalogUpdatedAt version and our local cache already matches it,
   // NEVER re-fetch from Firestore until an admin makes a real update and bumps the version!
   if (remoteVersion && remoteVersion > 0) {
-    return meta.version === remoteVersion;
+    if (meta.version === remoteVersion) {
+      return true;
+    }
+    // If we just fetched an unversioned snapshot AFTER the remote catalogUpdatedAt timestamp,
+    // our local data already includes that version — stamp it without re-fetching!
+    if (meta.version === 0 && fetchedAt >= remoteVersion) {
+      writeMeta({ version: remoteVersion });
+      return true;
+    }
+    return false;
   }
 
   // When no remoteVersion is set yet, reuse session cache or 24-hour localStorage cache
@@ -255,6 +265,73 @@ export function subscribeCatalogUpdated(listener: (snapshot: CatalogSnapshot) =>
 let inFlightSync: Promise<CatalogSnapshot> | null = null;
 let lastSyncedVersionInMemory = 0;
 
+async function readCatalogFromIndexedDbCache(includeContent: boolean): Promise<CatalogSnapshot | null> {
+  try {
+    const [coursesSnap, sectionsSnap, resourcesSnap, itemsSnap] = await Promise.all([
+      getDocsFromCache(collection(db, 'courses')),
+      includeContent ? getDocsFromCache(collection(db, 'sections')) : Promise.resolve(null),
+      includeContent ? getDocsFromCache(collection(db, 'resources')) : Promise.resolve(null),
+      includeContent ? getDocsFromCache(collection(db, 'content_items')) : Promise.resolve(null),
+    ]);
+
+    if (coursesSnap.empty && (!itemsSnap || itemsSnap.empty)) {
+      return null;
+    }
+
+    const coursesList: CourseItem[] = [];
+    coursesSnap.forEach((d) => coursesList.push({ id: d.id, ...d.data() } as CourseItem));
+    coursesList.sort((a, b) => (a.order || 0) - (b.order || 0));
+
+    let sectionsList = loadCachedSections();
+    let resourcesList = loadCachedResources();
+    let itemsList = loadCachedContentItems();
+
+    if (sectionsSnap && !sectionsSnap.empty) {
+      const list: SectionItem[] = [];
+      sectionsSnap.forEach((d) => list.push({ id: d.id, ...d.data() } as SectionItem));
+      list.sort((a, b) => (a.order || 0) - (b.order || 0));
+      sectionsList = list;
+    }
+
+    if (resourcesSnap && !resourcesSnap.empty) {
+      const list: ResourceItem[] = [];
+      resourcesSnap.forEach((d) => list.push({ id: d.id, ...d.data() } as ResourceItem));
+      list.sort((a, b) => (a.order || 0) - (b.order || 0));
+      resourcesList = list;
+    }
+
+    if (itemsSnap && !itemsSnap.empty) {
+      const list: ContentItem[] = [];
+      itemsSnap.forEach((d) => {
+        const raw = { id: d.id, ...d.data() } as ContentItem;
+        if (raw.type === 'video') {
+          raw.url = resolveVideoUrl(raw);
+          if (raw.backupUrl) {
+            raw.backupUrl = resolveVideoUrl(raw.backupUrl);
+          }
+        }
+        list.push(raw);
+      });
+      list.sort((a, b) => {
+        const tA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const tB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        if (tA !== tB) return tA - tB;
+        return (a.id || '').localeCompare(b.id || '');
+      });
+      itemsList = list;
+    }
+
+    return {
+      courses: coursesList.length > 0 ? coursesList : loadCachedCourses(),
+      sections: sectionsList,
+      resources: resourcesList,
+      contentItems: itemsList,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function syncCatalogFromFirestore({
   force = false,
   remoteVersion,
@@ -266,6 +343,16 @@ export async function syncCatalogFromFirestore({
 } = {}): Promise<CatalogSnapshot> {
   if (!force && isCatalogCacheFresh(remoteVersion, includeContent)) {
     catalogSyncedThisSession = true;
+    return getCachedCatalogSnapshot();
+  }
+
+  // If Firestore free daily quota is already known to be exceeded, serve immediately from local/IndexedDB cache (0 network reads)
+  if (!force && isQuotaExceededActive()) {
+    const idbSnap = await readCatalogFromIndexedDbCache(includeContent);
+    if (idbSnap) {
+      saveCatalogToCache(idbSnap, { emit: false, markSynced: false });
+      return idbSnap;
+    }
     return getCachedCatalogSnapshot();
   }
 
@@ -358,6 +445,11 @@ export async function syncCatalogFromFirestore({
         handleFirestoreError(err, OperationType.LIST, 'courses/catalog');
       } else {
         console.warn('Catalog sync fallback to cache:', err);
+      }
+      const idbSnap = await readCatalogFromIndexedDbCache(includeContent);
+      if (idbSnap) {
+        saveCatalogToCache(idbSnap, { emit: false, markSynced: false });
+        return idbSnap;
       }
       return getCachedCatalogSnapshot();
     } finally {
