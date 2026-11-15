@@ -12,6 +12,7 @@ import {
   INITIAL_CONTENT_ITEMS,
 } from '../firebase';
 import { CourseItem, SectionItem, ResourceItem, ContentItem } from '../types';
+import { trackLocalRead, trackLocalWrite, trackLocalCacheHit } from './localUsageTracker';
 
 export const CACHED_COURSES_KEY = 'raad_cached_courses';
 export const CACHED_SECTIONS_KEY = 'raad_cached_sections';
@@ -343,11 +344,13 @@ export async function syncCatalogFromFirestore({
 } = {}): Promise<CatalogSnapshot> {
   if (!force && isCatalogCacheFresh(remoteVersion, includeContent)) {
     catalogSyncedThisSession = true;
+    trackLocalCacheHit(1, 'قراءة الكورسات والمحتوى من الكاش');
     return getCachedCatalogSnapshot();
   }
 
   // If Firestore free daily quota is already known to be exceeded, serve immediately from local/IndexedDB cache (0 network reads)
   if (!force && isQuotaExceededActive()) {
+    trackLocalCacheHit(1, 'تشغيل الكورسات من الكاش المحلي');
     const idbSnap = await readCatalogFromIndexedDbCache(includeContent);
     if (idbSnap) {
       saveCatalogToCache(idbSnap, { emit: false, markSynced: false });
@@ -372,6 +375,13 @@ export async function syncCatalogFromFirestore({
         includeContent ? getDocs(collection(db, 'resources')) : Promise.resolve(null),
         includeContent ? getDocs(collection(db, 'content_items')) : Promise.resolve(null),
       ]);
+
+      const countedReads =
+        Math.max(1, coursesSnap.size) +
+        (sectionsSnap ? Math.max(1, sectionsSnap.size) : 0) +
+        (resourcesSnap ? Math.max(1, resourcesSnap.size) : 0) +
+        (itemsSnap ? Math.max(1, itemsSnap.size) : 0);
+      trackLocalRead(countedReads, 'مزامنة الكورسات والمحتوى');
 
       const coursesList: CourseItem[] = [];
       coursesSnap.forEach((d) => coursesList.push({ id: d.id, ...d.data() } as CourseItem));
@@ -481,6 +491,7 @@ export async function bumpCatalogVersion(updatedSnapshot?: Partial<CatalogSnapsh
       { catalogUpdatedAt: version },
       { merge: true }
     );
+    trackLocalWrite(1, 'تحديث نسخة الكتالوج');
   } catch (err) {
     console.warn('Non-blocking catalog version bump error:', err);
   }

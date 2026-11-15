@@ -19,6 +19,7 @@ import {
 } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 import { SystemSettings, ThemeConfig, SectionItem, ResourceItem, ContentItem, CourseItem } from './types';
+import { trackLocalRead, trackLocalWrite, trackLocalCacheHit } from './utils/localUsageTracker';
 
 export const app = initializeApp(firebaseConfig);
 
@@ -429,18 +430,24 @@ export async function testConnection(): Promise<boolean> {
     if (typeof window !== 'undefined') {
       if (
         sessionStorage.getItem('raad_firestore_conn_tested') === 'true' ||
+        localStorage.getItem('raad_firestore_conn_verified_v1') === 'true' ||
         localStorage.getItem('raad_cached_system_settings') ||
         localStorage.getItem('raad_platform_seeder_initialized') === 'true'
       ) {
         sessionStorage.setItem('raad_firestore_conn_tested', 'true');
+        trackLocalCacheHit(1, 'تخطي فحص الاتصال بفضل الكاش');
         return true;
       }
     }
   } catch {}
   try {
     await getDocFromServer(doc(db, 'system_settings', 'global'));
+    trackLocalRead(1, 'فحص اتصال الخادم');
     try {
-      if (typeof window !== 'undefined') sessionStorage.setItem('raad_firestore_conn_tested', 'true');
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem('raad_firestore_conn_tested', 'true');
+        localStorage.setItem('raad_firestore_conn_verified_v1', 'true');
+      }
     } catch {}
     return true;
   } catch (error) {
@@ -482,6 +489,7 @@ export async function seedInitialPlatformData() {
     // 1. Strict Permanent Seeder Lock first: avoids extra system_settings/global read when already initialized
     const lockRef = doc(db, 'system_settings', 'seeder_lock');
     const lockSnap = await getDoc(lockRef);
+    trackLocalRead(1, 'فحص قفل التهيئة الأولية');
     if (lockSnap.exists() && lockSnap.data()?.isInitialized) {
       try {
         if (typeof window !== 'undefined') localStorage.setItem('raad_platform_seeder_initialized', 'true');
@@ -494,16 +502,20 @@ export async function seedInitialPlatformData() {
     if (!hasCachedSettings) {
       const settingsRef = doc(db, 'system_settings', 'global');
       const settingsSnap = await getDoc(settingsRef);
+      trackLocalRead(1, 'فحص الإعدادات عند التهيئة');
       if (!settingsSnap.exists()) {
         await setDoc(settingsRef, DEFAULT_SETTINGS);
+        trackLocalWrite(1, 'تهيئة الإعدادات الافتراضية');
       }
     }
 
     const sectionsSnap = await getDocs(collection(db, 'sections'));
     const coursesSnap = await getDocs(collection(db, 'courses'));
+    trackLocalRead(Math.max(1, sectionsSnap.size) + Math.max(1, coursesSnap.size), 'فحص تهيئة الأقسام والكورسات');
     // If courses or sections already exist in the database, lock permanently so deleted courses/items NEVER return
     if (!sectionsSnap.empty || !coursesSnap.empty) {
       await setDoc(lockRef, { isInitialized: true, initializedAt: new Date().toISOString() }, { merge: true });
+      trackLocalWrite(1, 'حفظ قفل التهيئة');
       try {
         if (typeof window !== 'undefined') localStorage.setItem('raad_platform_seeder_initialized', 'true');
       } catch (e) {}
@@ -896,6 +908,7 @@ export async function restoreDefaultCoursesAndContent(): Promise<{ restored: boo
       }, { merge: true });
     }
 
+    trackLocalRead(10, 'فحص استعادة الكورسات الافتراضية');
     return { restored: true, message: 'تم استرجاع الكورس المحذوف ومحتوياته بالكامل بنجاح ⚡' };
   } catch (err) {
     console.error('Error in restoreDefaultCoursesAndContent:', err);

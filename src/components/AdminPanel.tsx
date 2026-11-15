@@ -56,6 +56,8 @@ import {
   Play,
   Crown,
   Search,
+  Database,
+  Activity,
 } from 'lucide-react';
 import {
   StudentUser,
@@ -94,6 +96,19 @@ import {
   syncCatalogFromFirestore,
 } from '../utils/firestoreCache';
 import {
+  getLocalUsageStats,
+  subscribeLocalUsageStats,
+  flushUsageReportsNow,
+  FREE_DAILY_READS_LIMIT,
+  FREE_DAILY_WRITES_LIMIT,
+  FREE_DAILY_DELETES_LIMIT,
+  trackLocalRead,
+  trackLocalWrite,
+  trackLocalDelete,
+  trackLocalCacheHit,
+  type LocalUsageStats,
+} from '../utils/localUsageTracker';
+import {
   collection,
   doc,
   updateDoc,
@@ -104,6 +119,23 @@ import {
   query,
   where
 } from 'firebase/firestore';
+
+interface ServerFirebaseUsage {
+  ok: boolean;
+  source: 'cloud_monitoring' | 'platform_ledger';
+  monitoringConnected: boolean;
+  monitoringReason?: string;
+  date: string;
+  projectId: string;
+  databaseId: string;
+  reads: number;
+  writes: number;
+  deletes: number;
+  totalOps: number;
+  cacheHits: number;
+  lastOperationLabel?: string;
+  updatedAt: number;
+}
 
 const ADMIN_STUDENTS_SYNCED_AT_KEY = 'raad_cached_admin_students_at';
 const ADMIN_ATTEMPTS_CACHE_KEY = 'raad_cached_admin_exam_attempts';
@@ -118,6 +150,37 @@ interface AdminPanelProps {
 
 export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }) => {
   const [activeTab, setActiveTab] = useState<'courses' | 'students' | 'platform_lock' | 'announcement' | 'live_stream' | 'content' | 'designs' | 'intro_lesson' | 'features'>('courses');
+
+  // Unified real daily Firestore usage tracker (server ledger / Cloud Monitoring + browser SDK, 0 extra Firestore reads)
+  const [localUsage, setLocalUsage] = useState<LocalUsageStats>(() => getLocalUsageStats());
+  const [serverUsage, setServerUsage] = useState<ServerFirebaseUsage | null>(null);
+  const [isRefreshingUsage, setIsRefreshingUsage] = useState(false);
+
+  const fetchServerFirebaseUsage = async () => {
+    try {
+      flushUsageReportsNow();
+      const resp = await fetch('/api/firebase-usage', { cache: 'no-store' });
+      if (resp.ok) {
+        const data = (await resp.json()) as ServerFirebaseUsage;
+        if (data?.ok) {
+          setServerUsage(data);
+        }
+      }
+    } catch {}
+  };
+
+  useEffect(() => {
+    setLocalUsage(getLocalUsageStats());
+    const unsub = subscribeLocalUsageStats((stats) => setLocalUsage(stats));
+    void fetchServerFirebaseUsage();
+    const timer = window.setInterval(() => {
+      void fetchServerFirebaseUsage();
+    }, 30000);
+    return () => {
+      unsub();
+      window.clearInterval(timer);
+    };
+  }, []);
 
   // Courses management state (initialized immediately from shared local cache)
   const [courses, setCourses] = useState<CourseItem[]>(() => {
@@ -451,6 +514,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
           includeContent: true,
         }),
       ]);
+      trackLocalRead(Math.max(1, uSnap.size), 'تحديث يدوي لقائمة الطلاب');
 
       const userList: StudentUser[] = [];
       uSnap.forEach((d) => userList.push({ id: d.id, ...d.data() } as StudentUser));
@@ -536,6 +600,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       getDocs(collection(db, 'users'))
         .then((snapshot) => {
           if (cancelled) return;
+          trackLocalRead(Math.max(1, snapshot.size), 'جلب قائمة الطلاب');
           const list: StudentUser[] = [];
           snapshot.forEach((d) => {
             list.push({ id: d.id, ...d.data() } as StudentUser);
@@ -557,6 +622,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         });
     } else {
       adminStudentsSyncedThisSession = true;
+      trackLocalCacheHit(Math.max(1, students.length || 1), 'قائمة الطلاب من الكاش');
     }
 
     return () => {
@@ -573,6 +639,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     getDocs(query(collection(db, 'exam_attempts'), where('userId', '==', expandedStudentId)))
       .then((snapshot) => {
         if (cancelled) return;
+        trackLocalRead(Math.max(1, snapshot.size), 'سجل اختبارات طالب');
         const studentList: ExamAttempt[] = [];
         snapshot.forEach((d) => {
           studentList.push({ id: d.id, ...d.data() } as ExamAttempt);
@@ -686,6 +753,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
           pausedRemainingDays: 0,
         };
         await updateDoc(doc(db, 'users', targetId), { ...patch, subscriptionEndDate: null });
+        trackLocalWrite(1, 'ترقية طالب إلى VIP');
         updateLocalStudents((prev) => prev.map((s) => (s.id === targetId ? { ...s, ...patch } : s)));
         notifySave(`تمت ترقية حساب الطالب "${targetName}" إلى VIP ماسي بنجاح 👑!`);
       } else if (isUnlimited) {
@@ -700,6 +768,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
           pausedRemainingDays: 0,
         };
         await updateDoc(doc(db, 'users', targetId), { ...patch, subscriptionEndDate: null });
+        trackLocalWrite(1, 'فتح المنصة بشكل مفتوح للطالب');
         updateLocalStudents((prev) => prev.map((s) => (s.id === targetId ? { ...s, ...patch } : s)));
         notifySave(`تم إلغاء الاشتراك وفتح المنصة للطالب "${targetName}" بشكل مفتوح دائم ⚡`);
       } else {
@@ -717,6 +786,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
           pausedRemainingDays: 0,
         };
         await updateDoc(doc(db, 'users', targetId), patch);
+        trackLocalWrite(1, 'تحديث أيام اشتراك طالب');
         updateLocalStudents((prev) => prev.map((s) => (s.id === targetId ? { ...s, ...patch } : s)));
         notifySave(`تم تحديد ${days} يوماً للاشتراك للطالب "${targetName}" بنجاح!`);
       }
@@ -742,6 +812,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         pausedRemainingDays: 0,
       };
       await updateDoc(doc(db, 'users', studentId), patch);
+      trackLocalWrite(1, 'إعادة تعيين اشتراك طالب');
       updateLocalStudents((prev) => prev.map((s) => (s.id === studentId ? { ...s, ...patch } : s)));
       notifySave(`تم إعادة حساب الطالب "${studentName}" لحالة "غير محدد" بنجاح ⏳`);
       setStudentForDaysModal(null);
@@ -761,6 +832,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         subscriptionStatus: willBeVip ? 'vip' : 'unspecified',
       };
       await updateDoc(doc(db, 'users', student.id), patch);
+      trackLocalWrite(1, 'تغيير وضع VIP للطالب');
       updateLocalStudents((prev) => prev.map((s) => (s.id === student.id ? { ...s, ...patch } : s)));
       notifySave(
         willBeVip
@@ -793,6 +865,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
           subscriptionStatus: 'paused',
         };
         await updateDoc(doc(db, 'users', student.id), patch);
+        trackLocalWrite(1, 'إيقاف عداد اشتراك طالب');
         updateLocalStudents((prev) => prev.map((s) => (s.id === student.id ? { ...s, ...patch } : s)));
         notifySave(`تم قفل وتجميد العداد للطالب "${student.name}" بنجاح ⏸️ (تبقى له ${remainingDays} يوم محفوظة)`);
       } else {
@@ -806,6 +879,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
           subscriptionStatus: 'active',
         };
         await updateDoc(doc(db, 'users', student.id), patch);
+        trackLocalWrite(1, 'استئناف عداد اشتراك طالب');
         updateLocalStudents((prev) => prev.map((s) => (s.id === student.id ? { ...s, ...patch } : s)));
         notifySave(`تم استئناف وتشغيل العداد للطالب "${student.name}" بنجاح ▶️`);
       }
@@ -827,6 +901,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         blockedCustomMessage: blockCustomMessage.trim(),
       };
       await updateDoc(doc(db, 'users', targetId), patch);
+      trackLocalWrite(1, 'قفل حساب طالب');
       updateLocalStudents((prev) => prev.map((s) => (s.id === targetId ? { ...s, ...patch } : s)));
       notifySave(`تم قفل المنصة على الطالب "${targetName}" بنجاح.`);
       setStudentForBlockModal(null);
@@ -843,6 +918,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         blockedReason: null,
         blockedCustomMessage: '',
       });
+      trackLocalWrite(1, 'فك قفل حساب طالب');
       updateLocalStudents((prev) =>
         prev.map((s) =>
           s.id === studentId
@@ -876,6 +952,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         blockedReason: null,
         blockedCustomMessage: '',
       });
+      trackLocalWrite(1, 'تفعيل كورسات للطالب');
       updateLocalStudents((prev) =>
         prev.map((s) =>
           s.id === studentForCourseActivation.id
@@ -900,6 +977,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       await updateDoc(doc(db, 'users', student.id), {
         isIndividuallyWhitelisted: nextVal,
       });
+      trackLocalWrite(1, 'تحديث استثناء طالب');
       updateLocalStudents((prev) =>
         prev.map((s) => (s.id === student.id ? { ...s, isIndividuallyWhitelisted: nextVal } : s))
       );
@@ -920,16 +998,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
           bannedAt: new Date().toISOString(),
           reason: 'حذف دائم وحظر من لوحة الإدارة',
         });
+        trackLocalWrite(1, 'حظر بريد طالب');
       }
 
       // 1. Immediately signal active student session to log out with 0ms delay
       await updateDoc(doc(db, 'users', deletingStudent.id), {
         isDeleted: true,
         deletedAt: new Date().toISOString(),
-      }).catch(() => {});
+      }).then(() => trackLocalWrite(1, 'إخراج طالب محذوف')).catch(() => {});
 
       // 2. Permanently remove the user document from Firestore
       await deleteDoc(doc(db, 'users', deletingStudent.id));
+      trackLocalDelete(1, 'حذف حساب طالب');
       updateLocalStudents((prev) => prev.filter((st) => st.id !== deletingStudent.id));
       setDeletingStudent(null);
       notifySave(isPermanent ? 'تم الحذف الدائم وحظر البريد وإخراج الطالب فورياً 🗑️' : 'تم الحذف العادي للحساب وإخراج الطالب فورياً 🗑️');
@@ -948,6 +1028,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         customRedMessage: cleanMsg,
         isRedMessageActive: cleanMsg ? true : false,
       });
+      trackLocalWrite(1, 'حفظ تنبيه مخصص للطالب');
       updateLocalStudents((prev) =>
         prev.map((s) =>
           s.id === studentId
@@ -971,6 +1052,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       await updateDoc(doc(db, 'users', studentId), {
         isRedMessageActive: nextStatus,
       });
+      trackLocalWrite(1, 'تغيير حالة تنبيه الطالب');
       updateLocalStudents((prev) =>
         prev.map((s) => (s.id === studentId ? { ...s, isRedMessageActive: nextStatus } : s))
       );
@@ -989,6 +1071,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         customRedMessage: '',
         isRedMessageActive: false,
       });
+      trackLocalWrite(1, 'حذف تنبيه الطالب');
       updateLocalStudents((prev) =>
         prev.map((s) =>
           s.id === studentId ? { ...s, customRedMessage: '', isRedMessageActive: false } : s
@@ -1010,6 +1093,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       await updateDoc(doc(db, 'users', student.id), {
         certificateIssued: null,
       });
+      trackLocalWrite(1, 'إلغاء شهادة طالب');
       updateLocalStudents((prev) =>
         prev.map((s) => (s.id === student.id ? { ...s, certificateIssued: null } : s))
       );
@@ -1063,6 +1147,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       await updateDoc(doc(db, 'users', issuingCertStudent.id), {
         certificateIssued: certData,
       });
+      trackLocalWrite(1, 'إصدار شهادة لطالب');
 
       updateLocalStudents((prev) =>
         prev.map((s) => (s.id === issuingCertStudent.id ? { ...s, certificateIssued: certData } : s))
@@ -1091,6 +1176,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         telegramUsername: lockSettings.telegramUsername,
         updatedAt: new Date().toISOString(),
       }, { merge: true });
+      trackLocalWrite(1, 'حفظ إعدادات القفل');
       notifySave('تم تحديث وحفظ إعدادات قفل المنصة بنجاح!');
     } catch (err) {
       console.error(err);
@@ -1107,6 +1193,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
           updatedAt: new Date().toISOString(),
         },
       }, { merge: true });
+      trackLocalWrite(1, 'حفظ التنبيه العام');
       notifySave('تم حفظ التنبيه العام لجميع الطلاب!');
     } catch (err) {
       console.error(err);
@@ -1122,6 +1209,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
           updatedAt: new Date().toISOString(),
         },
       }, { merge: true });
+      trackLocalWrite(1, 'حفظ البث المباشر');
       notifySave('تم تحديث بيانات البث المباشر بنجاح!');
     } catch (err) {
       console.error(err);
@@ -1136,6 +1224,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         activeTheme: themeObj,
         updatedAt: new Date().toISOString(),
       }, { merge: true });
+      trackLocalWrite(1, 'تغيير تصميم المنصة');
       notifySave(`تم تطبيق وحفظ تصميم "${themeObj.name}" لجميع طلاب المنصة فورياً!`);
     } catch (err) {
       console.error('Error saving theme:', err);
@@ -1150,6 +1239,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         logoUrl: platformLogoUrl.trim(),
         updatedAt: new Date().toISOString(),
       }, { merge: true });
+      trackLocalWrite(1, 'حفظ شعار المنصة');
       if (typeof window !== 'undefined' && platformLogoUrl.trim()) {
         try {
           localStorage.setItem('raad_platform_logo_url', platformLogoUrl.trim());
@@ -1270,6 +1360,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         },
         { merge: true }
       );
+      trackLocalWrite(1, 'حفظ الحصة التعريفية');
 
       // 2. Immediate local state + shared cache update
       const updatedCoursesForIntro = courses.map((c) =>
@@ -1286,7 +1377,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
             updatedAt: new Date().toISOString(),
           },
           { merge: true }
-        ).catch(() => {});
+        ).then(() => trackLocalWrite(1, 'مزامنة الحصة التعريفية')).catch(() => {});
       }
 
       void bumpCatalogVersion({ courses: updatedCoursesForIntro });
@@ -1488,6 +1579,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       };
 
       await setDoc(courseRef, cleanData, { merge: true });
+      trackLocalWrite(1, 'حفظ كورس');
 
       // Immediate local state + shared cache update
       const exists = courses.some((c) => c.id === courseId);
@@ -1540,6 +1632,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       for (const resId of Array.from(resourceIds)) {
         try {
           const snap = await getDocs(query(collection(db, 'content_items'), where('resourceId', '==', resId)));
+          trackLocalRead(Math.max(1, snap.size), 'فحص عناصر كورس قبل الحذف');
           snap.forEach((d) => {
             if (!itemIds.has(d.id)) {
               itemsDeletePromises.push(deleteDoc(d.ref).catch(() => {}));
@@ -1557,6 +1650,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       for (const secId of Array.from(sectionIds)) {
         try {
           const snap = await getDocs(query(collection(db, 'resources'), where('sectionId', '==', secId)));
+          trackLocalRead(Math.max(1, snap.size), 'فحص مصادر كورس قبل الحذف');
           snap.forEach((d) => {
             if (!resourceIds.has(d.id)) {
               resourcesDeletePromises.push(deleteDoc(d.ref).catch(() => {}));
@@ -1573,6 +1667,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
 
       try {
         const snap = await getDocs(query(collection(db, 'sections'), where('courseId', '==', courseId)));
+        trackLocalRead(Math.max(1, snap.size), 'فحص أقسام كورس قبل الحذف');
         snap.forEach((d) => {
           sectionsDeletePromises.push(deleteDoc(d.ref).catch(() => {}));
         });
@@ -1582,15 +1677,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       const folderDeletePromises: Promise<any>[] = [];
       try {
         const foldersSnap = await getDocs(query(collection(db, 'folders'), where('courseId', '==', courseId)));
+        trackLocalRead(Math.max(1, foldersSnap.size), 'فحص مجلدات كورس قبل الحذف');
         for (const fDoc of foldersSnap.docs) {
           folderDeletePromises.push(deleteDoc(fDoc.ref).catch(() => {}));
           const fqSnap = await getDocs(query(collection(db, 'folder_questions'), where('folderId', '==', fDoc.id)));
+          trackLocalRead(Math.max(1, fqSnap.size), 'فحص أسئلة مجلدات كورس');
           fqSnap.forEach((fqDoc) => {
             folderDeletePromises.push(deleteDoc(fqDoc.ref).catch(() => {}));
           });
         }
 
         const fqCourseSnap = await getDocs(query(collection(db, 'folder_questions'), where('courseId', '==', courseId)));
+        trackLocalRead(Math.max(1, fqCourseSnap.size), 'فحص أسئلة كورس قبل الحذف');
         fqCourseSnap.forEach((fqDoc) => {
           folderDeletePromises.push(deleteDoc(fqDoc.ref).catch(() => {}));
         });
@@ -1598,6 +1696,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
 
       // 8. Delete the Course document itself
       const courseDocPromise = deleteDoc(doc(db, 'courses', courseId));
+      const allDeleteCount =
+        itemsDeletePromises.length +
+        resourcesDeletePromises.length +
+        sectionsDeletePromises.length +
+        folderDeletePromises.length +
+        1;
 
       await Promise.all([
         ...itemsDeletePromises,
@@ -1606,6 +1710,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         ...folderDeletePromises,
         courseDocPromise,
       ]);
+      trackLocalDelete(allDeleteCount, 'حذف كورس ومحتوياته');
 
       // 9. Update local state + shared cache immediately for zero-delay UI feedback
       const updatedCourses = courses.filter((c) => c.id !== courseId);
@@ -1653,6 +1758,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         createdAt: new Date().toISOString(),
       };
       await setDoc(newRef, newSec);
+      trackLocalWrite(1, 'إضافة قسم جديد');
       const updatedSections = [...sections, newSec].sort((a, b) => (a.order || 0) - (b.order || 0));
       setSections(updatedSections);
       void bumpCatalogVersion({ sections: updatedSections });
@@ -1679,6 +1785,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         courseId: editingSection.courseId || selectedCourseId || 'course_default_1',
       };
       await updateDoc(doc(db, 'sections', editingSection.id), patch);
+      trackLocalWrite(1, 'تعديل قسم');
       const updatedSections = sections
         .map((s) => (s.id === editingSection.id ? { ...s, ...patch } : s))
         .sort((a, b) => (a.order || 0) - (b.order || 0));
@@ -1698,6 +1805,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     try {
       const orderNum = Number(newOrder);
       await updateDoc(doc(db, 'sections', secId), { order: orderNum });
+      trackLocalWrite(1, 'ترتيب قسم');
       const updatedSections = sections
         .map((s) => (s.id === secId ? { ...s, order: orderNum } : s))
         .sort((a, b) => (a.order || 0) - (b.order || 0));
@@ -1738,6 +1846,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         createdAt: new Date().toISOString(),
       };
       await setDoc(newRef, newRes);
+      trackLocalWrite(1, 'إضافة مصدر جديد');
       const updatedResources = [...resources, newRes].sort((a, b) => (a.order || 0) - (b.order || 0));
       setResources(updatedResources);
       void bumpCatalogVersion({ resources: updatedResources });
@@ -1763,6 +1872,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         order: Number(newResourceOrder) || editingResource.order || 1,
       };
       await updateDoc(doc(db, 'resources', editingResource.id), patch);
+      trackLocalWrite(1, 'تعديل مصدر');
       const updatedResources = resources
         .map((r) => (r.id === editingResource.id ? { ...r, ...patch } : r))
         .sort((a, b) => (a.order || 0) - (b.order || 0));
@@ -1782,6 +1892,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     try {
       const orderNum = Number(newOrder);
       await updateDoc(doc(db, 'resources', resId), { order: orderNum });
+      trackLocalWrite(1, 'ترتيب مصدر');
       const updatedResources = resources
         .map((r) => (r.id === resId ? { ...r, order: orderNum } : r))
         .sort((a, b) => (a.order || 0) - (b.order || 0));
@@ -2092,6 +2203,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
             createdAt: new Date().toISOString(),
           };
           await setDoc(newResRef, createdAutoResource);
+          trackLocalWrite(1, 'إنشاء مصدر تلقائي للمحتوى');
           targetResId = newResRef.id;
           setSelectedResourceId(targetResId);
         }
@@ -2242,7 +2354,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
             linkedExamIds: newExamIds,
             linkedFileIds: newFileIds,
             updatedAt: new Date().toISOString(),
-          }).catch(() => {});
+          }).then(() => trackLocalWrite(1, 'ربط محتوى بفيديو')).catch(() => {});
         }
       }
 
@@ -2289,6 +2401,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
 
       // 3. Persist to Firestore with single merge write + sync shared cache without self re-read
       await setDoc(doc(db, 'content_items', targetId), sanitizedPayload, { merge: true });
+      trackLocalWrite(1, 'حفظ عنصر محتوى');
       void bumpCatalogVersion({
         contentItems: updatedItems,
         ...(createdAutoResource ? { resources: effectiveResources } : {}),
@@ -2379,6 +2492,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         linkedFileIds: updatedLinkedFiles,
         updatedAt: new Date().toISOString(),
       });
+      trackLocalWrite(1, 'حفظ ربط سريع للفيديو');
 
       const updatedItems = items.map((it) =>
         it.id === quickLinkVideoId
@@ -2524,17 +2638,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         const secId = deleteTarget.id;
         // 1. Delete Section doc
         await deleteDoc(doc(db, 'sections', secId));
+        let deletedDocsCount = 1;
         // 2. Cascade delete child resources & items
         const resToDelete = resources.filter((r) => r.sectionId === secId);
         for (const r of resToDelete) {
-          await deleteDoc(doc(db, 'resources', r.id)).catch(() => {});
+          await deleteDoc(doc(db, 'resources', r.id)).then(() => { deletedDocsCount++; }).catch(() => {});
         }
         const itemsToDelete = items.filter(
           (it) => resToDelete.some((r) => r.id === it.resourceId)
         );
         for (const it of itemsToDelete) {
-          await deleteDoc(doc(db, 'content_items', it.id)).catch(() => {});
+          await deleteDoc(doc(db, 'content_items', it.id)).then(() => { deletedDocsCount++; }).catch(() => {});
         }
+        trackLocalDelete(deletedDocsCount, 'حذف قسم ومحتوياته');
         nextSections = sections.filter((s) => s.id !== secId);
         nextResources = resources.filter((r) => r.sectionId !== secId);
         nextItems = items.filter((it) => !resToDelete.some((r) => r.id === it.resourceId));
@@ -2550,11 +2666,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         const resId = deleteTarget.id;
         // 1. Delete Resource doc
         await deleteDoc(doc(db, 'resources', resId));
+        let deletedDocsCount = 1;
         // 2. Cascade delete child content items
         const itemsToDelete = items.filter((it) => it.resourceId === resId);
         for (const it of itemsToDelete) {
-          await deleteDoc(doc(db, 'content_items', it.id)).catch(() => {});
+          await deleteDoc(doc(db, 'content_items', it.id)).then(() => { deletedDocsCount++; }).catch(() => {});
         }
+        trackLocalDelete(deletedDocsCount, 'حذف مصدر ومحتوياته');
         nextResources = resources.filter((r) => r.id !== resId);
         nextItems = items.filter((it) => it.resourceId !== resId);
         setResources(nextResources);
@@ -2566,6 +2684,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
       } else if (deleteTarget.type === 'item') {
         const itemId = deleteTarget.id;
         await deleteDoc(doc(db, 'content_items', itemId));
+        trackLocalDelete(1, 'حذف عنصر محتوى');
         nextItems = items.filter((it) => it.id !== itemId);
         setItems(nextItems);
         if (editingItem?.id === itemId) {
@@ -2600,6 +2719,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         },
         { merge: true }
       );
+      trackLocalWrite(1, 'تطبيق تصميم المنصة');
       notifySave(`تم تطبيق وتفعيل تصميم "${theme.name}" على المنصة فورياً 🎨`);
     } catch (err) {
       console.error('Error applying theme:', err);
@@ -2641,6 +2761,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         activeTheme: chosenTheme,
         updatedAt: new Date().toISOString(),
       }, { merge: true });
+      trackLocalWrite(1, 'حفظ كافة الإعدادات العامة');
 
       notifySave('تم حفظ وتثبيت جميع التغييرات والإعدادات في السيرفر بنجاح الآن! ⚡');
     } catch (err) {
@@ -2680,6 +2801,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         },
         { merge: true }
       );
+      trackLocalWrite(1, 'حفظ مميزات الكورس');
 
       // 2. Immediate local state + shared cache update
       const updatedCoursesForFeatures = courses.map((c) =>
@@ -2696,7 +2818,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
             updatedAt: new Date().toISOString(),
           },
           { merge: true }
-        ).catch(() => {});
+        ).then(() => trackLocalWrite(1, 'مزامنة مميزات المنصة')).catch(() => {});
       }
 
       void bumpCatalogVersion({ courses: updatedCoursesForFeatures });
@@ -2965,6 +3087,154 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
             <Sparkles className="w-4 h-4 text-amber-400" />
             <span>المميزات ⭐</span>
           </button>
+        </div>
+      </div>
+
+      {/* Real Firebase Daily Usage Counter (0 Extra Firestore Reads/Writes — Auto-Resets at 00:00 PT) */}
+      <div className="bg-slate-900/80 border-b border-slate-800/90 px-4 md:px-8 py-3">
+        <div className="max-w-7xl mx-auto">
+          {(() => {
+            const sameQuotaDate = serverUsage?.date === localUsage.date;
+            const isCloudMonitoring = serverUsage?.source === 'cloud_monitoring' && serverUsage.monitoringConnected;
+            const readsCount = isCloudMonitoring
+              ? serverUsage.reads
+              : Math.max(serverUsage && sameQuotaDate ? serverUsage.reads : 0, localUsage.reads);
+            const writesCount = isCloudMonitoring
+              ? serverUsage.writes
+              : Math.max(serverUsage && sameQuotaDate ? serverUsage.writes : 0, localUsage.writes);
+            const deletesCount = isCloudMonitoring
+              ? serverUsage.deletes
+              : Math.max(serverUsage && sameQuotaDate ? serverUsage.deletes : 0, localUsage.deletes || 0);
+            const totalOps = readsCount + writesCount + deletesCount;
+            const cacheHitsCount = Math.max(
+              serverUsage && sameQuotaDate ? serverUsage.cacheHits : 0,
+              localUsage.cacheHits
+            );
+            const displayDate = serverUsage?.date || localUsage.date;
+            const lastOpLabel = serverUsage?.lastOperationLabel || localUsage.lastOperationLabel;
+
+            const readPercent = Math.min(100, Math.round((readsCount / FREE_DAILY_READS_LIMIT) * 1000) / 10);
+            const writePercent = Math.min(100, Math.round((writesCount / FREE_DAILY_WRITES_LIMIT) * 1000) / 10);
+            const deletePercent = Math.min(100, Math.round((deletesCount / FREE_DAILY_DELETES_LIMIT) * 1000) / 10);
+            const totalAttempted = readsCount + cacheHitsCount;
+            const cacheSavingsPct = totalAttempted > 0 ? Math.round((cacheHitsCount / totalAttempted) * 100) : 100;
+            const statusColor =
+              readPercent >= 85 ? 'text-rose-400' : readPercent >= 60 ? 'text-amber-400' : 'text-emerald-400';
+            const barColor =
+              readPercent >= 85 ? 'bg-rose-500' : readPercent >= 60 ? 'bg-amber-500' : 'bg-emerald-500';
+            return (
+              <div className="rounded-2xl bg-slate-950/70 border border-slate-800 px-4 py-3 flex flex-col xl:flex-row xl:items-center justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-10 h-10 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 flex items-center justify-center shrink-0">
+                    <Database className="w-5 h-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="text-xs md:text-sm font-black text-white">
+                        الاستهلاك الفعلي لفايربيس اليوم
+                      </h3>
+                      {isCloudMonitoring ? (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-emerald-500/15 text-emerald-300 border border-emerald-500/25">
+                          متصل مباشرةً بسيرفر Google Cloud Monitoring (رسمي 100%)
+                        </span>
+                      ) : (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-amber-500/15 text-amber-300 border border-amber-500/25">
+                          سجل المنصة الفعلي الموحد (سيرفر + متصفحات) • يتصفّر تلقائياً 00:00 PT
+                        </span>
+                      )}
+                      <span className="text-[10px] text-slate-400 font-semibold tabular-nums">
+                        ({displayDate})
+                      </span>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          setIsRefreshingUsage(true);
+                          await fetchServerFirebaseUsage();
+                          setIsRefreshingUsage(false);
+                        }}
+                        disabled={isRefreshingUsage}
+                        className="p-1 rounded-lg bg-slate-800/80 hover:bg-slate-700 border border-slate-700 text-slate-300 hover:text-white transition cursor-pointer disabled:opacity-50"
+                        title="تحديث أرقام السيرفر الآن (0 قراءات فايرستور)"
+                      >
+                        <RefreshCw className={`w-3 h-3 ${isRefreshingUsage ? 'animate-spin' : ''}`} />
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-slate-400 mt-0.5 leading-relaxed">
+                      {isCloudMonitoring
+                        ? `الإجمالي المسجل رسمياً على مشروع (${serverUsage?.projectId}) هو ${totalOps.toLocaleString('en-US')} عملية حقيقية حتى الآن.`
+                        : `يتتبع كل عمليات القراءة والكتابة والحذف الفعلية على الخادم والمتصفح (0 قراءات إضافية، ويتصفّر تلقائياً عند منتصف ليل فايربيس). للمطابقة المباشرة مع أرقام Google Cloud Console أضف FIREBASE_SERVICE_ACCOUNT_JSON في متغيرات البيئة.`}
+                      {lastOpLabel ? ` — آخر عملية: ${lastOpLabel}` : ''}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 shrink-0">
+                  <div className="bg-slate-900/90 border border-slate-800 rounded-xl px-3 py-2 min-w-[115px]">
+                    <div className="flex items-center justify-between gap-2 text-[10px] text-slate-400 font-bold">
+                      <span>القراءات اليوم</span>
+                      <span className={statusColor}>{readPercent}%</span>
+                    </div>
+                    <div className="text-sm font-black text-white mt-0.5 tabular-nums">
+                      {readsCount.toLocaleString('en-US')}
+                      <span className="text-[10px] text-slate-500 font-semibold"> / 50k</span>
+                    </div>
+                    <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden mt-1.5">
+                      <div
+                        className={`h-full ${barColor} rounded-full transition-all duration-300`}
+                        style={{ width: `${Math.max(readsCount > 0 ? 3 : 0, Math.min(100, readPercent))}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-900/90 border border-slate-800 rounded-xl px-3 py-2 min-w-[100px]">
+                    <div className="flex items-center justify-between gap-1 text-[10px] text-slate-400 font-bold">
+                      <span>الكتابات</span>
+                      <span className="text-sky-400">{writePercent}%</span>
+                    </div>
+                    <div className="text-sm font-black text-sky-300 mt-0.5 tabular-nums">
+                      {writesCount.toLocaleString('en-US')}
+                      <span className="text-[10px] text-slate-500 font-semibold"> / {(FREE_DAILY_WRITES_LIMIT / 1000).toFixed(0)}k</span>
+                    </div>
+                    <div className="text-[10px] text-slate-500 mt-0.5 flex items-center gap-1">
+                      <Activity className="w-3 h-3 text-sky-400" />
+                      <span>حفظ وتعديل</span>
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-900/90 border border-slate-800 rounded-xl px-3 py-2 min-w-[95px]">
+                    <div className="flex items-center justify-between gap-1 text-[10px] text-slate-400 font-bold">
+                      <span>الحذف</span>
+                      <span className="text-rose-400">{deletePercent}%</span>
+                    </div>
+                    <div className="text-sm font-black text-rose-300 mt-0.5 tabular-nums">
+                      {deletesCount.toLocaleString('en-US')}
+                      <span className="text-[10px] text-slate-500 font-semibold"> / {(FREE_DAILY_DELETES_LIMIT / 1000).toFixed(0)}k</span>
+                    </div>
+                    <div className="text-[10px] text-slate-500 mt-0.5">حذف مستندات</div>
+                  </div>
+
+                  <div className="bg-slate-900/90 border border-slate-800 rounded-xl px-3 py-2 min-w-[95px]">
+                    <div className="text-[10px] text-slate-400 font-bold">إجمالي العمليات</div>
+                    <div className="text-sm font-black text-amber-300 mt-0.5 tabular-nums">
+                      {totalOps.toLocaleString('en-US')}
+                    </div>
+                    <div className="text-[10px] text-slate-500 mt-0.5">عملية فعلية</div>
+                  </div>
+
+                  <div className="col-span-2 sm:col-span-1 bg-slate-900/90 border border-slate-800 rounded-xl px-3 py-2 min-w-[105px]">
+                    <div className="flex items-center justify-between gap-1 text-[10px] text-slate-400 font-bold">
+                      <span>وفّرها الكاش</span>
+                      <span className="text-emerald-400">{cacheSavingsPct}%</span>
+                    </div>
+                    <div className="text-sm font-black text-emerald-400 mt-0.5 tabular-nums">
+                      {cacheHitsCount.toLocaleString('en-US')}
+                    </div>
+                    <div className="text-[10px] text-slate-500 mt-0.5">عملية بدون قراءة</div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
         </div>
       </div>
 
@@ -4318,6 +4588,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                     };
                     setAnnouncementState(cleared);
                     await setDoc(doc(db, 'system_settings', 'global'), { announcement: cleared }, { merge: true });
+                    trackLocalWrite(1, 'مسح التنبيه العام');
                     notifySave('تم مسح وإلغاء التنبيه العام بنجاح 🗑️');
                   }}
                   className="flex items-center gap-1.5 px-4 py-3 rounded-xl bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/30 font-bold text-xs md:text-sm transition"
@@ -4417,6 +4688,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                     };
                     setLiveStreamState(cleared);
                     await setDoc(doc(db, 'system_settings', 'global'), { liveStream: cleared }, { merge: true });
+                    trackLocalWrite(1, 'إيقاف ومسح البث المباشر');
                     notifySave('تم إيقاف وحذف بيانات البث المباشر بنجاح 🗑️');
                   }}
                   className="flex items-center gap-1.5 px-4 py-3 rounded-xl bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/30 font-bold text-xs md:text-sm transition"

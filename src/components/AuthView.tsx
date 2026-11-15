@@ -20,6 +20,8 @@ import {
   Award,
   Send,
   UserPlus,
+  Wrench,
+  X,
 } from 'lucide-react';
 import { StudentUser, SystemSettings } from '../types';
 import { BrandLogo } from './BrandLogo';
@@ -54,6 +56,8 @@ import {
   clearTelegramUserPendingSync,
   buildFallbackTelegramUser,
 } from '../utils/telegramUserCache';
+import { trackLocalRead, trackLocalWrite, trackLocalCacheHit } from '../utils/localUsageTracker';
+import { addLocalFolder } from '../utils/studentFoldersStore';
 import { PlatformFooter } from './PlatformFooter';
 
 interface AuthViewProps {
@@ -106,6 +110,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
   const [error, setError] = useState('');
   const [isWaitingForBotAuth, setIsWaitingForBotAuth] = useState(false);
   const [activeBotSessionId, setActiveBotSessionId] = useState<string>('');
+  const [showUnderDevModal, setShowUnderDevModal] = useState(false);
   const telegramContainerRef = useRef<HTMLDivElement>(null);
 
   // Helper to resolve a Telegram student from IndexedDB cache, localStorage, server cache, or deterministic fallback
@@ -220,18 +225,25 @@ export const AuthView: React.FC<AuthViewProps> = ({
     try {
       // Fast fallback if Firestore quota is already known to be exceeded
       if (isQuotaExceededActive()) {
-        const fallbackUser = await resolveTelegramFallbackUser({
-          telegramIdStr,
-          name: fullName,
-          username: tgUser.username || '',
-          photoUrl: tgUser.photo_url || '',
-        });
-        if (fallbackUser.isDeleted) {
-          setError('هذا الحساب تم حظره أو حذفه من قبل الإدارة.');
+        if (localCached) {
+          trackLocalCacheHit(1, 'دخول تيليجرام من الكاش المحلي');
+          if (localCached.isDeleted) {
+            setError('هذا الحساب تم حظره أو حذفه من قبل الإدارة.');
+            return;
+          }
+          finalizeTelegramLogin(
+            buildFallbackTelegramUser({
+              telegramId: telegramIdStr,
+              name: fullName,
+              username: tgUser.username || '',
+              photoUrl: tgUser.photo_url || '',
+              existing: localCached,
+            })
+          );
           return;
         }
-        markTelegramUserPendingSync(fallbackUser);
-        finalizeTelegramLogin(fallbackUser);
+        setError('');
+        setShowUnderDevModal(true);
         return;
       }
 
@@ -242,6 +254,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
       if (localCached?.id && !localCached.id.startsWith('tg_')) {
         try {
           const singleSnap = await getDoc(doc(db, 'users', localCached.id));
+          trackLocalRead(1, 'فحص حساب تيليجرام');
           if (singleSnap.exists()) {
             existingDocId = singleSnap.id;
             existingData = { id: singleSnap.id, ...singleSnap.data() } as StudentUser;
@@ -264,8 +277,10 @@ export const AuthView: React.FC<AuthViewProps> = ({
       if (!existingData) {
         const usersRef = collection(db, 'users');
         let snap = await getDocs(query(usersRef, where('telegramId', '==', telegramIdStr)));
+        trackLocalRead(Math.max(1, snap.size), 'البحث عن حساب تيليجرام');
         if (snap.empty && /^\d+$/.test(telegramIdStr)) {
           snap = await getDocs(query(usersRef, where('telegramId', '==', Number(telegramIdStr))));
+          trackLocalRead(Math.max(1, snap.size), 'البحث عن حساب تيليجرام');
         }
         if (!snap.empty) {
           existingDocId = snap.docs[0].id;
@@ -282,21 +297,39 @@ export const AuthView: React.FC<AuthViewProps> = ({
           return;
         }
 
-        const updates: Partial<StudentUser> = {
-          lastLoginAt: new Date().toISOString(),
-        };
-        if (tgUser.photo_url && tgUser.photo_url !== existingData.photoUrl) {
+        // Auto-update Telegram profile (name, photo, username) strictly ONCE on login when changed
+        const sessionSyncKey = `raad_tg_profile_synced_${existingDocId}`;
+        let alreadySyncedThisLogin = false;
+        try {
+          alreadySyncedThisLogin = sessionStorage.getItem(sessionSyncKey) === '1';
+        } catch {}
+
+        const updates: Partial<StudentUser> = {};
+        const hasTelegramDisplayName = Boolean(tgUser.first_name || tgUser.last_name);
+        if (hasTelegramDisplayName && fullName && fullName !== existingData.name) {
+          updates.name = fullName;
+        }
+        if (tgUser.photo_url && tgUser.photo_url !== (existingData.photoUrl || '')) {
           updates.photoUrl = tgUser.photo_url;
         }
-        if (tgUser.username && tgUser.username !== existingData.telegramUsername) {
+        if (tgUser.username && tgUser.username !== (existingData.telegramUsername || '')) {
           updates.telegramUsername = tgUser.username;
         }
-
-        try {
-          await updateDoc(doc(db, 'users', existingDocId), updates as any);
-        } catch (e) {
-          console.warn('Update user last login note:', e);
+        if (!alreadySyncedThisLogin) {
+          updates.lastLoginAt = new Date().toISOString();
         }
+
+        if (Object.keys(updates).length > 0) {
+          try {
+            await updateDoc(doc(db, 'users', existingDocId), updates as any);
+            trackLocalWrite(1, 'تحديث بيانات تيليجرام عند الدخول');
+          } catch (e) {
+            console.warn('Update user last login note:', e);
+          }
+        }
+        try {
+          sessionStorage.setItem(sessionSyncKey, '1');
+        } catch {}
 
         authenticatedUser = {
           ...existingData,
@@ -336,6 +369,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
 
         try {
           await setDoc(newUserRef, newStudent);
+          trackLocalWrite(1, 'إنشاء حساب تيليجرام جديد');
           // Provision default mistakes folder for this student
           await addDoc(collection(db, 'folders'), {
             userId: newStudent.id,
@@ -343,7 +377,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
             title: 'مجلد الاخطاء',
             isDefaultMistakesFolder: true,
             createdAt: new Date().toISOString(),
-          }).catch(() => {});
+          }).then(() => trackLocalWrite(1, 'إنشاء مجلد الأخطاء')).catch(() => {});
           clearTelegramUserPendingSync(telegramIdStr);
           authenticatedUser = newStudent;
         } catch (writeErr) {
@@ -351,14 +385,12 @@ export const AuthView: React.FC<AuthViewProps> = ({
             if (isQuotaExceededError(writeErr)) {
               handleFirestoreError(writeErr, OperationType.WRITE, `users/${newUserRef.id}`);
             }
-            const fallbackUser = await resolveTelegramFallbackUser({
-              telegramIdStr,
-              name: fullName,
-              username: tgUser.username || '',
-              photoUrl: tgUser.photo_url || '',
-            });
-            markTelegramUserPendingSync(fallbackUser);
-            finalizeTelegramLogin(fallbackUser);
+            if (localCached) {
+              finalizeTelegramLogin(localCached);
+              return;
+            }
+            setError('');
+            setShowUnderDevModal(true);
             return;
           }
           throw writeErr;
@@ -373,21 +405,42 @@ export const AuthView: React.FC<AuthViewProps> = ({
         console.warn('Telegram Auth fallback activated:', err);
       }
 
-      // Smooth fallback on quota exceeded, offline, or temporary Firestore connectivity failure
-      const fallbackUser = await resolveTelegramFallbackUser({
+      // If returning student exists in local/IndexedDB cache, let them in smoothly; otherwise show sleek Under Development modal
+      if (localCached) {
+        trackLocalCacheHit(1, 'دخول تيليجرام من الكاش المحلي');
+        if (localCached.isDeleted) {
+          setError('هذا الحساب تم حظره أو حذفه من قبل الإدارة.');
+          return;
+        }
+        finalizeTelegramLogin(
+          buildFallbackTelegramUser({
+            telegramId: telegramIdStr,
+            name: fullName,
+            username: tgUser.username || '',
+            photoUrl: tgUser.photo_url || '',
+            existing: localCached,
+          })
+        );
+        return;
+      }
+
+      const cachedOrServerUser = await resolveTelegramFallbackUser({
         telegramIdStr,
         name: fullName,
         username: tgUser.username || '',
         photoUrl: tgUser.photo_url || '',
       });
-      if (fallbackUser.isDeleted) {
-        setError('هذا الحساب تم حظره أو حذفه من قبل الإدارة.');
+      if (cachedOrServerUser && !cachedOrServerUser.id.startsWith('tg_')) {
+        if (cachedOrServerUser.isDeleted) {
+          setError('هذا الحساب تم حظره أو حذفه من قبل الإدارة.');
+          return;
+        }
+        finalizeTelegramLogin(cachedOrServerUser);
         return;
       }
-      if (isQuotaExceededError(err) || isTransientFirestoreError(err)) {
-        markTelegramUserPendingSync(fallbackUser);
-      }
-      finalizeTelegramLogin(fallbackUser);
+
+      setError('');
+      setShowUnderDevModal(true);
     } finally {
       setTelegramLoading(false);
     }
@@ -422,13 +475,22 @@ export const AuthView: React.FC<AuthViewProps> = ({
       if (localCached?.id && !localCached.id.startsWith('tg_')) {
         try {
           const singleSnap = await getDoc(doc(db, 'users', localCached.id));
+          trackLocalRead(1, 'فحص حساب تيليجرام محفوظ');
           if (singleSnap.exists()) {
             existingDocId = singleSnap.id;
             existingData = { id: singleSnap.id, ...singleSnap.data() } as StudentUser;
           }
         } catch (singleErr) {
           if (isQuotaExceededError(singleErr) || isTransientFirestoreError(singleErr)) {
-            throw singleErr;
+            try {
+              const cachedDoc = await getDocFromCache(doc(db, 'users', localCached.id));
+              if (cachedDoc.exists()) {
+                trackLocalCacheHit(1, 'قراءة حساب تيليجرام من الكاش');
+                existingDocId = cachedDoc.id;
+                existingData = { id: cachedDoc.id, ...cachedDoc.data() } as StudentUser;
+              }
+            } catch {}
+            if (!existingData) throw singleErr;
           }
         }
       }
@@ -436,8 +498,10 @@ export const AuthView: React.FC<AuthViewProps> = ({
       if (!existingData) {
         const usersRef = collection(db, 'users');
         let snap = await getDocs(query(usersRef, where('telegramId', '==', telegramIdStr)));
+        trackLocalRead(Math.max(1, snap.size), 'البحث عن حساب تيليجرام محفوظ');
         if (snap.empty && /^\d+$/.test(telegramIdStr)) {
           snap = await getDocs(query(usersRef, where('telegramId', '==', Number(telegramIdStr))));
+          trackLocalRead(Math.max(1, snap.size), 'البحث عن حساب تيليجرام محفوظ');
         }
         if (!snap.empty) {
           existingDocId = snap.docs[0].id;
@@ -452,19 +516,39 @@ export const AuthView: React.FC<AuthViewProps> = ({
           return;
         }
 
+        const nowIso = new Date().toISOString();
+        const sessionSyncKey = `raad_tg_profile_synced_${existingDocId}`;
+        let alreadySyncedRecently = false;
         try {
-          await updateDoc(doc(db, 'users', existingDocId), {
-            lastLoginAt: new Date().toISOString(),
-          });
-        } catch (e) {}
+          alreadySyncedRecently = sessionStorage.getItem(sessionSyncKey) === '1';
+        } catch {}
+        if (!alreadySyncedRecently && existingData.lastLoginAt) {
+          const lastMs = new Date(existingData.lastLoginAt).getTime();
+          if (lastMs && Date.now() - lastMs < 12 * 60 * 60 * 1000) {
+            alreadySyncedRecently = true;
+          }
+        }
+
+        if (!alreadySyncedRecently) {
+          try {
+            await updateDoc(doc(db, 'users', existingDocId), {
+              lastLoginAt: nowIso,
+            });
+            trackLocalWrite(1, 'تحديث آخر دخول تيليجرام');
+          } catch (e) {}
+          try {
+            sessionStorage.setItem(sessionSyncKey, '1');
+          } catch {}
+        }
 
         const authenticatedUser: StudentUser = {
           ...existingData,
-          lastLoginAt: new Date().toISOString(),
+          lastLoginAt: alreadySyncedRecently ? existingData.lastLoginAt || nowIso : nowIso,
           id: existingDocId,
         };
         finalizeTelegramLogin(authenticatedUser);
       } else if (localCached) {
+        trackLocalCacheHit(1, 'دخول تيليجرام من الكاش المحلي');
         finalizeTelegramLogin({
           ...localCached,
           lastLoginAt: new Date().toISOString(),
@@ -481,25 +565,34 @@ export const AuthView: React.FC<AuthViewProps> = ({
         console.warn('Saved Telegram login fallback activated:', err);
       }
 
-      const fallbackUser = await resolveTelegramFallbackUser({
-        telegramIdStr,
-        name: account.name,
-        username: account.username || '',
-        photoUrl: account.photoUrl || '',
-      });
-      if (fallbackUser.isDeleted) {
-        setError('هذا الحساب تم حظره أو حذفه من قبل الإدارة.');
+      if (localCached) {
+        trackLocalCacheHit(1, 'دخول تيليجرام من الكاش المحلي');
+        if (localCached.isDeleted) {
+          setError('هذا الحساب تم حظره أو حذفه من قبل الإدارة.');
+          return;
+        }
+        finalizeTelegramLogin({
+          ...localCached,
+          lastLoginAt: new Date().toISOString(),
+        });
         return;
       }
-      finalizeTelegramLogin(fallbackUser);
+
+      setError('');
+      setShowUnderDevModal(true);
     } finally {
       setTelegramLoading(false);
     }
   };
 
-  // Handle Telegram login authentication
+  // Handle Telegram login authentication via Bot
   const handleBotLoginClick = () => {
     setError('');
+    if (isQuotaExceededActive()) {
+      setShowUnderDevModal(true);
+      return;
+    }
+
     const sessionId = 'tg_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
     setActiveBotSessionId(sessionId);
     setIsWaitingForBotAuth(true);
@@ -517,7 +610,17 @@ export const AuthView: React.FC<AuthViewProps> = ({
         sessionId,
         status: 'pending',
         createdAt: new Date().toISOString(),
-      }).catch(() => {});
+      })
+        .then(() => trackLocalWrite(1, 'بدء جلسة دخول تيليجرام'))
+        .catch((err) => {
+          if (isQuotaExceededError(err) || isTransientFirestoreError(err)) {
+            if (isQuotaExceededError(err)) {
+              handleFirestoreError(err, OperationType.WRITE, `telegram_login_sessions/${sessionId}`);
+            }
+            setIsWaitingForBotAuth(false);
+            setShowUnderDevModal(true);
+          }
+        });
     } catch (e) {}
   };
 
@@ -551,6 +654,9 @@ export const AuthView: React.FC<AuthViewProps> = ({
       doc(db, 'telegram_login_sessions', activeBotSessionId),
       (snap) => {
         if (isDone) return;
+        if (!snap.metadata?.fromCache && snap.exists()) {
+          trackLocalRead(1, 'تأكيد جلسة تيليجرام');
+        }
         if (snap.exists()) {
           const data = snap.data();
           if (data.status === 'authenticated' && data.user) {
@@ -560,6 +666,12 @@ export const AuthView: React.FC<AuthViewProps> = ({
       },
       (err) => {
         reportFirestoreListenerError(err, OperationType.GET, `telegram_login_sessions/${activeBotSessionId}`);
+        if (isQuotaExceededError(err) || isTransientFirestoreError(err)) {
+          isDone = true;
+          setIsWaitingForBotAuth(false);
+          setError('');
+          setShowUnderDevModal(true);
+        }
       }
     );
 
@@ -572,6 +684,11 @@ export const AuthView: React.FC<AuthViewProps> = ({
           const result = await resp.json();
           if (result.authenticated && result.user) {
             handleLoginComplete(result.user);
+          } else if (result.quotaExceeded) {
+            isDone = true;
+            setIsWaitingForBotAuth(false);
+            setError('');
+            setShowUnderDevModal(true);
           }
         }
       } catch (e) {}
@@ -619,25 +736,6 @@ export const AuthView: React.FC<AuthViewProps> = ({
     setLoading(true);
 
     try {
-      // 1. Check if email is in permanently banned emails
-      const bannedQuery = query(collection(db, 'banned_emails'), where('email', '==', cleanEmail));
-      let bannedSnap;
-      try {
-        bannedSnap = await getDocs(bannedQuery);
-      } catch (banErr) {
-        if (isQuotaExceededError(banErr) || isTransientFirestoreError(banErr)) {
-          bannedSnap = await getDocsFromCache(bannedQuery).catch(() => ({ empty: true } as any));
-        } else {
-          throw banErr;
-        }
-      }
-
-      if (!bannedSnap.empty) {
-        setError('هذا الحساب تم حظره نهائياً من قبل الإدارة.');
-        setLoading(false);
-        return;
-      }
-
       if (isSignUp) {
         // Sign Up Flow
         if (!name.trim()) {
@@ -646,16 +744,37 @@ export const AuthView: React.FC<AuthViewProps> = ({
           return;
         }
 
-        // Check if email already exists
+        // 1. Check if email is in permanently banned emails
+        const bannedQuery = query(collection(db, 'banned_emails'), where('email', '==', cleanEmail));
+        let bannedSnap;
+        try {
+          bannedSnap = await getDocs(bannedQuery);
+          trackLocalRead(Math.max(1, bannedSnap.size), 'التحقق من البريد المحظور');
+        } catch (banErr) {
+          if (isQuotaExceededError(banErr) || isTransientFirestoreError(banErr)) {
+            bannedSnap = await getDocsFromCache(bannedQuery).catch(() => ({ empty: true } as any));
+          } else {
+            throw banErr;
+          }
+        }
+
+        if (!bannedSnap.empty) {
+          setError('هذا الحساب تم حظره نهائياً من قبل الإدارة.');
+          setLoading(false);
+          return;
+        }
+
+        // 2. Check if email already exists
         const userQuery = query(collection(db, 'users'), where('email', '==', cleanEmail));
         const userSnap = await getDocs(userQuery);
+        trackLocalRead(Math.max(1, userSnap.size), 'التحقق من وجود البريد');
         if (!userSnap.empty) {
           setError('هذا البريد الإلكتروني مسجل بالفعل، يرجى تسجيل الدخول');
           setLoading(false);
           return;
         }
 
-        // Create new user in Firestore
+        // 3. Create new user in Firestore
         const newUserRef = doc(collection(db, 'users'));
         const newUser: StudentUser = {
           id: newUserRef.id,
@@ -681,46 +800,77 @@ export const AuthView: React.FC<AuthViewProps> = ({
         };
 
         await setDoc(newUserRef, newUser);
+        trackLocalWrite(1, 'إنشاء حساب بريد جديد');
 
-        // Provision default immutable "مجلد الاخطاء" for the student
-        await addDoc(collection(db, 'folders'), {
+        // Provision default immutable "مجلد الاخطاء" for the student & sync local folder store immediately
+        const defaultFolderPayload = {
           userId: newUser.id,
+          courseId: 'course_default_1',
           title: 'مجلد الاخطاء',
           isDefaultMistakesFolder: true,
           createdAt: new Date().toISOString(),
-        });
+        };
+        const folderRef = await addDoc(collection(db, 'folders'), defaultFolderPayload);
+        trackLocalWrite(1, 'إنشاء مجلد الأخطاء');
+        addLocalFolder(newUser.id, { id: folderRef.id, ...defaultFolderPayload });
 
         onSuccessAuth(newUser);
       } else {
-        // Sign In Flow
+        // Sign In Flow: check `users` FIRST (halves Firestore reads vs reading banned_emails on every login)
         const userQuery = query(
           collection(db, 'users'),
           where('email', '==', cleanEmail)
         );
         let userSnap;
+        let usedUserCache = false;
         try {
           userSnap = await getDocs(userQuery);
+          trackLocalRead(Math.max(1, userSnap.size), 'تسجيل الدخول بالبريد');
         } catch (queryErr) {
           if (isQuotaExceededError(queryErr) || isTransientFirestoreError(queryErr)) {
             userSnap = await getDocsFromCache(userQuery);
+            usedUserCache = true;
+            trackLocalCacheHit(1, 'تسجيل الدخول بالبريد من الكاش');
           } else {
             throw queryErr;
           }
         }
 
         if (userSnap.empty) {
+          // Only query banned_emails if account wasn't found in users (e.g., permanently deleted & banned)
+          if (!usedUserCache) {
+            try {
+              const bannedQuery = query(collection(db, 'banned_emails'), where('email', '==', cleanEmail));
+              const bannedSnap = await getDocs(bannedQuery);
+              trackLocalRead(Math.max(1, bannedSnap.size), 'فحص حظر البريد');
+              if (!bannedSnap.empty) {
+                setError('هذا الحساب تم حظره نهائياً من قبل الإدارة.');
+                setLoading(false);
+                return;
+              }
+            } catch {}
+          }
           setError('البريد الإلكتروني أو كلمة المرور غير صحيحة، أو الحساب غير موجود');
           setLoading(false);
           return;
         }
 
         let foundUser: StudentUser | null = null;
+        let foundDeleted = false;
         userSnap.forEach((d) => {
           const u = { id: d.id, ...d.data() } as StudentUser;
-          if (u.password === password) {
+          if (u.isDeleted) {
+            foundDeleted = true;
+          } else if (u.password === password) {
             foundUser = u;
           }
         });
+
+        if (foundDeleted) {
+          setError('هذا الحساب تم حظره أو حذفه نهائياً من قبل الإدارة.');
+          setLoading(false);
+          return;
+        }
 
         if (!foundUser) {
           setError('كلمة المرور غير مطابقة للتي قمت بإنشائها');
@@ -731,12 +881,16 @@ export const AuthView: React.FC<AuthViewProps> = ({
         onSuccessAuth(foundUser);
       }
     } catch (err: any) {
-      if (isQuotaExceededError(err)) {
-        handleFirestoreError(err, OperationType.GET, 'users');
-        setError('تم الوصول للحد اليومي المجاني لقراءات قاعدة البيانات مؤقتاً، يمكنك الدخول بحساب تيليجرام أو المحاولة لاحقاً.');
+      if (isQuotaExceededError(err) || isTransientFirestoreError(err)) {
+        if (isQuotaExceededError(err)) {
+          handleFirestoreError(err, OperationType.GET, 'users');
+        }
+        setError('');
+        setShowUnderDevModal(true);
       } else {
         console.error('Auth Error:', err);
-        setError('حدث خطأ أثناء الاتصال بقاعدة البيانات، يرجى المحاولة ثانية');
+        setError('');
+        setShowUnderDevModal(true);
       }
     } finally {
       setLoading(false);
@@ -1257,6 +1411,76 @@ export const AuthView: React.FC<AuthViewProps> = ({
         isDarkMode={isDarkMode}
         onSecretTriggerAdmin={onSecretTriggerAdmin}
       />
+
+      {/* Sleek "Under Development" Modal when backend limits pause login */}
+      {showUnderDevModal && (
+        <div
+          className="fixed inset-0 z-[150] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200"
+          onClick={() => setShowUnderDevModal(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className={`w-full max-w-md rounded-3xl border p-6 sm:p-8 shadow-2xl text-center relative overflow-hidden ${
+              isDarkMode
+                ? 'bg-gradient-to-b from-slate-900 via-slate-900 to-slate-950 border-indigo-500/30 text-white shadow-indigo-500/15'
+                : 'bg-white border-indigo-200 text-slate-900 shadow-indigo-200/40'
+            }`}
+          >
+            <button
+              type="button"
+              onClick={() => setShowUnderDevModal(false)}
+              className={`absolute top-4 left-4 p-2 rounded-xl transition cursor-pointer ${
+                isDarkMode ? 'text-slate-400 hover:text-white hover:bg-slate-800' : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100'
+              }`}
+              aria-label="إغلاق"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-indigo-500/20 via-sky-500/20 to-purple-500/20 border border-indigo-400/30 flex items-center justify-center shadow-lg shadow-indigo-500/20">
+              <Wrench className="w-8 h-8 text-indigo-400" />
+            </div>
+
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-500/15 border border-indigo-500/30 text-indigo-400 text-[11px] font-black mb-3">
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>تحديث وتحسين مستمر</span>
+            </div>
+
+            <h3 className="text-xl sm:text-2xl font-black mb-2">
+              عذراً، هذه الميزة حالياً تحت التطوير
+            </h3>
+            <p className={`text-xs sm:text-sm leading-relaxed mb-6 ${isDarkMode ? 'text-slate-300' : 'text-slate-600 font-medium'}`}>
+              نعمل حالياً على تطوير وتحسين هذه الخدمة لتقديم تجربة أسرع وأكثر سلاسة لجميع طلاب منصة أقسام رعد. يمكنك المحاولة مرة أخرى بعد قليل أو الدخول بالبريد الإلكتروني.
+            </p>
+
+            <div className="flex flex-col sm:flex-row gap-2.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowUnderDevModal(false);
+                  setAuthMode('email');
+                  setError('');
+                }}
+                className="flex-1 py-3 px-4 rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white font-black text-xs sm:text-sm shadow-lg shadow-indigo-600/25 transition cursor-pointer flex items-center justify-center gap-2"
+              >
+                <Mail className="w-4 h-4" />
+                <span>الدخول بالبريد الإلكتروني</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowUnderDevModal(false)}
+                className={`py-3 px-5 rounded-xl font-black text-xs sm:text-sm border transition cursor-pointer ${
+                  isDarkMode
+                    ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-200'
+                    : 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-800'
+                }`}
+              >
+                حسناً
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

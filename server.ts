@@ -192,16 +192,268 @@ loadLocalMediaIndex();
 
 // ================= SERVER FIREBASE FIRESTORE INIT =================
 let telegramDb: any = null;
+let firebaseProjectId = 'euphoric-acre-pcbh2';
+let firebaseDatabaseId = 'ai-studio-44eeee5c-699a-48f1-a6e0-19c9b1ea4972';
 try {
   const cfgPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
   if (fs.existsSync(cfgPath)) {
     const firebaseConfig = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+    if (firebaseConfig.projectId) firebaseProjectId = String(firebaseConfig.projectId);
+    if (firebaseConfig.firestoreDatabaseId) firebaseDatabaseId = String(firebaseConfig.firestoreDatabaseId);
     const fbApp = initializeApp(firebaseConfig, 'serverTelegramApp');
     telegramDb = getFirestore(fbApp, firebaseConfig.firestoreDatabaseId);
     console.log('[Server] Firebase Firestore initialized successfully');
   }
 } catch (err: any) {
   console.warn('[Server] Firebase init notice in server.ts:', err.message);
+}
+
+// ================= REAL DAILY FIREBASE USAGE LEDGER & CLOUD MONITORING =================
+const usageLedgerPath = path.join(uploadBaseDir, '.firebase-usage-daily.json');
+
+interface DailyUsageLedger {
+  date: string;
+  reads: number;
+  writes: number;
+  deletes: number;
+  cacheHits: number;
+  lastOperationLabel: string;
+  updatedAt: number;
+}
+
+function getFirestoreQuotaDateString(): string {
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Los_Angeles',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date());
+  } catch {
+    return new Date().toISOString().slice(0, 10);
+  }
+}
+
+function createEmptyDailyLedger(): DailyUsageLedger {
+  return {
+    date: getFirestoreQuotaDateString(),
+    reads: 0,
+    writes: 0,
+    deletes: 0,
+    cacheHits: 0,
+    lastOperationLabel: '',
+    updatedAt: Date.now(),
+  };
+}
+
+let dailyUsageLedger: DailyUsageLedger = (() => {
+  const today = getFirestoreQuotaDateString();
+  try {
+    if (fs.existsSync(usageLedgerPath)) {
+      const parsed = JSON.parse(fs.readFileSync(usageLedgerPath, 'utf8')) as Partial<DailyUsageLedger>;
+      if (parsed && parsed.date === today) {
+        return {
+          date: today,
+          reads: Math.max(0, Number(parsed.reads) || 0),
+          writes: Math.max(0, Number(parsed.writes) || 0),
+          deletes: Math.max(0, Number(parsed.deletes) || 0),
+          cacheHits: Math.max(0, Number(parsed.cacheHits) || 0),
+          lastOperationLabel: String(parsed.lastOperationLabel || ''),
+          updatedAt: Number(parsed.updatedAt) || Date.now(),
+        };
+      }
+    }
+  } catch {}
+  return createEmptyDailyLedger();
+})();
+
+let usagePersistTimer: NodeJS.Timeout | null = null;
+function schedulePersistDailyLedger() {
+  if (usagePersistTimer) return;
+  usagePersistTimer = setTimeout(() => {
+    usagePersistTimer = null;
+    try {
+      const tmp = `${usageLedgerPath}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify(dailyUsageLedger), 'utf8');
+      fs.renameSync(tmp, usageLedgerPath);
+    } catch {}
+  }, 500);
+}
+
+function rollDailyLedgerIfNeeded(): DailyUsageLedger {
+  const today = getFirestoreQuotaDateString();
+  if (dailyUsageLedger.date !== today) {
+    dailyUsageLedger = createEmptyDailyLedger();
+    schedulePersistDailyLedger();
+  }
+  return dailyUsageLedger;
+}
+
+function recordServerFirestoreOp(
+  kind: 'read' | 'write' | 'delete' | 'cacheHit',
+  count = 1,
+  label?: string
+) {
+  const safeCount = Math.max(0, Math.round(count));
+  if (safeCount <= 0) return;
+  const ledger = rollDailyLedgerIfNeeded();
+  if (kind === 'read') ledger.reads += safeCount;
+  else if (kind === 'write') ledger.writes += safeCount;
+  else if (kind === 'delete') ledger.deletes += safeCount;
+  else if (kind === 'cacheHit') ledger.cacheHits += safeCount;
+  if (label) ledger.lastOperationLabel = label;
+  ledger.updatedAt = Date.now();
+  schedulePersistDailyLedger();
+}
+
+let cachedMonitoringAccessToken: { token: string; expiresAt: number } | null = null;
+let cachedMonitoringResult: {
+  expiresAt: number;
+  payload: any;
+} | null = null;
+let monitoringForbiddenUntil = 0;
+
+function base64UrlEncode(input: string | Buffer): string {
+  return Buffer.from(input)
+    .toString('base64')
+    .replace(/=/g, '')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_');
+}
+
+async function getMonitoringAccessToken(): Promise<{ token: string | null; mode: 'service_account' | 'env_token' | 'metadata' | 'none' }> {
+  if (process.env.GOOGLE_MONITORING_ACCESS_TOKEN) {
+    return { token: process.env.GOOGLE_MONITORING_ACCESS_TOKEN, mode: 'env_token' };
+  }
+
+  const rawSa = process.env.FIREBASE_SERVICE_ACCOUNT_JSON || process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+  if (rawSa) {
+    if (cachedMonitoringAccessToken && Date.now() < cachedMonitoringAccessToken.expiresAt - 60_000) {
+      return { token: cachedMonitoringAccessToken.token, mode: 'service_account' };
+    }
+    try {
+      const sa = JSON.parse(rawSa);
+      if (sa.client_email && sa.private_key) {
+        const nowSec = Math.floor(Date.now() / 1000);
+        const header = base64UrlEncode(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
+        const claims = base64UrlEncode(
+          JSON.stringify({
+            iss: sa.client_email,
+            scope: 'https://www.googleapis.com/auth/monitoring.read',
+            aud: sa.token_uri || 'https://oauth2.googleapis.com/token',
+            iat: nowSec,
+            exp: nowSec + 3600,
+          })
+        );
+        const signer = crypto.createSign('RSA-SHA256');
+        signer.update(`${header}.${claims}`);
+        const signature = base64UrlEncode(signer.sign(sa.private_key));
+        const jwt = `${header}.${claims}.${signature}`;
+
+        const tokenResp = await fetch(sa.token_uri || 'https://oauth2.googleapis.com/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+            assertion: jwt,
+          }),
+        });
+        if (tokenResp.ok) {
+          const tokenJson: any = await tokenResp.json();
+          if (tokenJson.access_token) {
+            cachedMonitoringAccessToken = {
+              token: tokenJson.access_token,
+              expiresAt: Date.now() + (Number(tokenJson.expires_in) || 3600) * 1000,
+            };
+            return { token: tokenJson.access_token, mode: 'service_account' };
+          }
+        }
+      }
+    } catch (e: any) {
+      console.warn('[Monitoring Auth] Service account token notice:', e?.message || e);
+    }
+  }
+
+  if (Date.now() < monitoringForbiddenUntil) {
+    return { token: null, mode: 'none' };
+  }
+
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 1500);
+    const mResp = await fetch(
+      'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token',
+      { headers: { 'Metadata-Flavor': 'Google' }, signal: controller.signal }
+    );
+    clearTimeout(timer);
+    if (mResp.ok) {
+      const mData: any = await mResp.json();
+      if (mData?.access_token) {
+        return { token: mData.access_token, mode: 'metadata' };
+      }
+    }
+  } catch {}
+
+  return { token: null, mode: 'none' };
+}
+
+function getPacificMidnightIso(): string {
+  const ptDate = getFirestoreQuotaDateString(); // YYYY-MM-DD in America/Los_Angeles
+  // Compute UTC instant corresponding to 00:00:00 in America/Los_Angeles
+  const probeUtc = new Date(`${ptDate}T08:00:00.000Z`);
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(probeUtc);
+  const get = (t: string) => Number(parts.find((p) => p.type === t)?.value || 0);
+  const ptHourAt08Utc = get('hour') % 24;
+  const offsetHours = 8 - ptHourAt08Utc;
+  const midnightMs = Date.UTC(
+    Number(ptDate.slice(0, 4)),
+    Number(ptDate.slice(5, 7)) - 1,
+    Number(ptDate.slice(8, 10)),
+    offsetHours,
+    0,
+    0
+  );
+  return new Date(midnightMs).toISOString();
+}
+
+async function queryCloudMonitoringSum(
+  accessToken: string,
+  metricType: string,
+  startIso: string,
+  endIso: string
+): Promise<{ ok: true; value: number } | { ok: false; status: number }> {
+  const url =
+    `https://monitoring.googleapis.com/v3/projects/${encodeURIComponent(firebaseProjectId)}/timeSeries` +
+    `?filter=${encodeURIComponent(`metric.type="${metricType}"`)}` +
+    `&interval.startTime=${encodeURIComponent(startIso)}` +
+    `&interval.endTime=${encodeURIComponent(endIso)}` +
+    `&aggregation.alignmentPeriod=86400s` +
+    `&aggregation.perSeriesAligner=ALIGN_SUM` +
+    `&aggregation.crossSeriesReducer=REDUCE_SUM`;
+
+  const resp = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!resp.ok) {
+    return { ok: false, status: resp.status };
+  }
+  const data: any = await resp.json();
+  let sum = 0;
+  for (const series of data.timeSeries || []) {
+    for (const point of series.points || []) {
+      const v = point?.value?.int64Value ?? point?.value?.doubleValue ?? 0;
+      sum += Number(v) || 0;
+    }
+  }
+  return { ok: true, value: Math.round(sum) };
 }
 
 const insecureHttpsAgent = new https.Agent({ rejectUnauthorized: false });
@@ -230,6 +482,7 @@ async function saveMediaToFirebase(
       };
       persistLocalMediaEntry(meta);
       await setDoc(doc(telegramDb, 'media_files', mediaId), meta);
+      recordServerFirestoreOp('write', 1, 'حفظ بيانات ملف وسائط');
       return false;
     }
 
@@ -253,6 +506,7 @@ async function saveMediaToFirebase(
         );
       }
       await Promise.all(promises);
+      recordServerFirestoreOp('write', promises.length, 'رفع أجزاء وسائط');
     }
 
     const meta = {
@@ -268,6 +522,7 @@ async function saveMediaToFirebase(
     };
     persistLocalMediaEntry(meta);
     await setDoc(doc(telegramDb, 'media_files', mediaId), meta);
+    recordServerFirestoreOp('write', 1, 'حفظ بيانات وسائط');
     console.log(`[Media Upload] Saved "${fileName}" (${totalChunks} chunks, ${stat.size} bytes) to Firebase Firestore!`);
     return true;
   } catch (err: any) {
@@ -596,6 +851,7 @@ async function cacheFirestoreMediaToDisk(meta: any): Promise<string | null> {
           const snaps = await Promise.all(
             indices.map((idx) => getDoc(doc(telegramDb, 'media_files', meta.id, 'chunks', String(idx))))
           );
+          recordServerFirestoreOp('read', indices.length, 'قراءة أجزاء فيديو للكاش');
           for (const snap of snaps) {
             if (!snap.exists()) {
               throw new Error('Missing chunk');
@@ -696,6 +952,7 @@ async function streamMediaDocFromFirestore(meta: any, req: Request, res: Respons
   for (let cIdx = startChunk; cIdx <= endChunk; cIdx++) {
     if (aborted) break;
     const chunkSnap = await getDoc(doc(telegramDb, 'media_files', meta.id, 'chunks', String(cIdx)));
+    recordServerFirestoreOp('read', 1, 'بث جزء وسائط');
     if (!chunkSnap.exists()) {
       res.end();
       return;
@@ -747,6 +1004,7 @@ app.get('/api/media/:mediaId', async (req: Request, res: Response) => {
     if (!meta && !isNegativelyCached && telegramDb) {
       try {
         const snap = await getDoc(doc(telegramDb, 'media_files', mediaId));
+        recordServerFirestoreOp('read', 1, 'فحص بيانات وسائط');
         if (snap.exists()) {
           meta = snap.data();
           persistLocalMediaEntry(meta);
@@ -1409,6 +1667,7 @@ app.get('/api/stream', async (req: Request, res: Response) => {
       const isNegativelyCached = Boolean(missingTs && Date.now() - missingTs < MISSING_MEDIA_TTL_MS);
       if (!meta && !isNegativelyCached) {
         const snap = await getDoc(doc(telegramDb, 'media_files', cacheKey));
+        recordServerFirestoreOp('read', 1, 'فحص كاش بث خارجي');
         if (snap.exists()) {
           meta = snap.data();
           mediaMetadataCache.set(cacheKey, meta);
@@ -1527,11 +1786,13 @@ async function getTelegramBotToken(): Promise<string | null> {
   if (telegramDb) {
     try {
       const snap = await getDoc(doc(telegramDb, 'system_settings', 'telegram_bot'));
+      recordServerFirestoreOp('read', 1, 'قراءة توكن البوت');
       if (snap.exists() && snap.data().token) {
         cachedBotToken = snap.data().token;
         return cachedBotToken;
       }
       const globSnap = await getDoc(doc(telegramDb, 'system_settings', 'global'));
+      recordServerFirestoreOp('read', 1, 'قراءة الإعدادات العامة للبوت');
       if (globSnap.exists() && globSnap.data().telegramBotToken) {
         cachedBotToken = globSnap.data().telegramBotToken;
         return cachedBotToken;
@@ -1555,6 +1816,7 @@ async function saveTelegramBotToken(token: string): Promise<void> {
       await setDoc(doc(telegramDb, 'system_settings', 'global'), {
         telegramBotToken: token,
       }, { merge: true });
+      recordServerFirestoreOp('write', 2, 'حفظ توكن البوت');
       console.log('[Telegram Server] Saved bot token to Firestore system_settings');
     } catch (e: any) {
       console.warn('[Telegram Server] Could not save token to Firestore:', e.message);
@@ -1594,14 +1856,20 @@ app.get('/api/telegram/check-session', async (req: Request, res: Response) => {
     return;
   }
 
+  if (isServerFirestoreQuotaBackedOff()) {
+    res.json({ authenticated: false, quotaExceeded: true });
+    return;
+  }
+
   // 2. Throttled Firestore fallback check (max once every 10s per sessionId, skipped if quota backed off)
   const now = Date.now();
   const lastCheck = sessionFirestoreCheckAt.get(sessionId) || 0;
-  if (telegramDb && !isServerFirestoreQuotaBackedOff() && now - lastCheck >= SESSION_FIRESTORE_THROTTLE_MS) {
+  if (telegramDb && now - lastCheck >= SESSION_FIRESTORE_THROTTLE_MS) {
     sessionFirestoreCheckAt.set(sessionId, now);
     try {
       // Check requested sessionId
       const snap = await getDoc(doc(telegramDb, 'telegram_login_sessions', sessionId));
+      recordServerFirestoreOp('read', 1, 'فحص جلسة دخول تيليجرام');
       if (snap.exists()) {
         const data = snap.data();
         if (data.status === 'authenticated' && data.user) {
@@ -1622,6 +1890,7 @@ app.get('/api/telegram/check-session', async (req: Request, res: Response) => {
 
       // Fallback check global_latest
       const globalSnap = await getDoc(doc(telegramDb, 'telegram_login_sessions', 'global_latest'));
+      recordServerFirestoreOp('read', 1, 'فحص آخر جلسة تيليجرام');
       if (globalSnap.exists()) {
         const data = globalSnap.data();
         if (data.status === 'authenticated' && data.user) {
@@ -1636,6 +1905,10 @@ app.get('/api/telegram/check-session', async (req: Request, res: Response) => {
       }
     } catch (e) {
       noteServerFirestoreError(e);
+      if (isServerQuotaError(e)) {
+        res.json({ authenticated: false, quotaExceeded: true });
+        return;
+      }
     }
   }
 
@@ -1678,8 +1951,10 @@ app.post('/api/telegram/resolve-user', async (req: Request, res: Response) => {
   if (telegramDb && !isServerFirestoreQuotaBackedOff()) {
     try {
       let snap = await getDocs(query(collection(telegramDb, 'users'), where('telegramId', '==', tgIdStr)));
+      recordServerFirestoreOp('read', Math.max(1, snap.size), 'استرجاع حساب تيليجرام');
       if (snap.empty && /^\d+$/.test(tgIdStr)) {
         snap = await getDocs(query(collection(telegramDb, 'users'), where('telegramId', '==', Number(tgIdStr))));
+        recordServerFirestoreOp('read', Math.max(1, snap.size), 'استرجاع حساب تيليجرام');
       }
       if (!snap.empty) {
         const d = snap.docs[0];
@@ -1791,31 +2066,69 @@ app.post('/api/telegram/webhook', async (req: Request, res: Response) => {
     const cachedExistingTgUser = telegramUsersCache.get(String(telegramId));
     if (telegramDb && !isServerFirestoreQuotaBackedOff()) {
       try {
-        // Search by numeric ID OR string ID to guarantee finding existing student
-        const qNum = query(collection(telegramDb, 'users'), where('telegramId', '==', Number(telegramId)));
-        let userSnap = await getDocs(qNum);
-        if (userSnap.empty) {
-          const qStr = query(collection(telegramDb, 'users'), where('telegramId', '==', String(telegramId)));
-          userSnap = await getDocs(qStr);
+        // Look up student cleanly (string first, then numeric fallback)
+        let userDoc: any = null;
+        if (cachedExistingTgUser?.id && !String(cachedExistingTgUser.id).startsWith('tg_')) {
+          try {
+            const directSnap = await getDoc(doc(telegramDb, 'users', String(cachedExistingTgUser.id)));
+            recordServerFirestoreOp('read', 1, 'فحص حساب تيليجرام بالمعرف');
+            if (directSnap.exists()) {
+              userDoc = directSnap;
+            }
+          } catch {}
         }
 
-        if (!userSnap.empty) {
-          const userDoc = userSnap.docs[0];
+        if (!userDoc) {
+          const qStr = query(collection(telegramDb, 'users'), where('telegramId', '==', String(telegramId)));
+          let userSnap = await getDocs(qStr);
+          recordServerFirestoreOp('read', Math.max(1, userSnap.size), 'بحث طالب تيليجرام بالبوت');
+          if (userSnap.empty) {
+            const qNum = query(collection(telegramDb, 'users'), where('telegramId', '==', Number(telegramId)));
+            userSnap = await getDocs(qNum);
+            recordServerFirestoreOp('read', Math.max(1, userSnap.size), 'بحث طالب تيليجرام بالبوت');
+          }
+          if (!userSnap.empty) {
+            userDoc = userSnap.docs[0];
+          }
+        }
+
+        if (userDoc) {
           const existingData = userDoc.data();
+          const resolvedName = (from.first_name || from.last_name)
+            ? fullName
+            : (existingData.name || fullName);
+          const resolvedUsername = username || existingData.telegramUsername || '';
+          const resolvedChatId = String(chatId);
+          const nowIso = new Date().toISOString();
+
           authenticatedUser = {
             ...existingData,
             id: userDoc.id,
-            name: existingData.name || fullName,
-            telegramUsername: username || existingData.telegramUsername || '',
-            telegramChatId: String(chatId),
-            lastLoginAt: new Date().toISOString(),
+            name: resolvedName,
+            telegramUsername: resolvedUsername,
+            telegramChatId: resolvedChatId,
+            lastLoginAt: nowIso,
           };
-          await updateDoc(doc(telegramDb, 'users', userDoc.id), {
-            lastLoginAt: new Date().toISOString(),
-            telegramUsername: username || existingData.telegramUsername || '',
-            telegramChatId: String(chatId),
-          });
-          console.log(`[Telegram Webhook] Updated existing student ${userDoc.id} with chatId ${chatId}`);
+
+          const updatePayload: Record<string, any> = {};
+          if (resolvedName && resolvedName !== (existingData.name || '')) {
+            updatePayload.name = resolvedName;
+          }
+          if (resolvedUsername && resolvedUsername !== (existingData.telegramUsername || '')) {
+            updatePayload.telegramUsername = resolvedUsername;
+          }
+          if (resolvedChatId !== String(existingData.telegramChatId || '')) {
+            updatePayload.telegramChatId = resolvedChatId;
+          }
+
+          if (Object.keys(updatePayload).length > 0) {
+            updatePayload.lastLoginAt = nowIso;
+            await updateDoc(doc(telegramDb, 'users', userDoc.id), updatePayload);
+            recordServerFirestoreOp('write', 1, 'تحديث بيانات تيليجرام عند الدخول');
+            console.log(`[Telegram Webhook] Synced changed profile fields for ${userDoc.id}:`, Object.keys(updatePayload));
+          } else {
+            console.log(`[Telegram Webhook] Profile unchanged for ${userDoc.id} — skipped redundant write`);
+          }
         } else {
           const newUserData = {
             name: fullName,
@@ -1839,6 +2152,7 @@ app.post('/api/telegram/webhook', async (req: Request, res: Response) => {
           };
           const newDocRef = doc(collection(telegramDb, 'users'));
           await setDoc(newDocRef, newUserData);
+          recordServerFirestoreOp('write', 1, 'إنشاء طالب جديد عبر البوت');
 
           // Default mistakes folder
           try {
@@ -1849,6 +2163,7 @@ app.post('/api/telegram/webhook', async (req: Request, res: Response) => {
               isDefaultMistakesFolder: true,
               createdAt: new Date().toISOString(),
             });
+            recordServerFirestoreOp('write', 1, 'إنشاء مجلد الأخطاء');
           } catch (fErr) {}
 
           authenticatedUser = {
@@ -1858,7 +2173,7 @@ app.post('/api/telegram/webhook', async (req: Request, res: Response) => {
           console.log(`[Telegram Webhook] Created new student profile ${newDocRef.id} with chatId ${chatId}`);
         }
 
-        // 2. Broadcast authenticated session across Firestore documents
+        // 2. Broadcast authenticated session cleanly (at most 2 writes, no broad pending query scan)
         const sessionPayload = {
           sessionId: targetSessionId || 'default',
           status: 'authenticated',
@@ -1869,32 +2184,16 @@ app.post('/api/telegram/webhook', async (req: Request, res: Response) => {
           authenticatedAt: new Date().toISOString(),
         };
 
-        // Save target session, global_latest, and default
-        await Promise.all([
-          targetSessionId ? setDoc(doc(telegramDb, 'telegram_login_sessions', targetSessionId), sessionPayload) : Promise.resolve(),
+        const sessionWrites: Promise<any>[] = [
           setDoc(doc(telegramDb, 'telegram_login_sessions', 'global_latest'), sessionPayload),
-          setDoc(doc(telegramDb, 'telegram_login_sessions', 'default'), sessionPayload),
-        ]);
-
-        // Also update any other pending sessions
-        try {
-          const pendingQuery = query(
-            collection(telegramDb, 'telegram_login_sessions'),
-            where('status', '==', 'pending')
-          );
-          const pendingSnap = await getDocs(pendingQuery);
-          for (const pDoc of pendingSnap.docs) {
-            await updateDoc(doc(telegramDb, 'telegram_login_sessions', pDoc.id), {
-              status: 'authenticated',
-              user: authenticatedUser,
-              telegramId: String(telegramId),
-              telegramChatId: String(chatId),
-              authenticatedAt: new Date().toISOString(),
-            });
-          }
-        } catch (penErr) {
-          console.warn('[Telegram Webhook] Notice updating pending docs:', penErr);
+        ];
+        if (targetSessionId && targetSessionId !== 'global_latest') {
+          sessionWrites.push(setDoc(doc(telegramDb, 'telegram_login_sessions', targetSessionId), sessionPayload));
+        } else if (!targetSessionId) {
+          sessionWrites.push(setDoc(doc(telegramDb, 'telegram_login_sessions', 'default'), sessionPayload));
         }
+        await Promise.all(sessionWrites);
+        recordServerFirestoreOp('write', sessionWrites.length, 'حفظ جلسة تيليجرام');
       } catch (dbErr) {
         noteServerFirestoreError(dbErr);
         console.warn('[Telegram Webhook] Firestore quota/fallback notice:', (dbErr as any)?.message || dbErr);
@@ -2086,6 +2385,7 @@ app.all('/api/telegram/simulate-login', async (req: Request, res: Response) => {
       await setDoc(doc(telegramDb, 'telegram_login_sessions', sessionId), sessionPayload);
       await setDoc(doc(telegramDb, 'telegram_login_sessions', 'global_latest'), sessionPayload);
       await setDoc(doc(telegramDb, 'telegram_login_sessions', 'default'), sessionPayload);
+      recordServerFirestoreOp('write', 3, 'جلسة دخول تجريبية');
     } catch (e) {}
   }
 
@@ -2098,6 +2398,106 @@ app.all('/api/telegram/simulate-login', async (req: Request, res: Response) => {
     message: 'Simulated login successful! Any open browser tab waiting for bot login will now log in.',
     user: simulatedUser,
     sessionId,
+  });
+});
+
+// ================= REAL FIREBASE USAGE ENDPOINTS (0 EXTRA FIRESTORE READS) =================
+app.post('/api/firebase-usage/report', (req: Request, res: Response) => {
+  try {
+    const body = req.body || {};
+    const reads = Math.max(0, Math.min(50000, Math.round(Number(body.reads) || 0)));
+    const writes = Math.max(0, Math.min(50000, Math.round(Number(body.writes) || 0)));
+    const deletes = Math.max(0, Math.min(50000, Math.round(Number(body.deletes) || 0)));
+    const cacheHits = Math.max(0, Math.min(50000, Math.round(Number(body.cacheHits) || 0)));
+    const label = typeof body.label === 'string' ? body.label.slice(0, 80) : undefined;
+
+    if (reads > 0) recordServerFirestoreOp('read', reads, label);
+    if (writes > 0) recordServerFirestoreOp('write', writes, label);
+    if (deletes > 0) recordServerFirestoreOp('delete', deletes, label);
+    if (cacheHits > 0) recordServerFirestoreOp('cacheHit', cacheHits);
+
+    res.json({ ok: true });
+  } catch {
+    res.json({ ok: false });
+  }
+});
+
+app.get('/api/firebase-usage', async (_req: Request, res: Response) => {
+  const ledger = rollDailyLedgerIfNeeded();
+
+  // 1. Return cached Cloud Monitoring response if fresh (60s TTL)
+  if (cachedMonitoringResult && Date.now() < cachedMonitoringResult.expiresAt) {
+    res.json({
+      ...cachedMonitoringResult.payload,
+      cacheHits: ledger.cacheHits,
+      lastOperationLabel: ledger.lastOperationLabel,
+    });
+    return;
+  }
+
+  // 2. Attempt direct Google Cloud Monitoring API query on firebaseProjectId
+  try {
+    const auth = await getMonitoringAccessToken();
+    if (auth.token) {
+      const startIso = getPacificMidnightIso();
+      const endIso = new Date().toISOString();
+      const [readsRes, writesRes, deletesRes] = await Promise.all([
+        queryCloudMonitoringSum(auth.token, 'firestore.googleapis.com/document/read_ops_count', startIso, endIso),
+        queryCloudMonitoringSum(auth.token, 'firestore.googleapis.com/document/write_ops_count', startIso, endIso),
+        queryCloudMonitoringSum(auth.token, 'firestore.googleapis.com/document/delete_ops_count', startIso, endIso),
+      ]);
+
+      if (readsRes.ok && writesRes.ok && deletesRes.ok) {
+        const payload = {
+          ok: true,
+          source: 'cloud_monitoring' as const,
+          monitoringConnected: true,
+          date: ledger.date,
+          projectId: firebaseProjectId,
+          databaseId: firebaseDatabaseId,
+          reads: readsRes.value,
+          writes: writesRes.value,
+          deletes: deletesRes.value,
+          totalOps: readsRes.value + writesRes.value + deletesRes.value,
+          cacheHits: ledger.cacheHits,
+          lastOperationLabel: ledger.lastOperationLabel,
+          updatedAt: Date.now(),
+        };
+        cachedMonitoringResult = {
+          expiresAt: Date.now() + 60_000,
+          payload,
+        };
+        res.json(payload);
+        return;
+      }
+
+      if (
+        (!readsRes.ok && (readsRes.status === 401 || readsRes.status === 403)) &&
+        auth.mode === 'metadata'
+      ) {
+        monitoringForbiddenUntil = Date.now() + 10 * 60_000;
+      }
+    }
+  } catch (e: any) {
+    console.warn('[Monitoring API] Notice:', e?.message || e);
+  }
+
+  // 3. Honest fallback: return exact server-wide + all-clients real operation ledger (0 fake numbers)
+  res.json({
+    ok: true,
+    source: 'platform_ledger' as const,
+    monitoringConnected: false,
+    monitoringReason: 'missing_iam_credentials',
+    date: ledger.date,
+    projectId: firebaseProjectId,
+    databaseId: firebaseDatabaseId,
+    reads: ledger.reads,
+    writes: ledger.writes,
+    deletes: ledger.deletes,
+    totalOps: ledger.reads + ledger.writes + ledger.deletes,
+    cacheHits: ledger.cacheHits,
+    lastOperationLabel: ledger.lastOperationLabel,
+    updatedAt: ledger.updatedAt,
   });
 });
 
@@ -2149,9 +2549,17 @@ async function autoConfigureTelegramWebhook() {
 }
 
 async function startServer() {
+  const httpServer = http.createServer(app);
+  httpServer.requestTimeout = 15 * 60 * 1000;
+
   if (!isProd) {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        port: PORT,
+        allowedHosts: true,
+        ws: { server: httpServer },
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
@@ -2163,11 +2571,10 @@ async function startServer() {
     });
   }
 
-  const server = app.listen(PORT, '0.0.0.0', () => {
+  httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running at http://0.0.0.0:${PORT}`);
     autoConfigureTelegramWebhook().catch(() => {});
   });
-  server.requestTimeout = 15 * 60 * 1000;
 }
 
 startServer();

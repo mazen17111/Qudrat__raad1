@@ -11,6 +11,7 @@ import {
   LocalDeletedSignature,
   removeLocalFolderQuestions,
 } from './utils/studentFoldersStore';
+import { trackLocalRead, trackLocalWrite, trackLocalDelete } from './utils/localUsageTracker';
 
 // In-memory + localStorage cache for course-specific mistakes folder IDs
 const cachedCourseMistakesFolderId: Record<string, string> = {};
@@ -96,6 +97,7 @@ export async function getOrCreateMistakesFolderId(userId: string, courseId?: str
       createdAt,
     };
     const newDoc = await addDoc(collection(db, 'folders'), newFolderPayload);
+    trackLocalWrite(1, 'إنشاء مجلد الأخطاء للكورس');
     const createdFolder: FolderItem = { id: newDoc.id, ...newFolderPayload };
     addLocalFolder(userId, createdFolder);
 
@@ -156,6 +158,7 @@ export async function markQuestionAsPermanentlyDeleted({
       imageUrl: normalizedEntry.imageUrl,
       deletedAt: new Date().toISOString(),
     });
+    trackLocalWrite(1, 'توثيق حذف سؤال نهائياً');
   } catch (err) {
     handleFirestoreError(err, OperationType.CREATE, 'deleted_folder_questions');
     console.warn('Note saving deletion audit record:', err);
@@ -201,6 +204,7 @@ export async function deleteCorrectQuestionsFromFolderPermanently({
           )
         : query(collection(db, 'folder_questions'), where('userId', '==', userId));
       const snap = await getDocs(folderQuery);
+      trackLocalRead(Math.max(1, snap.size), 'قراءة أسئلة مجلد للحذف');
       candidateDocs = snap.docs.map((d) => ({ id: d.id, ...d.data() } as FolderQuestionItem));
     }
 
@@ -274,6 +278,7 @@ export async function deleteCorrectQuestionsFromFolderPermanently({
       deleteTasks.push(
         (async () => {
           await deleteDoc(doc(db, 'folder_questions', item.docId));
+          trackLocalDelete(1, 'حذف سؤال متقن من المجلد');
           await markQuestionAsPermanentlyDeleted({
             userId,
             courseId: effectiveCourseId,
@@ -299,6 +304,7 @@ export async function deleteCorrectQuestionsFromFolderPermanently({
         (async () => {
           try {
             await deleteDoc(doc(db, 'folder_questions', qId));
+            trackLocalDelete(1, 'حذف سؤال متقن من المجلد');
           } catch (delErr) {
             handleFirestoreError(delErr, OperationType.DELETE, `folder_questions/${qId}`);
           }
@@ -442,6 +448,7 @@ export async function transferMistakeImmediately({
     };
 
     const addedRef = await addDoc(collection(db, 'folder_questions'), payload);
+    trackLocalWrite(1, 'نقل خطأ تلقائياً لمجلد الأخطاء');
     addLocalFolderQuestion(userId, {
       id: addedRef.id,
       ...(payload as Omit<FolderQuestionItem, 'id'>),

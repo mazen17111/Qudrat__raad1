@@ -34,6 +34,7 @@ import {
   deleteDoc,
   doc
 } from 'firebase/firestore';
+import { trackLocalRead, trackLocalWrite, trackLocalDelete } from '../utils/localUsageTracker';
 
 interface FoldersModalProps {
   isOpen: boolean;
@@ -114,6 +115,7 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
         };
         addDoc(collection(db, 'folders'), payload)
           .then((ref) => {
+            trackLocalWrite(1, 'إنشاء مجلد الأخطاء الافتراضي');
             addLocalFolder(currentUser.id, { id: ref.id, ...payload });
           })
           .catch(() => {
@@ -192,6 +194,7 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
         createdAt: new Date().toISOString(),
       };
       const newRef = await addDoc(collection(db, 'folders'), payload);
+      trackLocalWrite(1, 'إنشاء مجلد خاص');
       addLocalFolder(currentUser.id, { id: newRef.id, ...payload });
       setNewFolderTitle('');
       setIsCreating(false);
@@ -221,10 +224,13 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
         );
         if (cachedInFolder.length > 0) {
           await Promise.all(cachedInFolder.map((fq) => deleteDoc(doc(db, 'folder_questions', fq.id)).catch(() => {})));
+          trackLocalDelete(cachedInFolder.length, 'حذف أسئلة مجلد');
         } else if (!storeSnap.hasLoadedOnce) {
           const qRef = query(collection(db, 'folder_questions'), where('folderId', '==', folderToDelete.id));
           const qSnap = await getDocs(qRef);
+          trackLocalRead(Math.max(1, qSnap.size), 'قراءة أسئلة مجلد للحذف');
           await Promise.all(qSnap.docs.map((d) => deleteDoc(doc(db, 'folder_questions', d.id))));
+          if (qSnap.size > 0) trackLocalDelete(qSnap.size, 'حذف أسئلة مجلد');
         }
       } catch (qErr) {
         console.warn('Error clearing folder questions:', qErr);
@@ -232,6 +238,7 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
 
       // 2. Delete the folder document itself & update unified store
       await deleteDoc(doc(db, 'folders', folderToDelete.id));
+      trackLocalDelete(1, 'حذف مجلد');
       removeLocalFolder(currentUser.id, folderToDelete.id);
       if (selectedFolder?.id === folderToDelete.id) {
         const remaining = folders.filter((f) => f.id !== folderToDelete.id);
@@ -263,6 +270,7 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
           })
         );
       }
+      trackLocalDelete(removedIds.length, 'حذف سؤال من المجلد');
 
       removeLocalFolderQuestions(currentUser.id, removedIds);
 
@@ -290,14 +298,16 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
     try {
       const storeSnap = getStudentFoldersSnapshot(currentUser.id);
       const cachedForFolder = storeSnap.folderQuestions.filter((fq) => fq.folderId === selectedFolder.id);
-      const targetQuestions =
-        folderQuestions.length > 0
-          ? folderQuestions
-          : cachedForFolder.length > 0 || storeSnap.hasLoadedOnce
-          ? cachedForFolder
-          : (await getDocs(query(collection(db, 'folder_questions'), where('folderId', '==', selectedFolder.id)))).docs.map(
-              (d) => ({ id: d.id, ...d.data() } as FolderQuestionItem)
-            );
+      let targetQuestions: FolderQuestionItem[];
+      if (folderQuestions.length > 0) {
+        targetQuestions = folderQuestions;
+      } else if (cachedForFolder.length > 0 || storeSnap.hasLoadedOnce) {
+        targetQuestions = cachedForFolder;
+      } else {
+        const snap = await getDocs(query(collection(db, 'folder_questions'), where('folderId', '==', selectedFolder.id)));
+        trackLocalRead(Math.max(1, snap.size), 'قراءة أسئلة مجلد لمسحها');
+        targetQuestions = snap.docs.map((d) => ({ id: d.id, ...d.data() } as FolderQuestionItem));
+      }
 
       await Promise.all(
         targetQuestions.map(async (data) => {
@@ -314,6 +324,9 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
           await deleteDoc(doc(db, 'folder_questions', data.id));
         })
       );
+      if (targetQuestions.length > 0) {
+        trackLocalDelete(targetQuestions.length, 'مسح أسئلة المجلد بالكامل');
+      }
       removeLocalFolderQuestionsByFolder(currentUser.id, selectedFolder.id);
       setFolderQuestions([]);
       setShowDeleteAllQuestionsModal(false);

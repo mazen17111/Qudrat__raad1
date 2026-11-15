@@ -74,6 +74,7 @@ import {
   query,
   where,
 } from 'firebase/firestore';
+import { trackLocalRead, trackLocalWrite, trackLocalDelete } from '../utils/localUsageTracker';
 
 interface FolderQuestionDoc {
   id: string; // Document ID in folder_questions collection
@@ -705,6 +706,7 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
         createdAt,
       };
       const addedDocRef = await addDoc(collection(db, 'folder_questions'), payload);
+      trackLocalWrite(1, 'حفظ سؤال في مجلد');
 
       addLocalFolderQuestion(currentUser.id, { id: addedDocRef.id, ...payload });
       setUserFolderQuestions((prev) =>
@@ -738,6 +740,7 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
     try {
       if (folderQuestionDocId && !folderQuestionDocId.startsWith('temp_')) {
         await deleteDoc(doc(db, 'folder_questions', folderQuestionDocId));
+        trackLocalDelete(1, 'حذف سؤال من مجلد');
         removeLocalFolderQuestions(currentUser.id, [folderQuestionDocId]);
       } else {
         const cachedMatches = getStudentFoldersSnapshot(currentUser.id).folderQuestions.filter(
@@ -753,6 +756,7 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
             await deleteDoc(doc(db, 'folder_questions', item.id)).catch(() => {});
             deletedIds.push(item.id);
           }
+          if (deletedIds.length > 0) trackLocalDelete(deletedIds.length, 'حذف سؤال من مجلد');
           removeLocalFolderQuestions(currentUser.id, deletedIds);
         } else if (!getStudentFoldersSnapshot(currentUser.id).hasLoadedOnce) {
           const qSnap = await getDocs(
@@ -763,11 +767,13 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
               where('questionText', '==', showFolderModalForQ?.questionText || '')
             )
           );
+          trackLocalRead(Math.max(1, qSnap.size), 'البحث عن سؤال للحذف');
           const deletedIds: string[] = [];
           for (const docD of qSnap.docs) {
             await deleteDoc(docD.ref);
             deletedIds.push(docD.id);
           }
+          if (deletedIds.length > 0) trackLocalDelete(deletedIds.length, 'حذف سؤال من مجلد');
           removeLocalFolderQuestions(currentUser.id, deletedIds);
         }
       }
@@ -815,6 +821,7 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
         createdAt,
       };
       const newRef = await addDoc(collection(db, 'folders'), folderPayload);
+      trackLocalWrite(1, 'إنشاء مجلد أسئلة جديد');
 
       const newFolderItem: FolderItem = {
         id: newRef.id,
@@ -919,6 +926,7 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
         });
 
         const addedAttemptRef = await addDoc(collection(db, 'exam_attempts'), attemptPayload);
+        trackLocalWrite(1, 'حفظ نتيجة اختبار');
         replaceLocalAttemptId(currentUser.id, tempAttemptId, addedAttemptRef.id);
 
         let updatedCount = cachedList.length;
@@ -935,6 +943,7 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
               where('userId', '==', currentUser.id)
             );
             const attemptsSnap = await getDocs(attemptsQuery);
+            trackLocalRead(Math.max(1, attemptsSnap.size), 'مزامنة سجل الاختبارات');
             const remoteAttempts: ExamAttempt[] = [];
             attemptsSnap.forEach((docSnap) => {
               remoteAttempts.push({ id: docSnap.id, ...docSnap.data() } as ExamAttempt);
@@ -954,6 +963,7 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
           totalExamsTaken: updatedCount,
           averageScore: updatedAvg,
         });
+        trackLocalWrite(1, 'تحديث إحصائيات الطالب');
       }
 
       onFinishExam();

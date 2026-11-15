@@ -1,6 +1,7 @@
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db, isQuotaExceededError, handleFirestoreError, OperationType } from '../firebase';
 import { FolderItem, FolderQuestionItem } from '../types';
+import { trackLocalRead, trackLocalCacheHit } from './localUsageTracker';
 
 export interface LocalDeletedSignature {
   courseId: string;
@@ -134,6 +135,7 @@ export async function ensureStudentFoldersLoaded(userId: string, force = false):
     (bucket.foldersFetchedAt > 0 && Date.now() - bucket.foldersFetchedAt < FOLDERS_CACHE_TTL_MS);
 
   if (!force && isFresh) {
+    trackLocalCacheHit(1, 'قراءة المجلدات من الكاش');
     return { folders: bucket.folders, folderQuestions: bucket.folderQuestions };
   }
 
@@ -149,6 +151,7 @@ export async function ensureStudentFoldersLoaded(userId: string, force = false):
         getDocs(query(collection(db, 'folders'), where('userId', '==', userId))),
         getDocs(query(collection(db, 'folder_questions'), where('userId', '==', userId))),
       ]);
+      trackLocalRead(Math.max(1, foldersSnap.size) + Math.max(1, fqSnap.size), 'مزامنة مجلدات الأخطاء');
 
       const nextFolders: FolderItem[] = [];
       foldersSnap.forEach((d) => nextFolders.push({ id: d.id, ...d.data() } as FolderItem));
@@ -192,6 +195,7 @@ export async function ensureDeletedQuestionsLoaded(
     (bucket.deletedFetchedAt > 0 && Date.now() - bucket.deletedFetchedAt < FOLDERS_CACHE_TTL_MS);
 
   if (!force && isFresh) {
+    trackLocalCacheHit(1, 'قراءة المحذوفات من الكاش');
     return bucket.deletedSignatures;
   }
 
@@ -206,6 +210,7 @@ export async function ensureDeletedQuestionsLoaded(
       const snap = await getDocs(
         query(collection(db, 'deleted_folder_questions'), where('userId', '==', userId))
       );
+      trackLocalRead(Math.max(1, snap.size), 'مزامنة الأسئلة المحذوفة');
 
       const merged = [...bucket.deletedSignatures];
       snap.forEach((d) => {

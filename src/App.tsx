@@ -35,6 +35,7 @@ import {
   buildFallbackTelegramUser,
   clearTelegramUserPendingSync,
 } from './utils/telegramUserCache';
+import { trackLocalRead, trackLocalWrite } from './utils/localUsageTracker';
 import { doc, onSnapshot, updateDoc, setDoc, arrayUnion } from 'firebase/firestore';
 import { AuthView } from './components/AuthView';
 import { CoursesPortal } from './components/CoursesPortal';
@@ -220,6 +221,9 @@ export default function App() {
     const unsub = onSnapshot(
       doc(db, 'system_settings', 'global'),
       (docSnap) => {
+        if (!docSnap.metadata?.fromCache) {
+          trackLocalRead(1, 'مزامنة الإعدادات العامة');
+        }
         if (!docSnap.exists()) {
           void seedInitialPlatformData();
           return;
@@ -334,6 +338,9 @@ export default function App() {
     const unsubUser = onSnapshot(
       doc(db, 'users', uid),
       (docSnap) => {
+        if (!docSnap.metadata?.fromCache) {
+          trackLocalRead(1, 'مزامنة حالة حساب الطالب');
+        }
         if (!docSnap.exists() || (docSnap.data() as any)?.isDeleted) {
           // Account was deleted by admin (normal or permanent delete) -> Log out immediately so the platform is closed in real-time!
           setCurrentUser(null);
@@ -459,7 +466,9 @@ export default function App() {
 
     // If local saved color differs from user doc, quietly sync back to Firestore
     if (savedLocal && remoteColor !== savedLocal) {
-      setDoc(doc(db, 'users', user.id), { preferredThemeColor: savedLocal }, { merge: true }).catch(() => {});
+      setDoc(doc(db, 'users', user.id), { preferredThemeColor: savedLocal }, { merge: true })
+        .then(() => trackLocalWrite(1, 'مزامنة لون المنصة'))
+        .catch(() => {});
     }
   };
 
@@ -473,6 +482,7 @@ export default function App() {
         await updateDoc(userRef, {
           enrolledCourseIds: arrayUnion(courseId)
         });
+        trackLocalWrite(1, 'تفعيل كورس للطالب');
       } catch (err) {
         console.error('Error updating enrolled courses in Firestore:', err);
       }
@@ -551,6 +561,7 @@ export default function App() {
       try {
         const userRef = doc(db, 'users', currentUser.id);
         await setDoc(userRef, { preferredThemeColor: color }, { merge: true });
+        trackLocalWrite(1, 'حفظ لون المنصة للطالب');
       } catch (err) {
         console.warn('Failed to update preferredThemeColor in Firestore:', err);
       }
@@ -589,7 +600,7 @@ export default function App() {
 
   return (
     <div className={isDarkMode ? 'dark min-h-screen bg-slate-950 text-white w-full max-w-full overflow-x-hidden' : 'light min-h-screen bg-white text-slate-900 w-full max-w-full overflow-x-hidden'} dir="rtl">
-      {isQuotaExceeded && !isQuotaBannerDismissed && (
+      {isAdminOpen && isQuotaExceeded && !isQuotaBannerDismissed && (
         <div className="sticky top-0 z-[9999] bg-amber-500/95 text-slate-950 px-4 py-2.5 shadow-lg border-b border-amber-600">
           <div className="max-w-6xl mx-auto flex items-start sm:items-center justify-between gap-3 text-xs sm:text-sm font-bold">
             <div className="flex items-start sm:items-center gap-2.5 flex-wrap">

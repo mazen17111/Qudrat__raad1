@@ -30,6 +30,7 @@ import {
   syncCatalogFromFirestore,
 } from '../utils/firestoreCache';
 import { collection, query, where, getDocs } from 'firebase/firestore';
+import { trackLocalRead, trackLocalCacheHit } from '../utils/localUsageTracker';
 
 interface StatsModalProps {
   isOpen: boolean;
@@ -68,6 +69,7 @@ export const StatsModal: React.FC<StatsModalProps> = ({
     }
 
     if (hasSyncedExamAttemptsRecently(currentUser.id)) {
+      trackLocalCacheHit(1, 'قراءة سجل الاختبارات من الكاش');
       setLoadingAttempts(false);
       return;
     }
@@ -82,6 +84,7 @@ export const StatsModal: React.FC<StatsModalProps> = ({
           where('userId', '==', currentUser.id)
         );
         const snap = await getDocs(q);
+        trackLocalRead(Math.max(1, snap.size), 'جلب سجل الاختبارات');
         if (cancelled) return;
         const list: ExamAttempt[] = [];
         snap.forEach((docSnap) => {

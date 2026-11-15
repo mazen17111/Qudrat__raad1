@@ -36,8 +36,15 @@ import {
   FriendChallengeParticipant,
   FriendChallengeQuestionRef
 } from '../types';
-import { db, OperationType, reportFirestoreListenerError } from '../firebase';
+import {
+  db,
+  OperationType,
+  reportFirestoreListenerError,
+  isQuotaExceededError,
+  isTransientFirestoreError
+} from '../firebase';
 import { transferMistakeImmediately } from '../mistakesService';
+import { trackLocalRead, trackLocalWrite } from '../utils/localUsageTracker';
 import {
   collection,
   doc,
@@ -112,6 +119,8 @@ export const FeaturesModal: React.FC<FeaturesModalProps> = ({
   const [codeRegeneratedNotice, setCodeRegeneratedNotice] = useState<string>('');
   const [challengeShuffleCounter, setChallengeShuffleCounter] = useState<number>(0);
   const [challengeShuffleNotice, setChallengeShuffleNotice] = useState<string>('');
+  const [challengeActionError, setChallengeActionError] = useState<string>('');
+  const [diagnosticError, setDiagnosticError] = useState<string>('');
 
   // In-game state for active challenge
   const [challengeCurrentQIdx, setChallengeCurrentQIdx] = useState<number>(0);
@@ -123,6 +132,8 @@ export const FeaturesModal: React.FC<FeaturesModalProps> = ({
     if (isOpen) {
       setActiveView('main');
       setJoinError('');
+      setChallengeActionError('');
+      setDiagnosticError('');
     }
   }, [isOpen]);
 
@@ -144,6 +155,9 @@ export const FeaturesModal: React.FC<FeaturesModalProps> = ({
     const unsub = onSnapshot(
       doc(db, 'challenges', targetRoomId),
       (docSnap) => {
+        if (!docSnap.metadata.fromCache) {
+          trackLocalRead(1);
+        }
         if (docSnap.exists()) {
           const data = { id: docSnap.id, ...docSnap.data() } as FriendChallengeDoc;
           if (createdChallenge && !activeChallengeRoom) {
@@ -159,6 +173,9 @@ export const FeaturesModal: React.FC<FeaturesModalProps> = ({
       },
       (error) => {
         reportFirestoreListenerError(error, OperationType.GET, `challenges/${targetRoomId}`);
+        if (isQuotaExceededError(error) || isTransientFirestoreError(error)) {
+          setChallengeActionError('عذراً، هذه الميزة حالياً تحت التطوير');
+        }
       }
     );
 
@@ -242,6 +259,7 @@ export const FeaturesModal: React.FC<FeaturesModalProps> = ({
 
   // ================= HANDLER: Start Diagnostic Exam =================
   const handleLaunchDiagnosticExam = () => {
+    setDiagnosticError('');
     let chosenExams: ContentItem[] = [];
 
     if (diagnosticMode === 'random') {
@@ -271,7 +289,7 @@ export const FeaturesModal: React.FC<FeaturesModalProps> = ({
     });
 
     if (mergedQuestions.length === 0) {
-      alert('لا توجد أسئلة كافية في الاختبارات المحددة للبدء!');
+      setDiagnosticError('لا توجد أسئلة كافية في الاختبارات المحددة للبدء!');
       return;
     }
 
@@ -293,6 +311,7 @@ export const FeaturesModal: React.FC<FeaturesModalProps> = ({
 
   // ================= HANDLER: Create Challenge Room =================
   const handleCreateChallenge = async () => {
+    setChallengeActionError('');
     let chosenExams: ContentItem[] = [];
 
     if (challengeExamSelectionMode === 'random') {
@@ -365,7 +384,7 @@ export const FeaturesModal: React.FC<FeaturesModalProps> = ({
     });
 
     if (questionEntries.length === 0) {
-      alert('لا توجد أسئلة كافية لإنشاء التحدي!');
+      setChallengeActionError('لا توجد أسئلة كافية لإنشاء التحدي!');
       return;
     }
 
@@ -407,11 +426,16 @@ export const FeaturesModal: React.FC<FeaturesModalProps> = ({
     try {
       const cleanDoc = cleanFirestoreObject(initialDoc);
       await setDoc(challengeRef, cleanDoc);
+      trackLocalWrite(1);
       setCreatedChallenge(initialDoc);
       setCodeRegeneratedNotice('');
     } catch (e) {
       console.error('Error creating challenge:', e);
-      alert('حدث خطأ أثناء إنشاء التحدي، يرجى المحاولة ثانية.');
+      if (isQuotaExceededError(e) || isTransientFirestoreError(e)) {
+        setChallengeActionError('عذراً، هذه الميزة حالياً تحت التطوير');
+      } else {
+        setChallengeActionError('حدث خطأ أثناء إنشاء التحدي، يرجى المحاولة ثانية.');
+      }
     }
   };
 
@@ -420,6 +444,7 @@ export const FeaturesModal: React.FC<FeaturesModalProps> = ({
     if (!createdChallenge) return;
     setIsRegeneratingCode(true);
     setCodeRegeneratedNotice('');
+    setChallengeActionError('');
 
     try {
       const newCode = generateCleanCode();
@@ -429,6 +454,7 @@ export const FeaturesModal: React.FC<FeaturesModalProps> = ({
         code: newCode,
         updatedAt: new Date().toISOString(),
       }));
+      trackLocalWrite(1);
 
       setCreatedChallenge((prev) => (prev ? { ...prev, code: newCode } : null));
 
@@ -443,7 +469,11 @@ export const FeaturesModal: React.FC<FeaturesModalProps> = ({
       setTimeout(() => setCodeRegeneratedNotice(''), 4000);
     } catch (e) {
       console.error('Error regenerating code:', e);
-      alert('حدث خطأ أثناء توليد الكود الجديد، يرجى المحاولة ثانية.');
+      if (isQuotaExceededError(e) || isTransientFirestoreError(e)) {
+        setChallengeActionError('عذراً، هذه الميزة حالياً تحت التطوير');
+      } else {
+        setChallengeActionError('حدث خطأ أثناء توليد الكود الجديد، يرجى المحاولة ثانية.');
+      }
     } finally {
       setIsRegeneratingCode(false);
     }
@@ -463,6 +493,7 @@ export const FeaturesModal: React.FC<FeaturesModalProps> = ({
     try {
       const q = query(collection(db, 'challenges'), where('code', '==', trimmed));
       const snap = await getDocs(q);
+      trackLocalRead(snap.empty ? 1 : snap.size);
 
       if (snap.empty) {
         setJoinError('لم يتم العثور على تحدي بهذا الكود! تأكد من صحة الرمز.');
@@ -507,6 +538,7 @@ export const FeaturesModal: React.FC<FeaturesModalProps> = ({
         participants: updatedParticipants,
         updatedAt: new Date().toISOString(),
       }));
+      trackLocalWrite(1);
 
       const updatedRoom: FriendChallengeDoc = {
         ...data,
@@ -519,7 +551,11 @@ export const FeaturesModal: React.FC<FeaturesModalProps> = ({
       setActiveChallengeRoom(updatedRoom);
     } catch (e) {
       console.error('Error joining challenge:', e);
-      setJoinError('حدث خطأ أثناء الانضمام للتحدي.');
+      if (isQuotaExceededError(e) || isTransientFirestoreError(e)) {
+        setJoinError('عذراً، هذه الميزة حالياً تحت التطوير');
+      } else {
+        setJoinError('حدث خطأ أثناء الانضمام للتحدي.');
+      }
     } finally {
       setIsJoining(false);
     }
@@ -620,6 +656,7 @@ export const FeaturesModal: React.FC<FeaturesModalProps> = ({
         ...(winnerId ? { winnerId, winnerName } : {}),
         updatedAt: new Date().toISOString(),
       }));
+      trackLocalWrite(1);
 
       if (!isLastQuestion) {
         setTimeout(() => {
@@ -628,6 +665,9 @@ export const FeaturesModal: React.FC<FeaturesModalProps> = ({
       }
     } catch (e) {
       console.error('Error updating challenge answer:', e);
+      if (isQuotaExceededError(e) || isTransientFirestoreError(e)) {
+        setChallengeActionError('عذراً، هذه الميزة حالياً تحت التطوير');
+      }
     } finally {
       setIsSubmittingChallengeAnswer(false);
     }
@@ -663,8 +703,12 @@ export const FeaturesModal: React.FC<FeaturesModalProps> = ({
         winnerName,
         updatedAt: new Date().toISOString(),
       }));
+      trackLocalWrite(1);
     } catch (e) {
       console.error('Error force finishing challenge:', e);
+      if (isQuotaExceededError(e) || isTransientFirestoreError(e)) {
+        setChallengeActionError('عذراً، هذه الميزة حالياً تحت التطوير');
+      }
     }
   };
 
@@ -1129,6 +1173,12 @@ export const FeaturesModal: React.FC<FeaturesModalProps> = ({
                 </div>
               </div>
 
+              {diagnosticError && (
+                <div className="p-3.5 rounded-2xl bg-amber-500/15 border border-amber-500/40 text-amber-400 text-xs font-bold text-center">
+                  {diagnosticError}
+                </div>
+              )}
+
               {/* Start Button */}
               <button
                 type="button"
@@ -1144,6 +1194,11 @@ export const FeaturesModal: React.FC<FeaturesModalProps> = ({
           {/* ================= 3. SUB-VIEW: تحدي الأصدقاء ================= */}
           {activeView === 'challenge' && (
             <div className="max-w-2xl mx-auto space-y-6">
+              {challengeActionError && (
+                <div className="p-3.5 rounded-2xl bg-amber-500/15 border border-amber-500/40 text-amber-400 text-xs font-bold text-center">
+                  {challengeActionError}
+                </div>
+              )}
               {/* Active Room Arena Mode */}
               {activeChallengeRoom ? (
                 <div className="space-y-6">
@@ -1628,8 +1683,9 @@ export const FeaturesModal: React.FC<FeaturesModalProps> = ({
                                         } else {
                                           if (challengeManualExamIds.length < challengeExamCount) {
                                             setChallengeManualExamIds([...challengeManualExamIds, ex.id]);
+                                            setChallengeActionError('');
                                           } else {
-                                            alert(`لقد حددت بالفعل ${challengeExamCount} اختبارات!`);
+                                            setChallengeActionError(`لقد حددت بالفعل ${challengeExamCount} اختبارات!`);
                                           }
                                         }
                                       }}

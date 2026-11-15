@@ -73,6 +73,7 @@ import {
   onSnapshot,
   doc,
   getDoc,
+  getDocFromCache,
   updateDoc,
   arrayUnion,
   arrayRemove,
@@ -94,6 +95,7 @@ import {
   subscribeStudentFolders,
 } from '../utils/studentFoldersStore';
 import { saveCatalogToCache } from '../utils/firestoreCache';
+import { trackLocalRead, trackLocalWrite, trackLocalCacheHit } from '../utils/localUsageTracker';
 
 interface StudentHomeProps {
   currentUser: StudentUser;
@@ -451,6 +453,9 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
         onSnapshot(
           collection(db, 'sections'),
           (snap) => {
+            if (!snap.metadata?.fromCache) {
+              trackLocalRead(Math.max(1, snap.size), 'مزامنة الأقسام');
+            }
             const list: SectionItem[] = [];
             snap.forEach((d) => list.push({ id: d.id, ...d.data() } as SectionItem));
             list.sort((a, b) => (a.order || 0) - (b.order || 0));
@@ -474,6 +479,9 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
         onSnapshot(
           collection(db, 'resources'),
           (snap) => {
+            if (!snap.metadata?.fromCache) {
+              trackLocalRead(Math.max(1, snap.size), 'مزامنة المصادر');
+            }
             const list: ResourceItem[] = [];
             snap.forEach((d) => list.push({ id: d.id, ...d.data() } as ResourceItem));
             list.sort((a, b) => (a.order || 0) - (b.order || 0));
@@ -494,6 +502,9 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
         onSnapshot(
           collection(db, 'content_items'),
           (snap) => {
+            if (!snap.metadata?.fromCache) {
+              trackLocalRead(Math.max(1, snap.size), 'مزامنة المحتوى');
+            }
             const list: ContentItem[] = [];
             snap.forEach((d) => {
               const raw = { id: d.id, ...d.data() } as ContentItem;
@@ -676,6 +687,7 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
           watchedVideoIds: arrayUnion(videoId),
         });
       }
+      trackLocalWrite(1, 'تحديث حالة مشاهدة فيديو');
     } catch (err) {
       console.error('Error toggling watched video status:', err);
       // Revert if error
@@ -692,6 +704,7 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
       await updateDoc(userRef, {
         watchedVideoIds: arrayUnion(videoId),
       });
+      trackLocalWrite(1, 'تأكيد إتمام مشاهدة فيديو');
     } catch (err) {
       console.error('Error marking video as ended:', err);
     }
@@ -723,10 +736,26 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
       }
     }
 
-    // 2. If questions array is still empty in local state, fetch directly from Firestore with a fast 800ms race timeout
+    // 2. If questions array is still empty in local state, try IndexedDB cache first (0 reads) then Firestore with fast timeout
     if (finalQuestions.length === 0) {
       try {
-        const fetchPromise = getDoc(doc(db, 'content_items', examToStart.id));
+        const cachedSnap = await getDocFromCache(doc(db, 'content_items', examToStart.id));
+        if (cachedSnap.exists()) {
+          const cachedData = cachedSnap.data();
+          if (Array.isArray(cachedData.questions) && cachedData.questions.length > 0) {
+            trackLocalCacheHit(1, 'جلب أسئلة الاختبار من الكاش');
+            finalQuestions = cachedData.questions;
+          }
+        }
+      } catch {}
+    }
+
+    if (finalQuestions.length === 0) {
+      try {
+        const fetchPromise = getDoc(doc(db, 'content_items', examToStart.id)).then((s) => {
+          trackLocalRead(1, 'جلب أسئلة اختبار');
+          return s;
+        });
         const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 800));
         const snap = (await Promise.race([fetchPromise, timeoutPromise])) as any;
         if (snap && snap.exists && snap.exists()) {
