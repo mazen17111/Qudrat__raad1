@@ -34,6 +34,7 @@ import {
   getCachedTelegramUser,
   buildFallbackTelegramUser,
   clearTelegramUserPendingSync,
+  removeCachedTelegramUser,
 } from './utils/telegramUserCache';
 import { trackLocalRead, trackLocalWrite } from './utils/localUsageTracker';
 import { doc, onSnapshot, updateDoc, setDoc, arrayUnion } from 'firebase/firestore';
@@ -342,10 +343,13 @@ export default function App() {
           trackLocalRead(1, 'مزامنة حالة حساب الطالب');
         }
         if (!docSnap.exists() || (docSnap.data() as any)?.isDeleted) {
-          // Account was deleted by admin (normal or permanent delete) -> Log out immediately so the platform is closed in real-time!
+          // Account was deleted by admin -> clear all local sessions & caches immediately so re-login starts fresh
+          removeCachedTelegramUser(currentUser?.telegramId, uid);
+          setActiveCourse(null);
           setCurrentUser(null);
           try {
             localStorage.removeItem(STUDENT_SESSION_KEY);
+            localStorage.removeItem('raad_student_session');
           } catch (e) {}
           return;
         }

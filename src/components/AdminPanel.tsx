@@ -95,6 +95,7 @@ import {
   saveCatalogToCache,
   syncCatalogFromFirestore,
 } from '../utils/firestoreCache';
+import { removeCachedTelegramUser } from '../utils/telegramUserCache';
 import {
   getLocalUsageStats,
   subscribeLocalUsageStats,
@@ -987,32 +988,45 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
     }
   };
 
-  // 4. Delete Student: Permanent vs Normal
+  // 4. Delete Student: Permanent vs Normal (Single direct deleteDoc operation)
   const handleConfirmDelete = async (isPermanent: boolean) => {
     if (!deletingStudent) return;
+    const targetStudent = deletingStudent;
     try {
       if (isPermanent) {
-        const cleanEmailId = deletingStudent.email.replace(/[@.]/g, '_');
+        const cleanEmailId = targetStudent.email.replace(/[@.]/g, '_');
         await setDoc(doc(db, 'banned_emails', cleanEmailId), {
-          email: deletingStudent.email.toLowerCase(),
+          email: targetStudent.email.toLowerCase(),
           bannedAt: new Date().toISOString(),
           reason: 'حذف دائم وحظر من لوحة الإدارة',
         });
         trackLocalWrite(1, 'حظر بريد طالب');
       }
 
-      // 1. Immediately signal active student session to log out with 0ms delay
-      await updateDoc(doc(db, 'users', deletingStudent.id), {
-        isDeleted: true,
-        deletedAt: new Date().toISOString(),
-      }).then(() => trackLocalWrite(1, 'إخراج طالب محذوف')).catch(() => {});
-
-      // 2. Permanently remove the user document from Firestore
-      await deleteDoc(doc(db, 'users', deletingStudent.id));
+      // Single direct delete operation on Firestore: App.tsx's real-time snapshot listener detects !docSnap.exists() immediately
+      await deleteDoc(doc(db, 'users', targetStudent.id));
       trackLocalDelete(1, 'حذف حساب طالب');
-      updateLocalStudents((prev) => prev.filter((st) => st.id !== deletingStudent.id));
+
+      // Purge local & server-side cached Telegram profile so student starts from scratch on next login
+      removeCachedTelegramUser(targetStudent.telegramId, targetStudent.id);
+      if (targetStudent.telegramId || targetStudent.id) {
+        fetch('/api/telegram/purge-cached-user', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: targetStudent.id,
+            telegramId: targetStudent.telegramId || '',
+          }),
+        }).catch(() => {});
+      }
+
+      updateLocalStudents((prev) => prev.filter((st) => st.id !== targetStudent.id));
       setDeletingStudent(null);
-      notifySave(isPermanent ? 'تم الحذف الدائم وحظر البريد وإخراج الطالب فورياً 🗑️' : 'تم الحذف العادي للحساب وإخراج الطالب فورياً 🗑️');
+      notifySave(
+        isPermanent
+          ? 'تم الحذف الدائم وحظر البريد وإخراج الطالب فورياً 🗑️'
+          : 'تم حذف حساب الطالب نهائياً من قاعدة البيانات وإعادته لنقطة البداية 🗑️'
+      );
     } catch (err) {
       console.error('Error deleting student:', err);
       notifySave('حدث خطأ أثناء حذف الحساب');
@@ -6888,7 +6902,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                   <span className="text-[10px] px-2 py-0.5 rounded bg-slate-700 text-slate-300">عادي</span>
                 </div>
                 <p className="text-xs text-slate-400">
-                  يحذف حسابه الحالي، لكن يمكنه إنشاء حساب جديد بنفس الإيميل لاحقاً إذا رغب.
+                  يحذف حساب الطالب وسجله نهائياً من قاعدة البيانات، وعند دخوله مجدداً بتليجرام يبدأ كطالب جديد بدون أي كورسات مفعلة.
                 </p>
               </button>
             </div>

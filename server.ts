@@ -1894,9 +1894,14 @@ app.get('/api/telegram/check-session', async (req: Request, res: Response) => {
       if (globalSnap.exists()) {
         const data = globalSnap.data();
         if (data.status === 'authenticated' && data.user) {
-          // If authenticated within the last 2 minutes
+          // If authenticated within the last 2 minutes and not purged after authentication
           const authTime = data.authenticatedAt ? new Date(data.authenticatedAt).getTime() : 0;
-          if (Date.now() - authTime < 120000) {
+          const purgedTs =
+            Math.max(
+              data.user?.id ? purgedUserTimestamps.get(String(data.user.id)) || 0 : 0,
+              data.telegramId ? purgedUserTimestamps.get(`tg:${String(data.telegramId)}`) || 0 : 0
+            );
+          if (Date.now() - authTime < 120000 && authTime > purgedTs) {
             persistTelegramUserEntry(data.user);
             res.json({ authenticated: true, user: data.user });
             return;
@@ -1996,6 +2001,58 @@ app.post('/api/telegram/resolve-user', async (req: Request, res: Response) => {
   };
   persistTelegramUserEntry(fallbackUser);
   res.json({ ok: true, user: fallbackUser, source: 'fallback' });
+});
+
+const purgedUserTimestamps = new Map<string, number>();
+
+// Purge server-side cached Telegram user & session when admin deletes a student (0 Firestore ops)
+app.post('/api/telegram/purge-cached-user', (req: Request, res: Response) => {
+  const { telegramId, userId } = req.body || {};
+  const tgIdStr = telegramId ? String(telegramId).trim() : '';
+  const targetUserId = userId ? String(userId).trim() : '';
+  const now = Date.now();
+  if (targetUserId) purgedUserTimestamps.set(targetUserId, now);
+  if (tgIdStr) purgedUserTimestamps.set(`tg:${tgIdStr}`, now);
+  let changed = false;
+
+  if (tgIdStr && telegramUsersCache.has(tgIdStr)) {
+    telegramUsersCache.delete(tgIdStr);
+    changed = true;
+  }
+
+  if (targetUserId) {
+    for (const [k, val] of telegramUsersCache.entries()) {
+      if (val && val.id === targetUserId) {
+        telegramUsersCache.delete(k);
+        changed = true;
+      }
+    }
+  }
+
+  if (changed) {
+    try {
+      const obj: Record<string, any> = {};
+      telegramUsersCache.forEach((val, k) => {
+        obj[k] = val;
+      });
+      const tmpPath = `${telegramUsersCachePath}.tmp`;
+      fs.writeFileSync(tmpPath, JSON.stringify(obj), 'utf8');
+      fs.renameSync(tmpPath, telegramUsersCachePath);
+    } catch (err: any) {
+      console.warn('[Telegram Cache] Could not update cache after purge:', err.message);
+    }
+  }
+
+  // Clear any in-memory session referencing the deleted user
+  for (const [sessId, sess] of activeTelegramSessions.entries()) {
+    const sessUid = sess?.user?.id ? String(sess.user.id) : '';
+    const sessTg = sess?.telegramId ? String(sess.telegramId) : '';
+    if ((targetUserId && sessUid === targetUserId) || (tgIdStr && sessTg === tgIdStr)) {
+      activeTelegramSessions.delete(sessId);
+    }
+  }
+
+  res.json({ ok: true, purged: changed });
 });
 
 // Helper to send Telegram message to student chat

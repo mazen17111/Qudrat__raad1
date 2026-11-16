@@ -54,6 +54,7 @@ import {
   saveCachedTelegramUser,
   markTelegramUserPendingSync,
   clearTelegramUserPendingSync,
+  removeCachedTelegramUser,
   buildFallbackTelegramUser,
 } from '../utils/telegramUserCache';
 import { trackLocalRead, trackLocalWrite, trackLocalCacheHit } from '../utils/localUsageTracker';
@@ -338,7 +339,11 @@ export const AuthView: React.FC<AuthViewProps> = ({
         };
         clearTelegramUserPendingSync(telegramIdStr);
       } else {
-        // User does not exist in Firestore -> Create brand new document (or fallback smoothly if quota/network blocked)
+        // User does not exist in Firestore (new visitor or deleted account) -> purge any stale local cache & create fresh account
+        if (localCached) {
+          const remaining = removeCachedTelegramUser(telegramIdStr, localCached.id);
+          setSavedTelegramAccounts(remaining);
+        }
         const newUserRef = doc(collection(db, 'users'));
         const newStudent: StudentUser = {
           id: newUserRef.id,
@@ -547,16 +552,20 @@ export const AuthView: React.FC<AuthViewProps> = ({
           id: existingDocId,
         };
         finalizeTelegramLogin(authenticatedUser);
-      } else if (localCached) {
-        trackLocalCacheHit(1, 'دخول تيليجرام من الكاش المحلي');
-        finalizeTelegramLogin({
-          ...localCached,
-          lastLoginAt: new Date().toISOString(),
-        });
       } else {
-        // Account document not in firestore and not cached locally, activate widget
+        // Firestore responded and confirmed the account does NOT exist (deleted by admin) -> purge stale saved card & require fresh sign-in
+        const remaining = removeCachedTelegramUser(telegramIdStr, localCached?.id || null);
+        setSavedTelegramAccounts(remaining);
+        fetch('/api/telegram/purge-cached-user', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: localCached?.id || '',
+            telegramId: telegramIdStr,
+          }),
+        }).catch(() => {});
         setIsAddingNewTelegram(true);
-        setError('يرجى الضغط على زر تليجرام أدناه لربط الحساب وتأكيد الدخول.');
+        setError('تم إعادة تعيين الحساب؛ يرجى تسجيل الدخول بتليجرام مجدداً لبدء حساب جديد.');
       }
     } catch (err) {
       if (isQuotaExceededError(err)) {

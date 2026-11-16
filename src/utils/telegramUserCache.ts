@@ -117,6 +117,72 @@ export function getPendingTelegramUserSync(telegramId: string | number): Student
   return pending[tgKey] || null;
 }
 
+/**
+ * Purges all cached Telegram profile/session records for a deleted student
+ * so they start completely fresh if they ever sign in again.
+ */
+export function removeCachedTelegramUser(
+  telegramId?: string | number | null,
+  userId?: string | null
+): SavedTelegramAccount[] {
+  if (typeof window === 'undefined') return [];
+  const tgKey = telegramId ? String(telegramId).trim() : '';
+  const targetUid = userId ? String(userId).trim() : '';
+
+  try {
+    const profiles = readJsonMap<StudentUser>(TG_PROFILES_CACHE_KEY);
+    let profilesChanged = false;
+    if (tgKey && profiles[tgKey]) {
+      delete profiles[tgKey];
+      profilesChanged = true;
+    }
+    if (targetUid) {
+      for (const [k, v] of Object.entries(profiles)) {
+        if (v?.id === targetUid) {
+          delete profiles[k];
+          profilesChanged = true;
+        }
+      }
+    }
+    if (profilesChanged) {
+      writeJsonMap(TG_PROFILES_CACHE_KEY, profiles);
+    }
+  } catch {}
+
+  if (tgKey) {
+    clearTelegramUserPendingSync(tgKey);
+  }
+
+  // Clear active local sessions if they belong to the deleted user
+  try {
+    const keysToCheck = ['raad_student_auth_session', 'raad_student_session'];
+    keysToCheck.forEach((storageKey) => {
+      const raw = localStorage.getItem(storageKey);
+      if (!raw) return;
+      try {
+        const parsed = JSON.parse(raw) as Partial<StudentUser>;
+        const matchesId = Boolean(targetUid && parsed?.id === targetUid);
+        const matchesTg = Boolean(tgKey && parsed?.telegramId && String(parsed.telegramId) === tgKey);
+        if (matchesId || matchesTg) {
+          localStorage.removeItem(storageKey);
+        }
+      } catch {}
+    });
+  } catch {}
+
+  try {
+    const raw = localStorage.getItem(TG_SAVED_ACCOUNTS_KEY);
+    const currentList: SavedTelegramAccount[] = raw ? JSON.parse(raw) : [];
+    const filtered = Array.isArray(currentList)
+      ? currentList.filter((a) => !tgKey || String(a.id) !== tgKey)
+      : [];
+    localStorage.setItem(TG_SAVED_ACCOUNTS_KEY, JSON.stringify(filtered));
+    return filtered;
+  } catch {}
+
+  return [];
+}
+
 export function buildFallbackTelegramUser(params: {
   telegramId: string | number;
   name?: string;
