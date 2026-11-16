@@ -298,12 +298,32 @@ export async function deleteCorrectQuestionsFromFolderPermanently({
   }
 }
 
+function isGenericQuestionPlaceholder(text: string): boolean {
+  const t = text.trim();
+  if (!t) return true;
+  return /^سؤال(\s+رقم)?\s*\d+(\s*\(انظر الصورة المرفقة\))?$/i.test(t);
+}
+
+function getOptionsKey(options?: string[]): string {
+  if (!Array.isArray(options) || options.length === 0) return '';
+  return options.map((o) => String(o || '').trim()).join('||');
+}
+
 function getQuestionDedupeSignature(question: ExamQuestion): string {
   const qId = (question.id || '').trim();
   const qText = (question.questionText || '').trim();
   const qImg = (question.imageUrl || '').trim();
-  if (qId) return `id::${qId}`;
-  return `txt::${qText}|||${qImg}`;
+  const qOpts = getOptionsKey(question.options);
+
+  if (qImg) {
+    return isGenericQuestionPlaceholder(qText)
+      ? `img::${qImg}|||${qOpts}`
+      : `txtimg::${qText}|||${qImg}`;
+  }
+  if (qText && !isGenericQuestionPlaceholder(qText)) {
+    return `txt::${qText}`;
+  }
+  return `gen::${qId}|||${qText}|||${qOpts}`;
 }
 
 function isQuestionAlreadyInFolder(
@@ -314,22 +334,161 @@ function isQuestionAlreadyInFolder(
   const qId = (question.id || '').trim();
   const qText = (question.questionText || '').trim();
   const qImg = (question.imageUrl || '').trim();
+  const qOpts = getOptionsKey(question.options);
+  const qIsGeneric = isGenericQuestionPlaceholder(qText);
 
   return folderQuestions.some((data) => {
     if (data.folderId !== folderId) return false;
-    const dOrigId = String(data.originalQuestionId || '').trim();
-    if (qId && dOrigId && qId === dOrigId) return true;
-
     const dText = String(data.questionText || '').trim();
     const dImg = String(data.imageUrl || '').trim();
-    return Boolean(qText && dText && qText === dText && dImg === qImg);
+    const dOrigId = String(data.originalQuestionId || '').trim();
+    const dOpts = getOptionsKey(data.options);
+
+    if (qImg || dImg) {
+      if (qImg !== dImg) return false;
+      if (!qIsGeneric && !isGenericQuestionPlaceholder(dText)) {
+        return qText === dText;
+      }
+      return qText === dText && (qOpts === '' || dOpts === '' || qOpts === dOpts);
+    }
+
+    if (!qIsGeneric && !isGenericQuestionPlaceholder(dText)) {
+      return qText === dText;
+    }
+
+    if (qText === dText && qOpts && dOpts) {
+      return qOpts === dOpts;
+    }
+    return Boolean(qId && dOrigId && qId === dOrigId && qText === dText);
   });
+}
+
+export type MistakeFolderQuestionPayload = FolderQuestionItem & {
+  studentChoiceIndex?: number | null;
+  isAutoTransferredMistake?: boolean;
+};
+
+export interface PreparedCumulativeMistakesResult {
+  folderToCreate: {
+    ref: ReturnType<typeof doc>;
+    folder: FolderItem;
+  } | null;
+  newQuestions: Array<{
+    ref: ReturnType<typeof doc>;
+    record: MistakeFolderQuestionPayload;
+  }>;
+}
+
+/**
+ * Prepares cumulative mistakes for a single atomic write at exam completion:
+ * - Preserves all existing mistakes in the student's course mistakes folder (never overwrites/clears them).
+ * - Deduplicates against existing folder questions by actual question content (preventing cross-exam ID collisions).
+ * - Performs ZERO Firestore writes itself so the caller can commit everything in ONE batch.
+ */
+export async function prepareCumulativeMistakesWrite({
+  userId,
+  courseId,
+  examTitle,
+  items,
+}: {
+  userId: string;
+  courseId?: string;
+  examTitle?: string;
+  items: Array<{ question: ExamQuestion; studentAnswerIndex?: number }>;
+}): Promise<PreparedCumulativeMistakesResult> {
+  if (!userId || !Array.isArray(items) || items.length === 0) {
+    return { folderToCreate: null, newQuestions: [] };
+  }
+
+  const effectiveCourseId = courseId || 'course_default_1';
+  const { folders, folderQuestions } = await ensureStudentFoldersLoaded(userId);
+
+  const existingFolder = folders.find((f) => {
+    const folderCourse = f.courseId || 'course_default_1';
+    return folderCourse === effectiveCourseId && isMistakesFolderDoc(f);
+  });
+
+  let folderId: string;
+  let folderToCreate: PreparedCumulativeMistakesResult['folderToCreate'] = null;
+
+  if (existingFolder?.id) {
+    folderId = existingFolder.id;
+    persistMistakesFolderId(userId, effectiveCourseId, folderId);
+  } else {
+    const folderRef = doc(collection(db, 'folders'));
+    folderId = folderRef.id;
+    folderToCreate = {
+      ref: folderRef,
+      folder: {
+        id: folderId,
+        userId,
+        courseId: effectiveCourseId,
+        title: 'مجلد الأخطاء',
+        isDefaultMistakesFolder: true,
+        createdAt: new Date().toISOString(),
+      },
+    };
+  }
+
+  const seenInBatch = new Set<string>();
+  const newQuestions: PreparedCumulativeMistakesResult['newQuestions'] = [];
+  const baseTime = Date.now();
+
+  items.forEach(({ question, studentAnswerIndex }, idx) => {
+    if (!question) return;
+    const sig = getQuestionDedupeSignature(question);
+    if (seenInBatch.has(sig)) return;
+    seenInBatch.add(sig);
+
+    if (existingFolder && isQuestionAlreadyInFolder(folderQuestions, folderId, question)) {
+      return;
+    }
+
+    const ref = doc(collection(db, 'folder_questions'));
+    const record: MistakeFolderQuestionPayload = {
+      id: ref.id,
+      folderId,
+      courseId: effectiveCourseId,
+      userId,
+      originalQuestionId: question.id || '',
+      questionText: question.questionText || '',
+      imageUrl: question.imageUrl || '',
+      options: Array.isArray(question.options) ? question.options : [],
+      correctOptionIndex:
+        typeof question.correctOptionIndex === 'number' ? question.correctOptionIndex : 0,
+      explanation: question.explanation || '',
+      sourceExamTitle: examTitle || 'اختبار في المنصة',
+      studentChoiceIndex: typeof studentAnswerIndex === 'number' ? studentAnswerIndex : null,
+      isAutoTransferredMistake: true,
+      createdAt: new Date(baseTime + idx).toISOString(),
+    };
+
+    newQuestions.push({ ref, record });
+  });
+
+  return { folderToCreate, newQuestions };
+}
+
+/**
+ * Applies prepared cumulative mistakes to the local cache store immediately.
+ */
+export function applyLocalCumulativeMistakes(
+  userId: string,
+  courseId: string | undefined,
+  prepared: PreparedCumulativeMistakesResult
+): void {
+  if (!userId) return;
+  const effectiveCourseId = courseId || 'course_default_1';
+  if (prepared.folderToCreate) {
+    addLocalFolder(userId, prepared.folderToCreate.folder);
+    persistMistakesFolderId(userId, effectiveCourseId, prepared.folderToCreate.folder.id);
+  }
+  prepared.newQuestions.forEach(({ record }) => addLocalFolderQuestion(userId, record));
 }
 
 /**
  * Transfers multiple mistaken questions from an exam in a SINGLE atomic writeBatch,
- * deduplicating strictly against permanent deletions and existing folder items
- * so retaking an exam triggers zero duplicate Firestore writes or reads.
+ * preserving all previous mistakes cumulatively and deduplicating strictly.
  */
 export async function transferMistakesBatch({
   userId,
@@ -343,80 +502,53 @@ export async function transferMistakesBatch({
   items: Array<{ question: ExamQuestion; studentAnswerIndex?: number }>;
 }): Promise<number> {
   if (!userId || !Array.isArray(items) || items.length === 0) return 0;
-  if (isQuotaExceededActive()) return 0;
-
-  const effectiveCourseId = courseId || 'course_default_1';
 
   try {
-    const folderId = await getOrCreateMistakesFolderId(userId, effectiveCourseId);
-    if (!folderId) return 0;
-
-    const folderSnapshot = await ensureStudentFoldersLoaded(userId);
-
-    type MistakeFolderPayload = Omit<FolderQuestionItem, 'id'> & {
-      studentChoiceIndex?: number | null;
-      isAutoTransferredMistake?: boolean;
-    };
-
-    const seenInBatch = new Set<string>();
-    const pendingDocs: Array<{
-      ref: ReturnType<typeof doc>;
-      payload: MistakeFolderPayload;
-    }> = [];
-
-    const baseTime = Date.now();
-    items.forEach(({ question, studentAnswerIndex }, idx) => {
-      if (!question) return;
-      const sig = getQuestionDedupeSignature(question);
-      if (seenInBatch.has(sig)) return;
-      seenInBatch.add(sig);
-
-      if (isQuestionAlreadyInFolder(folderSnapshot.folderQuestions, folderId, question)) {
-        return;
-      }
-
-      const ref = doc(collection(db, 'folder_questions'));
-      const payload: MistakeFolderPayload = {
-        folderId,
-        courseId: effectiveCourseId,
-        userId,
-        originalQuestionId: question.id || '',
-        questionText: question.questionText || '',
-        imageUrl: question.imageUrl || '',
-        options: Array.isArray(question.options) ? question.options : [],
-        correctOptionIndex:
-          typeof question.correctOptionIndex === 'number' ? question.correctOptionIndex : 0,
-        explanation: question.explanation || '',
-        sourceExamTitle: examTitle || 'اختبار في المنصة',
-        studentChoiceIndex: typeof studentAnswerIndex === 'number' ? studentAnswerIndex : null,
-        isAutoTransferredMistake: true,
-        createdAt: new Date(baseTime + idx).toISOString(),
-      };
-
-      pendingDocs.push({ ref, payload });
+    const effectiveCourseId = courseId || 'course_default_1';
+    const prepared = await prepareCumulativeMistakesWrite({
+      userId,
+      courseId: effectiveCourseId,
+      examTitle,
+      items,
     });
 
-    if (pendingDocs.length === 0) return 0;
+    if (!prepared.folderToCreate && prepared.newQuestions.length === 0) {
+      return 0;
+    }
 
-    const committedRecords: FolderQuestionItem[] = [];
-    for (let i = 0; i < pendingDocs.length; i += 450) {
-      const chunk = pendingDocs.slice(i, i + 450);
+    // Update local cache immediately so cumulative mistakes are always visible offline/quota-limited too
+    if (prepared.folderToCreate) {
+      addLocalFolder(userId, prepared.folderToCreate.folder);
+      persistMistakesFolderId(userId, effectiveCourseId, prepared.folderToCreate.folder.id);
+    }
+    prepared.newQuestions.forEach(({ record }) => addLocalFolderQuestion(userId, record));
+
+    if (isQuotaExceededActive()) {
+      return prepared.newQuestions.length;
+    }
+
+    const ops: Array<{ ref: ReturnType<typeof doc>; data: Record<string, unknown> }> = [];
+    if (prepared.folderToCreate) {
+      const { id: _id, ...folderPayload } = prepared.folderToCreate.folder;
+      ops.push({ ref: prepared.folderToCreate.ref, data: folderPayload });
+    }
+    prepared.newQuestions.forEach(({ ref, record }) => {
+      const { id: _id, ...fqPayload } = record;
+      ops.push({ ref, data: fqPayload });
+    });
+
+    for (let i = 0; i < ops.length; i += 450) {
+      const chunk = ops.slice(i, i + 450);
       const batch = writeBatch(db);
-      chunk.forEach(({ ref, payload }) => {
-        batch.set(ref, payload);
-      });
+      chunk.forEach(({ ref, data }) => batch.set(ref, data));
       await batch.commit();
-      chunk.forEach(({ ref, payload }) => {
-        committedRecords.push({ id: ref.id, ...payload });
-      });
     }
 
-    committedRecords.forEach((record) => addLocalFolderQuestion(userId, record));
-    if (committedRecords.length > 0) {
-      trackLocalWrite(committedRecords.length, 'نقل الأخطاء تلقائياً لمجلد الأخطاء');
+    if (ops.length > 0) {
+      trackLocalWrite(ops.length, 'نقل الأخطاء تلقائياً لمجلد الأخطاء');
     }
 
-    return committedRecords.length;
+    return prepared.newQuestions.length;
   } catch (err) {
     if (isQuotaExceededError(err)) {
       handleFirestoreError(err, OperationType.WRITE, 'folder_questions');
@@ -428,9 +560,8 @@ export async function transferMistakesBatch({
 }
 
 /**
- * Transfers any mistaken question immediately into the student's separate mistakes folder for that course.
- * Uses cached deleted_folder_questions and cached folder_questions so repeated calls
- * trigger ZERO repeated Firestore read queries or duplicate writes!
+ * Transfers a single mistaken question cumulatively into the student's course mistakes folder.
+ * Uses cached folder_questions so repeated calls trigger ZERO repeated Firestore read queries or duplicate writes!
  */
 export async function transferMistakeImmediately({
   userId,

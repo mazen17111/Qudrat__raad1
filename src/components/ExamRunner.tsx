@@ -61,7 +61,8 @@ import {
   subscribeStudentFolders,
 } from '../utils/studentFoldersStore';
 import {
-  transferMistakesBatch,
+  prepareCumulativeMistakesWrite,
+  applyLocalCumulativeMistakes,
   getOrCreateMistakesFolderId,
   markQuestionAsPermanentlyDeleted,
   deleteCorrectQuestionsFromFolderPermanently,
@@ -990,23 +991,11 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
         updatedAvg = Math.round(((prevAvg * prevCount) + percentage) / updatedCount);
       }
 
-      // 2. Write exam result + student stats ONCE in a single atomic batch (skip if quota exceeded)
-      if (!isQuotaExceededActive()) {
-        const batch = writeBatch(db);
-        batch.set(attemptRef, attemptPayload);
-        batch.set(
-          doc(db, 'users', currentUser.id),
-          {
-            totalExamsTaken: updatedCount,
-            averageScore: updatedAvg,
-          },
-          { merge: true }
-        );
-        await batch.commit();
-        trackLocalWrite(2, 'حفظ نتيجة الاختبار وإحصائيات الطالب');
-      }
-
-      // 3. Batch-transfer strictly new mistakes into the course mistakes folder (1 batch, deduplicated)
+      // 2. Prepare cumulative mistakes (preserving all previous errors, zero duplicates)
+      let preparedMistakes: Awaited<ReturnType<typeof prepareCumulativeMistakesWrite>> = {
+        folderToCreate: null,
+        newQuestions: [],
+      };
       if (!isFolderExam) {
         const wrongItems: { question: ExamQuestion; studentAnswerIndex: number }[] = [];
         safeQuestions.forEach((q, idx) => {
@@ -1020,13 +1009,60 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
         });
 
         if (wrongItems.length > 0) {
-          await transferMistakesBatch({
+          preparedMistakes = await prepareCumulativeMistakesWrite({
             userId: currentUser.id,
             courseId: currentCourseId,
             examTitle,
             items: wrongItems,
           });
+          applyLocalCumulativeMistakes(currentUser.id, currentCourseId, preparedMistakes);
         }
+      }
+
+      // 3. Commit exam result + student stats + new cumulative mistakes in ONE single Firestore batch
+      if (!isQuotaExceededActive()) {
+        const batchOps: Array<{
+          ref: ReturnType<typeof doc>;
+          data: Record<string, unknown>;
+          merge?: boolean;
+        }> = [
+          { ref: attemptRef, data: attemptPayload },
+          {
+            ref: doc(db, 'users', currentUser.id),
+            data: {
+              totalExamsTaken: updatedCount,
+              averageScore: updatedAvg,
+            },
+            merge: true,
+          },
+        ];
+
+        if (preparedMistakes.folderToCreate) {
+          const { id: _id, ...folderPayload } = preparedMistakes.folderToCreate.folder;
+          batchOps.push({
+            ref: preparedMistakes.folderToCreate.ref,
+            data: folderPayload,
+          });
+        }
+
+        preparedMistakes.newQuestions.forEach(({ ref, record }) => {
+          const { id: _id, ...fqPayload } = record;
+          batchOps.push({ ref, data: fqPayload });
+        });
+
+        for (let i = 0; i < batchOps.length; i += 450) {
+          const chunk = batchOps.slice(i, i + 450);
+          const batch = writeBatch(db);
+          chunk.forEach(({ ref, data, merge }) => {
+            if (merge) {
+              batch.set(ref, data, { merge: true });
+            } else {
+              batch.set(ref, data);
+            }
+          });
+          await batch.commit();
+        }
+        trackLocalWrite(batchOps.length, 'حفظ نتيجة الاختبار وتجميع الأخطاء');
       }
 
       onFinishExam();
@@ -1129,9 +1165,12 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
   const findFolderQuestionMatch = (question?: ExamQuestion | null, folderId?: string) => {
     if (!question || !folderId || !Array.isArray(userFolderQuestions)) return undefined;
     try {
-      return userFolderQuestions.find(
-        (fq) => fq && fq.folderId === folderId && ((question.id && fq.originalQuestionId === question.id) || (question.questionText && fq.questionText === question.questionText))
-      );
+      const qText = (question.questionText || '').trim();
+      return userFolderQuestions.find((fq) => {
+        if (!fq || fq.folderId !== folderId) return false;
+        if (qText) return (fq.questionText || '').trim() === qText;
+        return Boolean(question.id && fq.originalQuestionId === question.id);
+      });
     } catch (e) {
       return undefined;
     }
@@ -1141,12 +1180,17 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
   const getCustomFoldersForQuestion = (question?: ExamQuestion | null) => {
     if (!question || !Array.isArray(userFolders) || !Array.isArray(userFolderQuestions)) return [];
     try {
-      const mistakeFolder = userFolders.find((f) => f && (f.isDefaultMistakesFolder || f.title === 'مجلد الاخطاء'));
+      const qText = (question.questionText || '').trim();
+      const mistakeFolder = userFolders.find(
+        (f) => f && (f.isDefaultMistakesFolder || f.title === 'مجلد الاخطاء' || f.title === 'مجلد الأخطاء')
+      );
       return userFolders.filter((f) => {
         if (!f || f.id === mistakeFolder?.id) return false;
-        return userFolderQuestions.some(
-          (fq) => fq && fq.folderId === f.id && ((question.id && fq.originalQuestionId === question.id) || (question.questionText && fq.questionText === question.questionText))
-        );
+        return userFolderQuestions.some((fq) => {
+          if (!fq || fq.folderId !== f.id) return false;
+          if (qText) return (fq.questionText || '').trim() === qText;
+          return Boolean(question.id && fq.originalQuestionId === question.id);
+        });
       });
     } catch (e) {
       return [];
