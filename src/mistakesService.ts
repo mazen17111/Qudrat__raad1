@@ -1,14 +1,18 @@
-import { collection, query, where, getDocs, addDoc, deleteDoc, doc } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from './firebase';
+import { collection, query, where, getDocs, addDoc, deleteDoc, doc, writeBatch } from 'firebase/firestore';
+import {
+  db,
+  handleFirestoreError,
+  isQuotaExceededActive,
+  isQuotaExceededError,
+  isTransientFirestoreError,
+  OperationType,
+} from './firebase';
 import { ExamQuestion, FolderItem, FolderQuestionItem } from './types';
 import {
-  addLocalDeletedSignature,
   addLocalFolder,
   addLocalFolderQuestion,
-  ensureDeletedQuestionsLoaded,
   ensureStudentFoldersLoaded,
   getStudentFoldersSnapshot,
-  LocalDeletedSignature,
   removeLocalFolderQuestions,
 } from './utils/studentFoldersStore';
 import { trackLocalRead, trackLocalWrite, trackLocalDelete } from './utils/localUsageTracker';
@@ -110,18 +114,10 @@ export async function getOrCreateMistakesFolderId(userId: string, courseId?: str
 }
 
 /**
- * Marks a question as permanently deleted by the student from a folder.
- * Uses a single Firestore document (storing alternateOriginalQuestionId when present) to halve writes.
+ * Legacy helper retained for API compatibility: deleted questions stay removed
+ * from the folder and are NOT restored unless the student makes a new mistake on them.
  */
-export async function markQuestionAsPermanentlyDeleted({
-  userId,
-  courseId,
-  folderId,
-  originalQuestionId,
-  alternateOriginalQuestionId,
-  questionText,
-  imageUrl,
-}: {
+export async function markQuestionAsPermanentlyDeleted(_params: {
   userId: string;
   courseId?: string;
   folderId?: string;
@@ -130,44 +126,13 @@ export async function markQuestionAsPermanentlyDeleted({
   questionText?: string;
   imageUrl?: string;
 }): Promise<void> {
-  if (!userId) return;
-  const effectiveCourseId = courseId || 'course_default_1';
-  const normalizedEntry: LocalDeletedSignature = {
-    courseId: effectiveCourseId,
-    folderId: folderId || '',
-    originalQuestionId: (originalQuestionId || '').trim(),
-    ...(alternateOriginalQuestionId?.trim()
-      ? { alternateOriginalQuestionId: alternateOriginalQuestionId.trim() }
-      : {}),
-    questionText: (questionText || '').trim(),
-    imageUrl: (imageUrl || '').trim(),
-  };
-
-  addLocalDeletedSignature(userId, normalizedEntry);
-
-  try {
-    await addDoc(collection(db, 'deleted_folder_questions'), {
-      userId,
-      courseId: effectiveCourseId,
-      folderId: normalizedEntry.folderId,
-      originalQuestionId: normalizedEntry.originalQuestionId,
-      ...(normalizedEntry.alternateOriginalQuestionId
-        ? { alternateOriginalQuestionId: normalizedEntry.alternateOriginalQuestionId }
-        : {}),
-      questionText: normalizedEntry.questionText,
-      imageUrl: normalizedEntry.imageUrl,
-      deletedAt: new Date().toISOString(),
-    });
-    trackLocalWrite(1, 'توثيق حذف سؤال نهائياً');
-  } catch (err) {
-    handleFirestoreError(err, OperationType.CREATE, 'deleted_folder_questions');
-    console.warn('Note saving deletion audit record:', err);
-  }
+  // No blocklist write needed: questions stay deleted from `folder_questions`
+  // until/unless the student answers them incorrectly again in a future attempt.
 }
 
 /**
- * Permanently deletes ONLY the correctly answered questions from a specific folder
- * and records them in `deleted_folder_questions` so they NEVER come back.
+ * Deletes ONLY the correctly answered questions from a specific folder so they stay removed
+ * unless the student later answers them incorrectly again.
  */
 export async function deleteCorrectQuestionsFromFolderPermanently({
   userId,
@@ -333,53 +298,139 @@ export async function deleteCorrectQuestionsFromFolderPermanently({
   }
 }
 
-/**
- * Checks whether a question was permanently deleted by the student from a specific folder (or mistakes folder).
- */
-function isQuestionInDeletedList(
-  deletedDocs: Array<LocalDeletedSignature | Record<string, unknown>>,
-  {
-    effectiveCourseId,
-    folderId,
-    question,
-  }: {
-    effectiveCourseId: string;
-    folderId: string;
-    question: ExamQuestion;
-  }
+function getQuestionDedupeSignature(question: ExamQuestion): string {
+  const qId = (question.id || '').trim();
+  const qText = (question.questionText || '').trim();
+  const qImg = (question.imageUrl || '').trim();
+  if (qId) return `id::${qId}`;
+  return `txt::${qText}|||${qImg}`;
+}
+
+function isQuestionAlreadyInFolder(
+  folderQuestions: FolderQuestionItem[],
+  folderId: string,
+  question: ExamQuestion
 ): boolean {
   const qId = (question.id || '').trim();
   const qText = (question.questionText || '').trim();
   const qImg = (question.imageUrl || '').trim();
 
-  return deletedDocs.some((d) => {
-    const dCourse = String((d as any).courseId || 'course_default_1');
-    if (dCourse !== effectiveCourseId) return false;
+  return folderQuestions.some((data) => {
+    if (data.folderId !== folderId) return false;
+    const dOrigId = String(data.originalQuestionId || '').trim();
+    if (qId && dOrigId && qId === dOrigId) return true;
 
-    const dFolder = String((d as any).folderId || '');
-    if (dFolder && dFolder !== folderId) return false;
-
-    const dOrigId = String((d as any).originalQuestionId || '').trim();
-    const dAltOrigId = String((d as any).alternateOriginalQuestionId || '').trim();
-    const dText = String((d as any).questionText || '').trim();
-    const dImg = String((d as any).imageUrl || '').trim();
-
-    if (qId && ((dOrigId && qId === dOrigId) || (dAltOrigId && qId === dAltOrigId))) {
-      return true;
-    }
-
-    if (qText && dText && qText === dText) {
-      return !dImg || !qImg || dImg === qImg;
-    }
-
-    return false;
+    const dText = String(data.questionText || '').trim();
+    const dImg = String(data.imageUrl || '').trim();
+    return Boolean(qText && dText && qText === dText && dImg === qImg);
   });
 }
 
 /**
+ * Transfers multiple mistaken questions from an exam in a SINGLE atomic writeBatch,
+ * deduplicating strictly against permanent deletions and existing folder items
+ * so retaking an exam triggers zero duplicate Firestore writes or reads.
+ */
+export async function transferMistakesBatch({
+  userId,
+  courseId,
+  examTitle,
+  items,
+}: {
+  userId: string;
+  courseId?: string;
+  examTitle?: string;
+  items: Array<{ question: ExamQuestion; studentAnswerIndex?: number }>;
+}): Promise<number> {
+  if (!userId || !Array.isArray(items) || items.length === 0) return 0;
+  if (isQuotaExceededActive()) return 0;
+
+  const effectiveCourseId = courseId || 'course_default_1';
+
+  try {
+    const folderId = await getOrCreateMistakesFolderId(userId, effectiveCourseId);
+    if (!folderId) return 0;
+
+    const folderSnapshot = await ensureStudentFoldersLoaded(userId);
+
+    type MistakeFolderPayload = Omit<FolderQuestionItem, 'id'> & {
+      studentChoiceIndex?: number | null;
+      isAutoTransferredMistake?: boolean;
+    };
+
+    const seenInBatch = new Set<string>();
+    const pendingDocs: Array<{
+      ref: ReturnType<typeof doc>;
+      payload: MistakeFolderPayload;
+    }> = [];
+
+    const baseTime = Date.now();
+    items.forEach(({ question, studentAnswerIndex }, idx) => {
+      if (!question) return;
+      const sig = getQuestionDedupeSignature(question);
+      if (seenInBatch.has(sig)) return;
+      seenInBatch.add(sig);
+
+      if (isQuestionAlreadyInFolder(folderSnapshot.folderQuestions, folderId, question)) {
+        return;
+      }
+
+      const ref = doc(collection(db, 'folder_questions'));
+      const payload: MistakeFolderPayload = {
+        folderId,
+        courseId: effectiveCourseId,
+        userId,
+        originalQuestionId: question.id || '',
+        questionText: question.questionText || '',
+        imageUrl: question.imageUrl || '',
+        options: Array.isArray(question.options) ? question.options : [],
+        correctOptionIndex:
+          typeof question.correctOptionIndex === 'number' ? question.correctOptionIndex : 0,
+        explanation: question.explanation || '',
+        sourceExamTitle: examTitle || 'اختبار في المنصة',
+        studentChoiceIndex: typeof studentAnswerIndex === 'number' ? studentAnswerIndex : null,
+        isAutoTransferredMistake: true,
+        createdAt: new Date(baseTime + idx).toISOString(),
+      };
+
+      pendingDocs.push({ ref, payload });
+    });
+
+    if (pendingDocs.length === 0) return 0;
+
+    const committedRecords: FolderQuestionItem[] = [];
+    for (let i = 0; i < pendingDocs.length; i += 450) {
+      const chunk = pendingDocs.slice(i, i + 450);
+      const batch = writeBatch(db);
+      chunk.forEach(({ ref, payload }) => {
+        batch.set(ref, payload);
+      });
+      await batch.commit();
+      chunk.forEach(({ ref, payload }) => {
+        committedRecords.push({ id: ref.id, ...payload });
+      });
+    }
+
+    committedRecords.forEach((record) => addLocalFolderQuestion(userId, record));
+    if (committedRecords.length > 0) {
+      trackLocalWrite(committedRecords.length, 'نقل الأخطاء تلقائياً لمجلد الأخطاء');
+    }
+
+    return committedRecords.length;
+  } catch (err) {
+    if (isQuotaExceededError(err)) {
+      handleFirestoreError(err, OperationType.WRITE, 'folder_questions');
+    } else if (!isTransientFirestoreError(err)) {
+      console.warn('Note saving batch mistakes to folder_questions:', err);
+    }
+    return 0;
+  }
+}
+
+/**
  * Transfers any mistaken question immediately into the student's separate mistakes folder for that course.
- * Uses cached deleted_folder_questions and cached folder_questions so getting multiple mistakes in an exam
- * triggers ZERO repeated Firestore read queries!
+ * Uses cached deleted_folder_questions and cached folder_questions so repeated calls
+ * trigger ZERO repeated Firestore read queries or duplicate writes!
  */
 export async function transferMistakeImmediately({
   userId,
@@ -394,39 +445,18 @@ export async function transferMistakeImmediately({
   question: ExamQuestion;
   studentAnswerIndex?: number;
 }): Promise<boolean> {
-  if (!userId || !question) return false;
+  if (!userId || !question || isQuotaExceededActive()) return false;
   const effectiveCourseId = courseId || 'course_default_1';
 
   try {
     const folderId = await getOrCreateMistakesFolderId(userId, effectiveCourseId);
     if (!folderId) {
-      console.warn('Could not obtain mistakes folderId for user', userId, effectiveCourseId);
       return false;
     }
 
-    // 1. Check local + cached Firestore permanent deletion blocklist (at most 1 read query per session!)
-    const localDeleted = getStudentFoldersSnapshot(userId).deletedSignatures;
-    if (isQuestionInDeletedList(localDeleted, { effectiveCourseId, folderId, question })) {
-      return false;
-    }
-
-    const remoteDeleted = await ensureDeletedQuestionsLoaded(userId);
-    if (isQuestionInDeletedList(remoteDeleted, { effectiveCourseId, folderId, question })) {
-      return false;
-    }
-
-    // 2. Guard against instant double-submission within 3 seconds using cached folderQuestions
+    // Guard against duplicates currently inside the folder using cached folderQuestions
     const { folderQuestions } = await ensureStudentFoldersLoaded(userId);
-    const isDuplicateWithinSeconds = folderQuestions.some((data) => {
-      if (data.folderId !== folderId) return false;
-      const sameExam = (data.sourceExamTitle || '') === (examTitle || '');
-      const sameImg = (data.imageUrl || '') === (question.imageUrl || '');
-      const sameText = (data.questionText || '').trim() === (question.questionText || '').trim();
-      const isVeryRecent = data.createdAt && Date.now() - new Date(data.createdAt).getTime() < 3000;
-      return sameExam && sameImg && sameText && isVeryRecent;
-    });
-
-    if (isDuplicateWithinSeconds) {
+    if (isQuestionAlreadyInFolder(folderQuestions, folderId, question)) {
       return false;
     }
 
@@ -456,7 +486,11 @@ export async function transferMistakeImmediately({
 
     return true;
   } catch (err) {
-    console.error('Error transferring mistake immediately to folder_questions:', err);
+    if (isQuotaExceededError(err)) {
+      handleFirestoreError(err, OperationType.WRITE, 'folder_questions');
+    } else if (!isTransientFirestoreError(err)) {
+      console.warn('Error transferring mistake immediately to folder_questions:', err);
+    }
     return false;
   }
 }

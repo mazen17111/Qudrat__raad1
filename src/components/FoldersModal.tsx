@@ -330,7 +330,7 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
       removeLocalFolderQuestionsByFolder(currentUser.id, selectedFolder.id);
       setFolderQuestions([]);
       setShowDeleteAllQuestionsModal(false);
-      setFolderNotice(`تم حذف جميع الأسئلة من مجلد "${selectedFolder.title}" نهائياً ولن تعود أبداً ✓`);
+      setFolderNotice(`تم حذف جميع الأسئلة من مجلد "${selectedFolder.title}" ولن تعود طالما لم تخطئ فيها مجدداً ✓`);
       setTimeout(() => setFolderNotice(null), 4000);
     } catch (err) {
       console.error('Error deleting all questions in folder:', err);
@@ -543,7 +543,7 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
                       onClick={() => setShowDeleteAllQuestionsModal(true)}
                       disabled={folderQuestions.length === 0 || isClearingQuestions}
                       className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/30 text-xs font-black transition disabled:opacity-40 disabled:pointer-events-none cursor-pointer"
-                      title="حذف جميع الأسئلة كاملة في هذا المجلد نهائياً ولن تعود أبداً"
+                      title="حذف جميع الأسئلة في هذا المجلد (لن تعود طالما لم تخطئ فيها مجدداً)"
                     >
                       <Trash2 className="w-3.5 h-3.5 text-rose-500" />
                       <span>حذف الأسئلة كاملة</span>
@@ -655,7 +655,7 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
                           <button
                             onClick={() => handleDeleteQuestion(q)}
                             className="p-2 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition"
-                            title="حذف السؤال من هذا المجلد نهائياً"
+                            title="حذف السؤال من هذا المجلد (لن يعود طالما لم تخطئ فيه مجدداً)"
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
@@ -745,7 +745,7 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
             <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-200 text-xs leading-relaxed font-bold">
               هل أنت متأكد من رغبتك في حذف جميع الأسئلة ({folderQuestions.length} سؤال) من مجلد "{selectedFolder.title}" نهائياً؟
               <br />
-              <span className="text-rose-400 font-black">تنبيه حاسم:</span> سيتم حذف الأسئلة بالكامل ولن تعود أبداً.
+              <span className="text-rose-400 font-black">ملاحظة:</span> سيتم حذف الأسئلة بالكامل من المجلد، ولن تعود مجدداً طالما لم تخطئ فيها مرة أخرى.
             </div>
 
             <div className="flex items-center justify-end gap-3 pt-2">

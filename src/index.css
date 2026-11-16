@@ -87,6 +87,18 @@ html.light .light-text-black {
   color: #000000 !important;
 }
 
+/* Preserve crisp white typography inside solid-colored result cards and badges in light mode */
+html.light [data-preserve-colors="true"],
+html.light [data-preserve-colors="true"] h1,
+html.light [data-preserve-colors="true"] h2,
+html.light [data-preserve-colors="true"] h3,
+html.light [data-preserve-colors="true"] h4,
+html.light [data-preserve-colors="true"] p,
+html.light [data-preserve-colors="true"] span,
+html.light [data-preserve-colors="true"] svg {
+  color: #ffffff !important;
+}
+
 /* Ensure inputs and textareas in light mode have pure black text */
 html.light input,
 html.light textarea,

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Clock,
   CheckCircle2,
@@ -35,21 +35,23 @@ import {
   Hourglass,
   ShieldAlert,
   ShieldCheck,
+  ListChecks,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { StudentUser, ExamAttempt, ExamQuestion, FolderItem, ExamSystemType } from '../types';
+import { StudentUser, ExamQuestion, FolderItem, ExamSystemType } from '../types';
 import { Whiteboard } from './Whiteboard';
 import { NimrExamSystem } from './systems/NimrExamSystem';
 import { DefaultExamSystem } from './systems/DefaultExamSystem';
 import { BlueExamSystem } from './systems/BlueExamSystem';
-import { db, OperationType, reportFirestoreListenerError } from '../firebase';
 import {
-  saveLocalExamAttempt,
-  replaceLocalAttemptId,
-  hasSyncedExamAttemptsRecently,
-  markExamAttemptsSynced,
-  mergeRemoteExamAttempts,
-} from '../utils/examAttemptsCache';
+  db,
+  isQuotaExceededActive,
+  isQuotaExceededError,
+  isTransientFirestoreError,
+  OperationType,
+  reportFirestoreListenerError,
+} from '../firebase';
+import { saveLocalExamAttempt } from '../utils/examAttemptsCache';
 import {
   addLocalFolder,
   addLocalFolderQuestion,
@@ -59,7 +61,7 @@ import {
   subscribeStudentFolders,
 } from '../utils/studentFoldersStore';
 import {
-  transferMistakeImmediately,
+  transferMistakesBatch,
   getOrCreateMistakesFolderId,
   markQuestionAsPermanentlyDeleted,
   deleteCorrectQuestionsFromFolderPermanently,
@@ -68,11 +70,11 @@ import {
   collection,
   addDoc,
   deleteDoc,
-  updateDoc,
   doc,
   getDocs,
   query,
   where,
+  writeBatch,
 } from 'firebase/firestore';
 import { trackLocalRead, trackLocalWrite, trackLocalDelete } from '../utils/localUsageTracker';
 
@@ -185,6 +187,64 @@ export const getStudentLevelData = (percentage: number): StudentLevelData => {
       quote: 'فرصة للتعلم والتطوير! تم حفظ جميع أخطائك في مجلد الأخطاء لتتدرب عليها وتعاود المحاولة بقوة 🚀',
     };
   }
+};
+
+export interface ExamResultVisualTheme {
+  rightGradient: string;
+  ringColor: string;
+  headline: string;
+  levelLabel: string;
+}
+
+export const getExamResultTheme = (percentage: number, isDarkMode: boolean): ExamResultVisualTheme => {
+  if (percentage >= 90) {
+    return {
+      rightGradient: isDarkMode
+        ? 'linear-gradient(135deg, #064E3B 0%, #047857 52%, #0D9488 100%)'
+        : 'linear-gradient(135deg, #059669 0%, #0D9488 55%, #10B981 100%)',
+      ringColor: '#34D399',
+      headline: 'أداء استثنائي يقرّبك من الدرجة الكاملة',
+      levelLabel: 'ممتاز',
+    };
+  }
+  if (percentage >= 80) {
+    return {
+      rightGradient: isDarkMode
+        ? 'linear-gradient(135deg, #172554 0%, #1E40AF 52%, #0284C7 100%)'
+        : 'linear-gradient(135deg, #1D4ED8 0%, #0284C7 55%, #0EA5E9 100%)',
+      ringColor: '#38BDF8',
+      headline: 'مستوى رائع ومتميز، خطوة بسيطة عن القمة',
+      levelLabel: 'جيد جداً',
+    };
+  }
+  if (percentage >= 70) {
+    return {
+      rightGradient: isDarkMode
+        ? 'linear-gradient(135deg, #1B385C 0%, #155376 52%, #0B7C7E 100%)'
+        : 'linear-gradient(135deg, #1E4D7B 0%, #176A8F 55%, #0D9488 100%)',
+      ringColor: '#22C58B',
+      headline: 'كل محاولة تقرّبك من هدفك',
+      levelLabel: 'جيد',
+    };
+  }
+  if (percentage >= 50) {
+    return {
+      rightGradient: isDarkMode
+        ? 'linear-gradient(135deg, #5C280A 0%, #9A3412 52%, #C2410C 100%)'
+        : 'linear-gradient(135deg, #D97706 0%, #EA580C 55%, #F59E0B 100%)',
+      ringColor: '#FBBF24',
+      headline: 'تقدّم جيد، واصل التدريب لرفع نتيجتك',
+      levelLabel: 'مقبول',
+    };
+  }
+  return {
+    rightGradient: isDarkMode
+      ? 'linear-gradient(135deg, #4C0519 0%, #881337 52%, #BE123C 100%)'
+      : 'linear-gradient(135deg, #DC2626 0%, #E11D48 55%, #F43F5E 100%)',
+    ringColor: '#FB7185',
+    headline: 'بداية الطريق للتطور — راجع أخطاءك الآن',
+    levelLabel: 'يحتاج للمراجعة',
+  };
 };
 
 export const formatDigitalTime = (secs: number) => {
@@ -508,6 +568,12 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
   const [timeSpentSeconds, setTimeSpentSeconds] = useState<number>(0);
   const [isTimed] = useState(isTimedInitial);
   const [showMobileQuestionsList, setShowMobileQuestionsList] = useState(false);
+
+  const finishSubmittedRef = useRef<boolean>(false);
+  const selectedAnswersRef = useRef<Record<number, number>>(selectedAnswers);
+  useEffect(() => {
+    selectedAnswersRef.current = selectedAnswers;
+  }, [selectedAnswers]);
 
   // Exam system mode: 'nimr' | 'standard' | 'blue'
   const [systemMode, setSystemMode] = useState<ExamSystemType>(examSystem || 'nimr');
@@ -851,125 +917,125 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
   };
 
   const finishTest = async () => {
-    setIsFinished(true);
-    const elapsed = Math.max(1, Math.round((Date.now() - examStartTime) / 1000));
-    setTimeSpentSeconds(elapsed);
-    const score = calculateScore();
+    // Prevent double-submission from rapid clicks or timer/click overlap
+    if (finishSubmittedRef.current) return;
+    finishSubmittedRef.current = true;
+
+    // 1. Compute score & display result 100% locally in the browser with ZERO Firestore reads
+    const answersSnapshot = selectedAnswersRef.current;
+    let score = 0;
+    safeQuestions.forEach((q, idx) => {
+      if (answersSnapshot[idx] === q.correctOptionIndex) {
+        score++;
+      }
+    });
     const total = Math.max(1, safeQuestions.length);
     const percentage = Math.round((score / total) * 100);
+    const elapsed = Math.max(1, Math.round((Date.now() - examStartTime) / 1000));
 
-    // Transfer ONLY and strictly the questions the student got wrong in this exam:
-    // If the student made 3 errors in Test 1, exactly and only those 3 questions transfer.
-    // If they made 10 errors in Test 2, exactly and only those 10 transfer.
-    // Correctly answered questions are NEVER transferred!
-    if (!isFolderExam && currentUser?.id) {
-      const wrongItems: { question: ExamQuestion; studentAnswerIndex: number }[] = [];
-      safeQuestions.forEach((q, idx) => {
-        const studentAns = selectedAnswers[idx];
-        if (studentAns === undefined || studentAns !== q.correctOptionIndex) {
-          wrongItems.push({
-            question: q,
-            studentAnswerIndex: typeof studentAns === 'number' ? studentAns : -1,
-          });
-        }
-      });
-
-      const wrongQuestionsPromises = wrongItems.map((item) =>
-        transferMistakeImmediately({
-          userId: currentUser.id,
-          courseId: currentCourseId,
-          examTitle,
-          question: item.question,
-          studentAnswerIndex: item.studentAnswerIndex,
-        })
-      );
-
-      try {
-        await Promise.allSettled(wrongQuestionsPromises);
-      } catch (transferErr) {
-        console.error('Error transferring mistakes in finishTest:', transferErr);
-      }
-    }
+    setTimeSpentSeconds(elapsed);
+    setIsFinished(true);
 
     if (percentage >= (targetPercentage || 80)) {
       confetti({
         particleCount: 120,
         spread: 90,
-        origin: { y: 0.6 }
+        origin: { y: 0.6 },
       });
     }
 
+    if (!currentUser?.id) {
+      onFinishExam();
+      return;
+    }
+
     try {
-      if (currentUser?.id) {
-        const nowIso = new Date().toISOString();
-        const tempAttemptId = `local_att_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-        const attemptPayload = {
-          userId: currentUser.id,
-          studentName: currentUser.name || 'طالب',
-          studentNationalId: nationalId,
-          examId: examId,
-          examTitle: examTitle,
-          examSystem: systemMode,
-          score,
-          totalQuestions: total,
-          percentage,
-          isTimed,
-          durationSeconds: elapsed,
-          targetPercentage: targetPercentage || 90,
-          createdAt: nowIso,
-        };
+      const attemptRef = doc(collection(db, 'exam_attempts'));
+      const nowIso = new Date().toISOString();
+      const attemptPayload = {
+        userId: currentUser.id,
+        studentName: currentUser.name || 'طالب',
+        studentNationalId: nationalId,
+        examId: examId,
+        examTitle: examTitle,
+        examSystem: systemMode,
+        score,
+        totalQuestions: total,
+        percentage,
+        isTimed,
+        durationSeconds: elapsed,
+        targetPercentage: targetPercentage || 90,
+        createdAt: nowIso,
+      };
 
-        // Save immediately to local cache so it always appears in "قائمة الاختبارات المحلولة" immediately
-        const cachedList = saveLocalExamAttempt(currentUser.id, {
-          id: tempAttemptId,
-          ...attemptPayload,
-        });
+      // Save immediately to local cache so StatsModal displays the attempt instantly without extra reads
+      const cachedList = saveLocalExamAttempt(currentUser.id, {
+        id: attemptRef.id,
+        ...attemptPayload,
+      });
 
-        const addedAttemptRef = await addDoc(collection(db, 'exam_attempts'), attemptPayload);
-        trackLocalWrite(1, 'حفظ نتيجة اختبار');
-        replaceLocalAttemptId(currentUser.id, tempAttemptId, addedAttemptRef.id);
+      // Calculate updated user totals 100% locally (eliminates historical exam_attempts getDocs read)
+      const prevCount = Math.max(0, Number(currentUser.totalExamsTaken) || 0);
+      const prevAvg = Math.max(0, Number(currentUser.averageScore) || 0);
+      let updatedCount: number;
+      let updatedAvg: number;
 
-        let updatedCount = cachedList.length;
-        let updatedAvg =
-          cachedList.length > 0
-            ? Math.round(cachedList.reduce((sum, a) => sum + (a.percentage || 0), 0) / cachedList.length)
-            : percentage;
+      if (cachedList.length >= prevCount + 1) {
+        updatedCount = cachedList.length;
+        updatedAvg = Math.round(
+          cachedList.reduce((sum, a) => sum + (a.percentage || 0), 0) / cachedList.length
+        );
+      } else {
+        updatedCount = prevCount + 1;
+        updatedAvg = Math.round(((prevAvg * prevCount) + percentage) / updatedCount);
+      }
 
-        // Only query historical exam_attempts once if cache wasn't already synced recently
-        if (!hasSyncedExamAttemptsRecently(currentUser.id)) {
-          try {
-            const attemptsQuery = query(
-              collection(db, 'exam_attempts'),
-              where('userId', '==', currentUser.id)
-            );
-            const attemptsSnap = await getDocs(attemptsQuery);
-            trackLocalRead(Math.max(1, attemptsSnap.size), 'مزامنة سجل الاختبارات');
-            const remoteAttempts: ExamAttempt[] = [];
-            attemptsSnap.forEach((docSnap) => {
-              remoteAttempts.push({ id: docSnap.id, ...docSnap.data() } as ExamAttempt);
+      // 2. Write exam result + student stats ONCE in a single atomic batch (skip if quota exceeded)
+      if (!isQuotaExceededActive()) {
+        const batch = writeBatch(db);
+        batch.set(attemptRef, attemptPayload);
+        batch.set(
+          doc(db, 'users', currentUser.id),
+          {
+            totalExamsTaken: updatedCount,
+            averageScore: updatedAvg,
+          },
+          { merge: true }
+        );
+        await batch.commit();
+        trackLocalWrite(2, 'حفظ نتيجة الاختبار وإحصائيات الطالب');
+      }
+
+      // 3. Batch-transfer strictly new mistakes into the course mistakes folder (1 batch, deduplicated)
+      if (!isFolderExam) {
+        const wrongItems: { question: ExamQuestion; studentAnswerIndex: number }[] = [];
+        safeQuestions.forEach((q, idx) => {
+          const studentAns = answersSnapshot[idx];
+          if (studentAns === undefined || studentAns !== q.correctOptionIndex) {
+            wrongItems.push({
+              question: q,
+              studentAnswerIndex: typeof studentAns === 'number' ? studentAns : -1,
             });
-            const mergedAttempts = mergeRemoteExamAttempts(currentUser.id, remoteAttempts);
-            markExamAttemptsSynced(currentUser.id);
-            if (mergedAttempts.length > 0) {
-              const totalPerc = mergedAttempts.reduce((sum, a) => sum + (a.percentage || 0), 0);
-              updatedCount = mergedAttempts.length;
-              updatedAvg = Math.round(totalPerc / mergedAttempts.length);
-            }
-          } catch {}
-        }
-
-        const userRef = doc(db, 'users', currentUser.id);
-        await updateDoc(userRef, {
-          totalExamsTaken: updatedCount,
-          averageScore: updatedAvg,
+          }
         });
-        trackLocalWrite(1, 'تحديث إحصائيات الطالب');
+
+        if (wrongItems.length > 0) {
+          await transferMistakesBatch({
+            userId: currentUser.id,
+            courseId: currentCourseId,
+            examTitle,
+            items: wrongItems,
+          });
+        }
       }
 
       onFinishExam();
     } catch (err) {
-      reportFirestoreListenerError(err, OperationType.WRITE, 'exam_attempts');
-      console.error('Error saving exam attempt:', err);
+      if (isQuotaExceededError(err)) {
+        reportFirestoreListenerError(err, OperationType.WRITE, 'exam_attempts');
+      } else if (!isTransientFirestoreError(err)) {
+        console.warn('Note saving exam attempt:', err);
+      }
       onFinishExam();
     }
   };
@@ -1117,278 +1183,273 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
     const score = calculateScore();
     const total = Math.max(1, safeQuestions.length);
     const percentage = Math.round((score / total) * 100);
-    const passedTarget = percentage >= (targetPercentage || 90);
+    const unansweredCount = safeQuestions.reduce(
+      (acc, _q, idx) => (selectedAnswers[idx] === undefined ? acc + 1 : acc),
+      0
+    );
+    const wrongAnsweredCount = Math.max(0, safeQuestions.length - score - unansweredCount);
+    const answeredCount = Math.max(0, safeQuestions.length - unansweredCount);
     const wrongCount = safeQuestions.length - score;
-    const finalDuration = timeSpentSeconds > 0 ? timeSpentSeconds : Math.max(1, Math.round((Date.now() - examStartTime) / 1000));
-    const levelData = getStudentLevelData(percentage);
+    const finalDuration =
+      timeSpentSeconds > 0
+        ? timeSpentSeconds
+        : Math.max(1, Math.round((Date.now() - examStartTime) / 1000));
+    const resultTheme = getExamResultTheme(percentage, isDarkMode);
+
+    // SVG circular progress gauge math
+    const gaugeRadius = 52;
+    const gaugeCircumference = 2 * Math.PI * gaugeRadius;
+    const clampedPct = Math.max(0, Math.min(100, percentage));
+    const gaugeDashOffset = gaugeCircumference - (clampedPct / 100) * gaugeCircumference;
 
     return (
-      <div className={`p-4 md:p-8 max-w-5xl mx-auto space-y-6 ${isDarkMode ? 'text-white' : 'text-black'}`}>
-        <div className={`border rounded-3xl p-6 md:p-8 shadow-2xl backdrop-blur-xl ${
-          isDarkMode ? 'bg-slate-900/90 border-slate-800' : 'bg-white border-slate-200'
-        }`}>
-          {/* Header Title & Target Feedback */}
-          <div className="text-center pb-6 border-b border-slate-200 dark:border-slate-800/80 mb-6 space-y-2">
-            <h2 className={`text-2xl md:text-3xl font-black ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
-              نتيجة الاختبار: {examTitle}
-            </h2>
-            <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border text-xs md:text-sm font-bold mx-auto">
-              {passedTarget ? (
-                <span className="text-emerald-500 flex items-center gap-1.5 font-black">
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>تهانينا! حققت نسبة الامتياز والهدف المحدد (%{targetPercentage || 90} فأعلى) ⚡🎉</span>
+      <div
+        dir="rtl"
+        className={`p-4 md:p-8 max-w-6xl mx-auto space-y-6 ${
+          isDarkMode ? 'text-white' : 'text-slate-900'
+        }`}
+      >
+        {/* ================= MAIN 2-PANEL RESULT SUMMARY CARD ================= */}
+        <div
+          className={`rounded-3xl overflow-hidden border shadow-2xl grid grid-cols-1 lg:grid-cols-12 items-stretch ${
+            isDarkMode
+              ? 'bg-[#16191D] border-white/10 shadow-black/50'
+              : 'bg-white border-slate-200 shadow-slate-200/80'
+          }`}
+        >
+          {/* RIGHT PANEL (على اليمين في RTL): الدرجة المئوية واللون المتغير حسب النتيجة */}
+          <div
+            className="lg:col-span-6 p-6 sm:p-8 flex flex-col sm:flex-row items-center justify-between gap-6 relative overflow-hidden"
+            style={{ backgroundImage: resultTheme.rightGradient }}
+          >
+            {/* Circular Progress Gauge (Far right in RTL) */}
+            <div
+              className={`w-36 h-36 sm:w-40 sm:h-40 rounded-full shrink-0 flex items-center justify-center relative shadow-xl ${
+                isDarkMode ? 'bg-[#22252A]' : 'bg-white'
+              }`}
+            >
+              <svg
+                className="w-full h-full -rotate-90 p-2"
+                viewBox="0 0 128 128"
+                aria-label={`النتيجة ${percentage} بالمئة`}
+              >
+                <circle
+                  cx="64"
+                  cy="64"
+                  r={gaugeRadius}
+                  fill="none"
+                  stroke={isDarkMode ? '#353941' : '#E2E8F0'}
+                  strokeWidth="10"
+                />
+                <circle
+                  cx="64"
+                  cy="64"
+                  r={gaugeRadius}
+                  fill="none"
+                  stroke={resultTheme.ringColor}
+                  strokeWidth="10"
+                  strokeLinecap="round"
+                  strokeDasharray={gaugeCircumference}
+                  strokeDashoffset={gaugeDashOffset}
+                  className="transition-all duration-700"
+                />
+              </svg>
+              <div
+                className="absolute inset-0 flex items-center justify-center gap-0.5 tabular-nums"
+                dir="ltr"
+              >
+                <span
+                  className={`badge-colored text-3xl sm:text-4xl font-black tracking-tight ${
+                    isDarkMode ? 'text-white' : 'text-slate-900'
+                  }`}
+                >
+                  {percentage}
                 </span>
-              ) : (
-                <span className="text-amber-600 flex items-center gap-1.5 font-black">
-                  <Target className="w-4 h-4" />
-                  <span>الحد المستهدف للتميز: %{targetPercentage || 90} — واصل التدريب لتحقيق هدفك!</span>
+                <span
+                  className={`badge-colored text-lg sm:text-xl font-black mt-1 ${
+                    isDarkMode ? 'text-white/90' : 'text-slate-700'
+                  }`}
+                >
+                  %
                 </span>
-              )}
+              </div>
+            </div>
+
+            {/* Motivational Headline & Pill Badge (Left side of Right Panel in RTL) */}
+            <div
+              data-preserve-colors="true"
+              className="flex-1 flex flex-col items-center sm:items-start text-center sm:text-right space-y-3 min-w-0"
+            >
+              <span className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/15 border border-white/20 backdrop-blur-sm text-xs font-bold text-white whitespace-nowrap">
+                <Trophy className="w-3.5 h-3.5 shrink-0" />
+                <span>نتيجتك في هذه المحاولة</span>
+              </span>
+
+              <h2 className="text-xl sm:text-2xl font-black text-white leading-snug text-balance">
+                {resultTheme.headline}
+              </h2>
+
+              <div className="flex items-center gap-2 text-xs font-bold text-white/85 flex-wrap justify-center sm:justify-start">
+                <span className="truncate max-w-[230px]">{examTitle}</span>
+                <span aria-hidden="true">·</span>
+                <span>التقدير: {resultTheme.levelLabel}</span>
+              </div>
             </div>
           </div>
 
-          {/* Main 2-Column Result Layout:
-              RIGHT SIDE (على اليمين): صورة لمستوى الطالب (ممتاز أو ضعيف أو جيد جداً أو مقبول أو مجتاز أو غير مجتاز بالاختبار)
-              LEFT SIDE (على اليسار): 4 قوائم بالترتيب الدقيق: أول قائمة الدرجة، ثاني قائمة الأسئلة الصحيحة، ثالث قائمة الأسئلة الخاطئة، رابع قائمة الوقت المستغرق */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
-            {/* RIGHT SIDE (على اليمين): صورة لمستوى الطالب وتقييمه */}
-            <div className={`lg:col-span-5 p-6 rounded-3xl border flex flex-col items-center justify-between text-center relative overflow-hidden shadow-lg ${
-              isDarkMode ? 'bg-slate-800/80 border-slate-700/80' : 'bg-slate-50/95 border-slate-200'
-            }`}>
-              {/* Background ambient glow */}
-              <div className={`absolute -top-16 -right-16 w-52 h-52 rounded-full blur-3xl opacity-35 bg-gradient-to-br ${levelData.glowColor} pointer-events-none`} />
-
-              <div className="w-full space-y-4 relative z-10">
-                {/* Header tag showing pass/fail status */}
-                <div className="flex items-center justify-between w-full pb-3 border-b border-slate-200 dark:border-slate-700/70">
-                  <span className="text-xs font-bold text-slate-400">تقييم مستوى الطالب</span>
-                  <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black border shadow-sm ${
-                    levelData.isPassed
-                      ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
-                      : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30'
-                  }`}>
-                    {levelData.isPassed ? <CheckCircle2 className="w-3.5 h-3.5" /> : <AlertCircle className="w-3.5 h-3.5" />}
-                    <span>{levelData.statusTitle}</span>
-                  </span>
-                </div>
-
-                {/* صورة لمستوى الطالب (SVG Illustration) */}
-                <div className="py-2 flex justify-center transform hover:scale-105 transition-transform duration-300">
-                  <StudentLevelIllustration levelKey={levelData.key} isDarkMode={isDarkMode} />
-                </div>
-
-                {/* Level Title, Stars, and Pass/Fail Explicit Label */}
-                <div className="space-y-2">
-                  <div className="inline-block">
-                    <span className={`text-2xl md:text-3xl font-black bg-gradient-to-r ${levelData.badgeGradient} bg-clip-text text-transparent`}>
-                      المستوى: {levelData.title}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-center gap-1.5">
-                    {[1, 2, 3, 4, 5].map((s) => (
-                      <Star
-                        key={s}
-                        className={`w-5 h-5 ${
-                          s <= levelData.stars
-                            ? 'fill-amber-400 text-amber-400 filter drop-shadow'
-                            : isDarkMode
-                            ? 'text-slate-700'
-                            : 'text-slate-300'
-                        }`}
-                      />
-                    ))}
-                  </div>
-
-                  {/* Pass / Fail Explicit Label */}
-                  <div className="pt-1">
-                    <span className={`text-sm font-black px-4 py-1 rounded-xl inline-block ${
-                      levelData.isPassed
-                        ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
-                        : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20'
-                    }`}>
-                      {levelData.isPassed ? '✓ مجتاز بالاختبار' : '⚠️ غير مجتاز بالاختبار'}
-                    </span>
-                  </div>
-                </div>
+          {/* LEFT PANEL (على اليسار في RTL): بطاقات الإحصائيات + الوقت والأسئلة المجابة */}
+          <div
+            className={`lg:col-span-6 p-6 sm:p-7 flex flex-col justify-between gap-5 ${
+              isDarkMode ? 'bg-[#16191D] text-white' : 'bg-white text-slate-900'
+            }`}
+          >
+            {/* Top 3 Solid Stat Boxes: صحيحة / خاطئة / غير مجابة */}
+            <div className="grid grid-cols-3 gap-2.5 sm:gap-3.5">
+              {/* صحيحة */}
+              <div
+                data-preserve-colors="true"
+                className="rounded-2xl py-4 px-2 sm:px-3 bg-[#016E5E] text-white flex flex-col items-center justify-center text-center shadow-sm"
+              >
+                <span className="text-2xl sm:text-3xl font-black tabular-nums leading-tight">
+                  {score}
+                </span>
+                <span className="text-xs sm:text-sm font-bold mt-1 text-white/95">
+                  صحيحة
+                </span>
               </div>
 
-              {/* Motivational feedback quote */}
-              <div className={`mt-5 pt-4 border-t border-slate-200 dark:border-slate-700/70 w-full relative z-10 text-xs md:text-sm font-semibold leading-relaxed ${
-                isDarkMode ? 'text-slate-300' : 'text-slate-700'
-              }`}>
-                {levelData.quote}
+              {/* خاطئة */}
+              <div
+                data-preserve-colors="true"
+                className="rounded-2xl py-4 px-2 sm:px-3 bg-[#A60B2E] text-white flex flex-col items-center justify-center text-center shadow-sm"
+              >
+                <span className="text-2xl sm:text-3xl font-black tabular-nums leading-tight">
+                  {wrongAnsweredCount}
+                </span>
+                <span className="text-xs sm:text-sm font-bold mt-1 text-white/95">
+                  خاطئة
+                </span>
+              </div>
+
+              {/* غير مجابة */}
+              <div
+                data-preserve-colors="true"
+                className="rounded-2xl py-4 px-2 sm:px-3 bg-[#BE4D05] text-white flex flex-col items-center justify-center text-center shadow-sm"
+              >
+                <span className="text-2xl sm:text-3xl font-black tabular-nums leading-tight">
+                  {unansweredCount}
+                </span>
+                <span className="text-xs sm:text-sm font-bold mt-1 text-white/95">
+                  غير مجابة
+                </span>
               </div>
             </div>
 
-            {/* LEFT SIDE (على اليسار): البطاقات الإحصائية للنتيجة */}
-            <div className="lg:col-span-7 flex flex-col gap-3.5 justify-between">
-              {/* الدرجة */}
-              <div className={`p-4 md:p-5 rounded-2xl border transition shadow-sm ${
-                isDarkMode ? 'bg-slate-800/80 border-slate-700/80 hover:border-slate-600' : 'bg-slate-50/95 border-slate-200 hover:border-slate-300'
-              }`}>
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-xl bg-blue-500/10 text-blue-500 flex items-center justify-center border border-blue-500/20 shrink-0">
-                      <Award className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <h4 className={`text-base md:text-lg font-black ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
-                        الدرجة
-                      </h4>
-                      <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-                        النسبة المئوية والنقاط المحققة
-                      </span>
-                    </div>
-                  </div>
-                  <span className={`text-2xl md:text-3xl font-black ${
-                    percentage >= 90
-                      ? 'text-amber-500'
-                      : percentage >= 60
-                      ? 'text-emerald-500'
-                      : 'text-rose-500'
-                  }`}>
-                    %{percentage}
-                  </span>
-                </div>
-                
-                <div className="flex items-center justify-between text-xs font-semibold mb-2 text-slate-500 dark:text-slate-400">
-                  <span>الدرجة: {score} من إجمالي {total}</span>
-                  <span>{passedTarget ? '🎯 حققت الهدف المحدد' : `الهدف المستهدف: %${targetPercentage || 90}`}</span>
-                </div>
-
-                <div className="w-full h-2.5 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
-                  <div
-                    className={`h-full rounded-full transition-all duration-1000 ${
-                      percentage >= 90
-                        ? 'bg-gradient-to-r from-amber-500 to-yellow-400'
-                        : percentage >= 60
-                        ? 'bg-gradient-to-r from-emerald-500 to-teal-400'
-                        : 'bg-gradient-to-r from-rose-500 to-red-400'
-                    }`}
-                    style={{ width: `${Math.min(100, Math.max(4, percentage))}%` }}
-                  />
-                </div>
-              </div>
-
-              {/* الأسئلة الصحيحة */}
-              <div className={`p-4 md:p-5 rounded-2xl border transition shadow-sm ${
-                isDarkMode ? 'bg-slate-800/80 border-slate-700/80 hover:border-slate-600' : 'bg-slate-50/95 border-slate-200 hover:border-slate-300'
-              }`}>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-xl bg-emerald-500/10 text-emerald-500 flex items-center justify-center border border-emerald-500/20 shrink-0">
-                      <CheckCircle2 className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <h4 className={`text-base md:text-lg font-black ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
-                        الأسئلة الصحيحة
-                      </h4>
-                      <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-                        إجابات نموذجية تمت الإجابة عليها بنجاح
-                      </span>
-                    </div>
-                  </div>
-                  <span className="text-xl md:text-2xl font-black text-emerald-500">
-                    {score} <span className="text-xs font-bold text-slate-500 dark:text-slate-400">سؤالاً</span>
-                  </span>
-                </div>
-              </div>
-
-              {/* الأسئلة الخاطئة */}
-              <div className={`p-4 md:p-5 rounded-2xl border transition shadow-sm ${
-                isDarkMode ? 'bg-slate-800/80 border-slate-700/80 hover:border-slate-600' : 'bg-slate-50/95 border-slate-200 hover:border-slate-300'
-              }`}>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className={`w-9 h-9 rounded-xl flex items-center justify-center border shrink-0 ${
-                      wrongCount > 0
-                        ? 'bg-rose-500/10 text-rose-500 border-rose-500/20'
-                        : 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20'
-                    }`}>
-                      {wrongCount > 0 ? <XCircle className="w-5 h-5" /> : <CheckCircle2 className="w-5 h-5" />}
-                    </div>
-                    <div>
-                      <h4 className={`text-base md:text-lg font-black ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
-                        الأسئلة الخاطئة
-                      </h4>
-                      <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-                        {wrongCount > 0
-                          ? 'نُقلت تلقائياً إلى مجلد الأخطاء للمراجعة والتدريب'
-                          : 'لا توجد أخطاء — أداء متكامل 100%'}
-                      </span>
-                    </div>
-                  </div>
-                  <span className={`text-xl md:text-2xl font-black ${wrongCount > 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
-                    {wrongCount} <span className="text-xs font-bold text-slate-500 dark:text-slate-400">أسئلة</span>
-                  </span>
-                </div>
-              </div>
-
+            {/* Divider & Bottom Metrics Row: الوقت المستغرق + الأسئلة المجابة */}
+            <div
+              className={`pt-4 border-t grid grid-cols-2 gap-4 items-center ${
+                isDarkMode ? 'border-white/10' : 'border-slate-200'
+              }`}
+            >
               {/* الوقت المستغرق */}
-              <div className={`p-4 md:p-5 rounded-2xl border transition shadow-sm ${
-                isDarkMode ? 'bg-slate-800/80 border-slate-700/80 hover:border-slate-600' : 'bg-slate-50/95 border-slate-200 hover:border-slate-300'
-              }`}>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-xl bg-indigo-500/10 text-indigo-500 flex items-center justify-center border border-indigo-500/20 shrink-0">
-                      <Clock className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <h4 className={`text-base md:text-lg font-black ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
-                        الوقت المستغرق
-                      </h4>
-                      <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-                        {formatArabicTime(finalDuration)} ({isTimed ? 'اختبار مؤقت' : 'تدريب حر'})
-                      </span>
-                    </div>
-                  </div>
-                  <span className="text-xl md:text-2xl font-mono font-black text-indigo-500" dir="ltr">
-                    {formatDigitalTime(finalDuration)}
+              <div className="flex flex-col items-center sm:items-start text-center sm:text-right">
+                <div
+                  className={`flex items-center gap-1.5 text-xs sm:text-sm font-bold ${
+                    isDarkMode ? 'text-slate-400' : 'text-slate-600'
+                  }`}
+                >
+                  <Clock className="w-4 h-4 shrink-0" />
+                  <span>الوقت المستغرق</span>
+                </div>
+                <div
+                  className={`text-lg sm:text-xl font-black font-mono tabular-nums mt-1 ${
+                    isDarkMode ? 'text-white' : 'text-slate-900'
+                  }`}
+                  dir="ltr"
+                >
+                  {formatDigitalTime(finalDuration)}
+                </div>
+              </div>
+
+              {/* الأسئلة المجابة */}
+              <div className="flex flex-col items-center sm:items-start text-center sm:text-right">
+                <div
+                  className={`flex items-center gap-1.5 text-xs sm:text-sm font-bold ${
+                    isDarkMode ? 'text-slate-400' : 'text-slate-600'
+                  }`}
+                >
+                  <ListChecks className="w-4 h-4 shrink-0" />
+                  <span>الأسئلة المجابة</span>
+                </div>
+                <div
+                  className={`text-lg sm:text-xl font-black tabular-nums mt-1 ${
+                    isDarkMode ? 'text-white' : 'text-slate-900'
+                  }`}
+                >
+                  {answeredCount}{' '}
+                  <span
+                    className={`text-xs sm:text-sm font-bold ${
+                      isDarkMode ? 'text-slate-400' : 'text-slate-500'
+                    }`}
+                  >
+                    من {total}
                   </span>
                 </div>
               </div>
             </div>
           </div>
+        </div>
 
-          {/* Prominent Mistake Transfer Announcement at end of exam */}
+        {/* Action Buttons & Mistake Transfer Notice */}
+        <div
+          className={`rounded-3xl border p-5 sm:p-6 shadow-xl space-y-5 ${
+            isDarkMode ? 'bg-slate-900/90 border-slate-800' : 'bg-white border-slate-200'
+          }`}
+        >
           {wrongCount > 0 ? (
-            <div className={`mt-6 p-5 border-2 rounded-3xl text-right shadow-2xl ${
-              isDarkMode
-                ? 'bg-gradient-to-r from-indigo-950/90 via-purple-950/70 to-slate-900 border-indigo-500/50'
-                : 'bg-indigo-50/80 border-indigo-400 text-black'
-            }`}>
+            <div
+              className={`p-4 sm:p-5 border rounded-2xl text-right ${
+                isDarkMode
+                  ? 'bg-indigo-950/50 border-indigo-500/40'
+                  : 'bg-indigo-50/80 border-indigo-300 text-slate-900'
+              }`}
+            >
               <div className="flex items-start gap-3.5">
-                <div className="p-3 rounded-2xl bg-indigo-500/20 text-indigo-500 border border-indigo-500/40 shrink-0">
-                  <BookmarkPlus className="w-6 h-6 animate-pulse" />
+                <div className="p-2.5 rounded-xl bg-indigo-500/20 text-indigo-500 border border-indigo-500/30 shrink-0">
+                  <BookmarkPlus className="w-5 h-5" />
                 </div>
                 <div className="space-y-1">
-                  <h4 className={`text-base font-black flex items-center gap-2 ${
-                    isDarkMode ? 'text-white' : 'text-indigo-950'
-                  }`}>
-                    <span>📌 تنبيه تعليمي هام: تم نقل أخطائك إلى مجلد الأخطاء</span>
-                    <span className="text-xs px-2.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-600 border border-indigo-400/30 font-black">
-                      {wrongCount} أسئلة
+                  <h4
+                    className={`text-sm sm:text-base font-black flex items-center gap-2 flex-wrap ${
+                      isDarkMode ? 'text-white' : 'text-indigo-950'
+                    }`}
+                  >
+                    <span>تم نقل أخطائك تلقائياً إلى مجلد الأخطاء</span>
+                    <span className="text-xs px-2.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-600 dark:text-indigo-300 border border-indigo-400/30 font-black">
+                      {wrongCount} سؤال
                     </span>
                   </h4>
-                  <p className={`text-xs md:text-sm leading-relaxed font-semibold ${
-                    isDarkMode ? 'text-indigo-200' : 'text-slate-900'
-                  }`}>
-                    تم نقل جميع الأسئلة التي حدث بها خطأ تلقائياً إلى <strong>"مجلد الأخطاء"</strong> الثابت في حسابك، لتتمكن من مراجعتها لاحقاً والتدرّب عليها لضمان عدم تكرار الخطأ والوصول للمئوية بإذن الله!
+                  <p
+                    className={`text-xs md:text-sm leading-relaxed font-semibold ${
+                      isDarkMode ? 'text-indigo-200' : 'text-slate-700'
+                    }`}
+                  >
+                    تم حفظ جميع الأسئلة التي تحتاج لمراجعة في <strong>"مجلد الأخطاء"</strong> بحسابك، لتتمكن من التدرب عليها مجدداً والوصول إلى 100%.
                   </p>
                 </div>
               </div>
             </div>
           ) : (
-            <div className="mt-6 p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-2xl text-emerald-600 text-xs md:text-sm font-black text-center">
-              ✨ أداء أسطوري! لا توجد أخطاء في هذا الاختبار، درجتك كاملة 100%!
+            <div className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-2xl text-emerald-600 dark:text-emerald-400 text-xs md:text-sm font-black text-center">
+              ✨ أداء استثنائي! لا توجد أخطاء في هذا الاختبار، درجتك كاملة 100%!
             </div>
           )}
 
           {/* Action Buttons */}
-          <div className="flex flex-wrap items-center justify-center gap-3 pt-6 border-t border-slate-200 dark:border-slate-800/80 mt-6">
+          <div className="flex flex-wrap items-center justify-center gap-3">
             <button
               onClick={() => {
+                finishSubmittedRef.current = false;
                 setSelectedAnswers({});
                 setCurrentIdx(0);
                 setIsFinished(false);
@@ -1396,10 +1457,10 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
                 setExamStartTime(Date.now());
                 setTimeSpentSeconds(0);
               }}
-              className={`flex items-center gap-2 px-6 py-3 rounded-2xl font-black text-xs md:text-sm transition border ${
+              className={`flex items-center gap-2 px-6 py-3 rounded-2xl font-black text-xs md:text-sm transition border cursor-pointer ${
                 isDarkMode
                   ? 'bg-slate-800 hover:bg-slate-700 text-white border-slate-700'
-                  : 'bg-slate-100 hover:bg-slate-200 text-black border-slate-300'
+                  : 'bg-slate-100 hover:bg-slate-200 text-slate-900 border-slate-300'
               }`}
             >
               <RefreshCw className="w-4 h-4" />
@@ -1408,7 +1469,7 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
 
             <button
               onClick={handleRequestExit}
-              className="flex items-center gap-2 px-8 py-3 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white font-black text-xs md:text-sm transition shadow-lg shadow-blue-600/30"
+              className="flex items-center gap-2 px-8 py-3 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white font-black text-xs md:text-sm transition shadow-lg shadow-blue-600/30 cursor-pointer"
             >
               <Home className="w-4 h-4" />
               <span>العودة للمنصة</span>
@@ -1601,6 +1662,9 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
 
         {/* Delete Correct Questions Prompt Modal (in review screen) */}
         {renderDeleteCorrectPromptModal()}
+
+        {/* Zoomed Question Image Lightbox (in review screen) */}
+        {renderZoomedImageModal()}
       </div>
     );
   }
@@ -1881,7 +1945,7 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
               <Trash2 className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
               <span>
                 <strong className={isDarkMode ? 'text-rose-400' : 'text-rose-700'}>نعم:</strong>{' '}
-                تُحذف الأسئلة التي أجبتها بشكل صحيح من هذا المجلد نهائياً ولا تعود أبداً مهما كان.
+                تُحذف الأسئلة التي أجبتها بشكل صحيح من هذا المجلد، ولن تعود مرة أخرى طالما لم تخطئ فيها مجدداً.
               </span>
             </div>
             <div className="flex items-start gap-2">
@@ -1937,6 +2001,78 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
             </button>
           </div>
         </div>
+      </div>
+    );
+  }
+
+  function renderZoomedImageModal() {
+    if (!zoomedImageUrl) return null;
+    return (
+      <div
+        onClick={() => setZoomedImageUrl(null)}
+        className="fixed inset-0 z-[99999] flex flex-col items-center justify-center p-3 sm:p-6 bg-black/95 backdrop-blur-md animate-in fade-in duration-200"
+      >
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="flex items-center justify-between gap-3 w-full max-w-3xl mb-3 px-4 py-2.5 rounded-2xl bg-slate-900/90 border border-slate-800 backdrop-blur-md text-white shadow-xl"
+        >
+          <div className="flex items-center gap-2">
+            <ZoomIn className="w-4 h-4 text-amber-400" />
+            <span className="text-xs font-black">معاينة صورة السؤال المكبرة</span>
+            <span className="text-[10px] text-slate-400 font-mono">({Math.round(imageZoomScale * 100)}%)</span>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setImageZoomScale((s) => Math.min(s + 0.25, 3))}
+              className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white transition cursor-pointer"
+              title="تكبير أكثر (+)"
+            >
+              <ZoomIn className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setImageZoomScale((s) => Math.max(s - 0.25, 0.75))}
+              className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white transition cursor-pointer"
+              title="تصغير (-)"
+            >
+              <ZoomOut className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setImageZoomScale(1)}
+              className="px-2.5 py-1 text-[11px] rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-400 font-bold transition cursor-pointer"
+              title="الحجم الأصلي (100%)"
+            >
+              100%
+            </button>
+            <button
+              type="button"
+              onClick={() => setZoomedImageUrl(null)}
+              className="p-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white transition cursor-pointer mr-2"
+              title="إغلاق (X)"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="w-full max-w-4xl max-h-[80vh] overflow-auto rounded-3xl border border-slate-800 bg-slate-950/80 p-2 sm:p-4 flex items-center justify-center shadow-2xl"
+        >
+          <img
+            src={zoomedImageUrl}
+            alt="صورة مكبرة"
+            style={{ transform: `scale(${imageZoomScale})`, transformOrigin: 'center' }}
+            className="max-w-full max-h-[75vh] object-contain transition-transform duration-150 rounded-2xl select-none"
+          />
+        </div>
+
+        <span className="text-[11px] text-slate-400 mt-2">
+          انقر في أي مكان خارج الصورة أو اضغط على زر الإغلاق للعودة للسؤال
+        </span>
       </div>
     );
   }
@@ -2046,76 +2182,7 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
         />
       )}
       {/* ================= MODAL: ZOOMED QUESTION IMAGE LIGHTBOX ("تكبير صورة السؤال") ================= */}
-      {zoomedImageUrl && (
-        <div
-          onClick={() => setZoomedImageUrl(null)}
-          className="fixed inset-0 z-[99999] flex flex-col items-center justify-center p-3 sm:p-6 bg-black/95 backdrop-blur-md animate-in fade-in duration-200"
-        >
-          {/* Controls Bar */}
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="flex items-center justify-between gap-3 w-full max-w-3xl mb-3 px-4 py-2.5 rounded-2xl bg-slate-900/90 border border-slate-800 backdrop-blur-md text-white shadow-xl"
-          >
-            <div className="flex items-center gap-2">
-              <ZoomIn className="w-4 h-4 text-amber-400" />
-              <span className="text-xs font-black">معاينة صورة السؤال المكبرة</span>
-              <span className="text-[10px] text-slate-400 font-mono">({Math.round(imageZoomScale * 100)}%)</span>
-            </div>
-
-            <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => setImageZoomScale((s) => Math.min(s + 0.25, 3))}
-                className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white transition cursor-pointer"
-                title="تكبير أكثر (+)"
-              >
-                <ZoomIn className="w-4 h-4" />
-              </button>
-              <button
-                type="button"
-                onClick={() => setImageZoomScale((s) => Math.max(s - 0.25, 0.75))}
-                className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white transition cursor-pointer"
-                title="تصغير (-)"
-              >
-                <ZoomOut className="w-4 h-4" />
-              </button>
-              <button
-                type="button"
-                onClick={() => setImageZoomScale(1)}
-                className="px-2.5 py-1 text-[11px] rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-400 font-bold transition cursor-pointer"
-                title="الحجم الأصلي (100%)"
-              >
-                100%
-              </button>
-              <button
-                type="button"
-                onClick={() => setZoomedImageUrl(null)}
-                className="p-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white transition cursor-pointer mr-2"
-                title="إغلاق (X)"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-
-          {/* Image Display Area with Pan/Scroll */}
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-4xl max-h-[80vh] overflow-auto rounded-3xl border border-slate-800 bg-slate-950/80 p-2 sm:p-4 flex items-center justify-center shadow-2xl"
-          >
-            <img
-              src={zoomedImageUrl}
-              alt="صورة مكبرة"
-              style={{ transform: `scale(${imageZoomScale})`, transformOrigin: 'center' }}
-              className="max-w-full max-h-[75vh] object-contain transition-transform duration-150 rounded-2xl select-none"
-            />
-          </div>
-
-          <span className="text-[11px] text-slate-400 mt-2">
-            انقر في أي مكان خارج الصورة أو اضغط على زر الإغلاق للعودة للسؤال
-          </span>
-        </div>
-      )}
+      {renderZoomedImageModal()}
 
       {/* ================= MODAL: هل تود حذف الأسئلة الصحيحة أم لا؟ ================= */}
       {renderDeleteCorrectPromptModal()}

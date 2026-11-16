@@ -15,21 +15,48 @@ import {
   where,
   getDocs,
   deleteDoc,
-  updateDoc
+  updateDoc,
+  enableNetwork,
+  disableNetwork
 } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 import { SystemSettings, ThemeConfig, SectionItem, ResourceItem, ContentItem, CourseItem } from './types';
 import { trackLocalRead, trackLocalWrite, trackLocalCacheHit } from './utils/localUsageTracker';
 
+const isBrowserEnv = typeof window !== 'undefined';
+
+// Downgrade Firestore's transient 10s offline-mode fallback log to console.warn
+// so expected offline/cache-fallback behavior does not surface as a fatal runtime error.
+if (isBrowserEnv) {
+  const g = window as any;
+  if (!g.__raadFirestoreConsolePatched) {
+    g.__raadFirestoreConsolePatched = true;
+    const origConsoleError = console.error.bind(console);
+    console.error = (...args: any[]) => {
+      try {
+        const joined = args.map((a) => (typeof a === 'string' ? a : a instanceof Error ? a.message : '')).join(' ');
+        if (
+          joined.includes('@firebase/firestore') &&
+          (joined.includes('Could not reach Cloud Firestore backend') ||
+            joined.includes('will operate in offline mode until it is able to successfully connect'))
+        ) {
+          console.warn(...args);
+          return;
+        }
+      } catch {}
+      origConsoleError(...args);
+    };
+  }
+}
+
 export const app = initializeApp(firebaseConfig);
 
 let firestoreDb: Firestore;
-const isBrowserEnv = typeof window !== 'undefined';
 try {
   firestoreDb = initializeFirestore(
     app,
     {
-      ...(isBrowserEnv ? { experimentalForceLongPolling: true } : {}),
+      ...(isBrowserEnv ? { experimentalAutoDetectLongPolling: true } : {}),
       localCache: persistentLocalCache({
         tabManager: persistentMultipleTabManager(),
       }),
@@ -40,11 +67,27 @@ try {
   try {
     firestoreDb = initializeFirestore(
       app,
-      isBrowserEnv ? { experimentalForceLongPolling: true } : {},
+      isBrowserEnv ? { experimentalAutoDetectLongPolling: true } : {},
       firebaseConfig.firestoreDatabaseId
     );
   } catch {
     firestoreDb = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+  }
+}
+
+if (isBrowserEnv) {
+  const g = window as any;
+  if (!g.__raadFirestoreNetworkListenersAttached) {
+    g.__raadFirestoreNetworkListenersAttached = true;
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      void disableNetwork(firestoreDb).catch(() => {});
+    }
+    window.addEventListener('offline', () => {
+      void disableNetwork(firestoreDb).catch(() => {});
+    });
+    window.addEventListener('online', () => {
+      void enableNetwork(firestoreDb).catch(() => {});
+    });
   }
 }
 
@@ -426,6 +469,7 @@ export const INITIAL_CONTENT_ITEMS: ContentItem[] = [];
 // Test Firestore connection on boot (skip extra server read if cached settings/seeder already exist and onSnapshot handles sync)
 export async function testConnection(): Promise<boolean> {
   if (quotaExceededState) return false;
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return false;
   try {
     if (typeof window !== 'undefined') {
       if (
