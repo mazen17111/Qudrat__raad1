@@ -54,9 +54,9 @@ export const COURSE_COLOR_OPTIONS: CourseColorOption[] = [
   },
   {
     id: 'black',
-    label: 'أسود',
-    hex: '#000000',
-    circleClass: 'bg-black hover:bg-neutral-900 border-2 border-neutral-600 shadow-sm shadow-black/60',
+    label: 'داكن فحمي',
+    hex: '#232730',
+    circleClass: 'bg-[#232730] hover:bg-[#313744] border-2 border-slate-400/70 shadow-sm shadow-slate-950/60',
   },
 ];
 
@@ -141,16 +141,16 @@ export const COURSE_COLOR_THEMES: Record<Exclude<CourseThemeColor, 'default'>, T
   },
   black: {
     id: 'course-black',
-    name: 'أسود ملكي مخصص للكورس',
-    primary: '#000000',
-    secondary: '#000000',
-    accent: '#ffffff',
-    bgGradient: 'from-black via-black to-black',
-    cardBg: 'bg-black border-white/20',
-    headerBg: 'bg-black border-white/20',
-    accentBorder: 'border-white/25',
-    badgeBg: 'bg-black text-white border-white/25',
-    buttonGradient: 'from-black via-black to-black hover:from-neutral-950 hover:to-neutral-950 text-white border border-white/30',
+    name: 'رمادي فحمي داكن مخصص للكورس',
+    primary: '#232730',
+    secondary: '#2B303B',
+    accent: '#F8FAFC',
+    bgGradient: 'from-[#1A1D23] via-[#1F232B] to-[#1A1D23]',
+    cardBg: 'bg-[#232730] border-white/15',
+    headerBg: 'bg-[#232730] border-white/15',
+    accentBorder: 'border-white/20',
+    badgeBg: 'bg-[#2B303B] text-slate-100 border-white/20',
+    buttonGradient: 'from-[#2B303B] via-[#313744] to-[#2B303B] hover:from-[#363D4B] hover:to-[#3E4656] text-white border border-white/20',
   },
 };
 
@@ -179,7 +179,7 @@ export function getEnterPlatformButtonClass(color: CourseThemeColor | undefined)
     case 'orange':
       return 'bg-gradient-to-r from-orange-600 via-amber-500 to-orange-600 hover:from-orange-500 hover:to-amber-400 text-white shadow-lg shadow-orange-600/30';
     case 'black':
-      return 'bg-black hover:bg-neutral-950 text-white border border-white/30';
+      return 'bg-[#2B303B] hover:bg-[#353B48] text-white border border-white/20 shadow-md shadow-black/20';
     default:
       return 'bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-lg shadow-emerald-600/25';
   }
@@ -292,19 +292,18 @@ export function getLinkedExamCardTheme(color: CourseThemeColor | undefined, isDa
       };
     case 'black':
       return {
-        cardBg: 'bg-black border-white/25 hover:border-white/50 text-white',
-        badgeBg: 'bg-black',
-        badgeText: 'text-white',
-        badgeBorder: 'border-white/25',
-        targetBadge: 'text-white bg-black border-white/25',
-        label: 'text-white',
+        cardBg: 'bg-[#232730] border-white/18 hover:border-white/35 text-slate-100',
+        badgeBg: 'bg-[#2B303B]',
+        badgeText: 'text-slate-100',
+        badgeBorder: 'border-white/20',
+        targetBadge: 'text-slate-100 bg-[#2B303B] border-white/20',
+        label: 'text-slate-100',
         titleHover: 'group-hover:text-white',
-        info: 'text-white',
-        button: 'bg-black hover:bg-neutral-950 text-white border border-white/30',
-        iconColor: 'text-white',
+        info: 'text-slate-200',
+        button: 'bg-[#2B303B] hover:bg-[#353B48] text-white border border-white/20',
+        iconColor: 'text-slate-100',
       };
     default:
-      // Default natural amber styling for exam box
       return {
         cardBg: isDarkMode
           ? 'bg-gradient-to-br from-amber-950/80 via-slate-900 to-amber-900/50 border-amber-500/90 hover:border-amber-400 shadow-amber-500/15'
@@ -416,19 +415,18 @@ export function getLinkedFileCardTheme(color: CourseThemeColor | undefined, isDa
       };
     case 'black':
       return {
-        cardBg: 'bg-black border-white/25 hover:border-white/50 text-white',
-        badgeBg: 'bg-black',
-        badgeText: 'text-white',
-        badgeBorder: 'border-white/25',
-        targetBadge: 'text-white bg-black border-white/25',
-        label: 'text-white',
+        cardBg: 'bg-[#232730] border-white/18 hover:border-white/35 text-slate-100',
+        badgeBg: 'bg-[#2B303B]',
+        badgeText: 'text-slate-100',
+        badgeBorder: 'border-white/20',
+        targetBadge: 'text-slate-100 bg-[#2B303B] border-white/20',
+        label: 'text-slate-100',
         titleHover: 'group-hover:text-white',
-        info: 'text-white',
-        button: 'bg-black hover:bg-neutral-950 text-white border border-white/30',
-        iconColor: 'text-white',
+        info: 'text-slate-200',
+        button: 'bg-[#2B303B] hover:bg-[#353B48] text-white border border-white/20',
+        iconColor: 'text-slate-100',
       };
     default:
-      // Default natural emerald styling for file box
       return {
         cardBg: isDarkMode
           ? 'bg-gradient-to-br from-emerald-950/80 via-slate-900 to-teal-900/50 border-emerald-500/90 hover:border-emerald-400 shadow-emerald-500/15'

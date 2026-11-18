@@ -367,7 +367,6 @@ export default function App() {
             pendingThemeRef.current = null;
           }
         } else if (savedLocal) {
-          // Local explicit student preference always persists until the student changes it themselves
           resolvedColor = savedLocal;
         } else if (remoteColor) {
           resolvedColor = remoteColor;
@@ -468,7 +467,6 @@ export default function App() {
     setActiveCourse(null);
     setCourseThemeColor(resolvedColor);
 
-    // If local saved color differs from user doc, quietly sync back to Firestore
     if (savedLocal && remoteColor !== savedLocal) {
       setDoc(doc(db, 'users', user.id), { preferredThemeColor: savedLocal }, { merge: true })
         .then(() => trackLocalWrite(1, 'مزامنة لون المنصة'))
@@ -538,7 +536,7 @@ export default function App() {
     }
   }, [currentUser?.id]);
 
-  // Apply pure-black mode globally when student's active theme is 'black'
+  // Apply charcoal/black mode globally when student's active theme is 'black'
   useEffect(() => {
     const isAllBlack = Boolean(currentUser && !isAdminOpen && courseThemeColor === 'black');
     document.documentElement.classList.toggle('theme-black', isAllBlack);

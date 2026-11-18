@@ -11,9 +11,14 @@ import {
   FileQuestion,
   ChevronLeft,
   Clock,
-  Sparkles
+  Sparkles,
+  Download,
+  Loader2,
+  CheckCircle2,
+  FileText
 } from 'lucide-react';
 import { StudentUser, FolderItem, FolderQuestionItem, ExamQuestion } from '../types';
+import { exportFolderQuestionsToPdf } from '../utils/folderPdfExport';
 import { db } from '../firebase';
 import { markQuestionAsPermanentlyDeleted } from '../mistakesService';
 import {
@@ -70,6 +75,8 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
   const [isDeletingFolder, setIsDeletingFolder] = useState(false);
   const [folderCounts, setFolderCounts] = useState<Record<string, number>>({});
   const [zoomedImage, setZoomedImage] = useState<string | null>(null);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [showPdfModePrompt, setShowPdfModePrompt] = useState(false);
 
   // Sync folders, per-folder counts, and selected folder questions from unified studentFoldersStore (zero duplicate listeners!)
   useEffect(() => {
@@ -356,6 +363,55 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
     onStartFolderExam(selectedFolder.title, examQuestions, isTimed, selectedFolder.id);
   };
 
+  // Reads the live current questions inside the selected folder directly from local memory/cache at click time
+  // and generates a genuine PDF purely in the browser (ZERO Firestore reads or writes!).
+  const handleExportFolderPdf = async (includeSolutions: boolean) => {
+    if (!selectedFolder || isExportingPdf) return;
+    setShowPdfModePrompt(false);
+
+    const storeSnap = getStudentFoldersSnapshot(currentUser.id);
+    const liveQuestions = storeSnap.folderQuestions
+      .filter((qItem) => qItem.folderId === selectedFolder.id)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    const questionsToExport =
+      liveQuestions.length > 0 || storeSnap.hasLoadedOnce ? liveQuestions : folderQuestions;
+
+    if (questionsToExport.length === 0) {
+      setFolderNotice('لا توجد أسئلة حالياً في هذا المجلد لتصديرها كملف PDF.');
+      setTimeout(() => setFolderNotice(null), 3500);
+      return;
+    }
+
+    setIsExportingPdf(true);
+    try {
+      await exportFolderQuestionsToPdf({
+        folderTitle: selectedFolder.title,
+        courseTitle,
+        studentName: currentUser.name,
+        questions: questionsToExport,
+        includeSolutions,
+      });
+      const countText =
+        questionsToExport.length === 1
+          ? 'سؤال واحد'
+          : questionsToExport.length === 2
+          ? 'سؤالين'
+          : questionsToExport.length <= 10
+          ? `${questionsToExport.length} أسئلة`
+          : `${questionsToExport.length} سؤالاً`;
+      const modeText = includeSolutions ? 'محلول بالإجابات' : 'غير محلول (أسئلة فقط)';
+      setFolderNotice(`تم تحميل ملف PDF (${modeText}) يحتوي على ${countText} من "${selectedFolder.title}" بنجاح ✓`);
+      setTimeout(() => setFolderNotice(null), 4000);
+    } catch (err) {
+      console.error('Error exporting folder PDF locally:', err);
+      setFolderNotice('حدث خطأ أثناء إنشاء ملف الـ PDF محلياً، يرجى المحاولة مرة أخرى.');
+      setTimeout(() => setFolderNotice(null), 4000);
+    } finally {
+      setIsExportingPdf(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 md:p-6 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
       <div className={`relative w-full max-w-5xl h-[88vh] border rounded-3xl shadow-2xl flex flex-col overflow-hidden text-right ${
@@ -561,6 +617,30 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
                         <span>حذف المجلد</span>
                       </button>
                     )}
+
+                    {/* Download Current Questions as PDF (100% Local - Zero Firebase) */}
+                    <button
+                      type="button"
+                      onClick={() => setShowPdfModePrompt(true)}
+                      disabled={folderQuestions.length === 0 || isExportingPdf}
+                      className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl border text-xs font-black transition disabled:opacity-40 disabled:pointer-events-none cursor-pointer ${
+                        isDarkMode
+                          ? 'bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border-emerald-500/35'
+                          : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-300'
+                      }`}
+                      title="تحميل الأسئلة الموجودة حالياً في المجلد كملف PDF (محلول أو غير محلول - محلياً بدون أي استهلاك لفايربيس)"
+                    >
+                      {isExportingPdf ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Download className="w-4 h-4" />
+                      )}
+                      <span>
+                        {isExportingPdf
+                          ? 'جاري تجهيز الـ PDF...'
+                          : `تحميل PDF (${folderQuestions.length})`}
+                      </span>
+                    </button>
 
                     {/* Start Exam on This Folder Button! */}
                     <button
@@ -871,6 +951,126 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
                   إلغاء والعودة
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PDF Export Mode Chooser (Solved vs Unsolved) */}
+      {showPdfModePrompt && selectedFolder && (
+        <div className="fixed inset-0 z-[75] flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-xl animate-in fade-in duration-200">
+          <div className={`border-2 rounded-3xl p-6 sm:p-8 max-w-xl w-full shadow-2xl space-y-6 text-right overflow-hidden relative ${
+            isDarkMode ? 'bg-slate-900 border-slate-700/80 text-white' : 'bg-white border-slate-200 text-slate-900'
+          }`}>
+            <div className="absolute top-0 right-0 left-0 h-1.5 bg-gradient-to-r from-emerald-500 via-blue-500 to-amber-500" />
+
+            <div className={`flex items-center justify-between gap-4 pb-4 border-b ${
+              isDarkMode ? 'border-slate-800' : 'border-slate-200'
+            }`}>
+              <div className="flex items-center gap-3">
+                <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 rounded-2xl shrink-0">
+                  <Download className="w-6 h-6" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-500 font-bold border border-emerald-500/30">
+                      تصدير PDF محلي
+                    </span>
+                    <span className={`text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
+                      {folderQuestions.length} سؤال حالياً
+                    </span>
+                  </div>
+                  <h3 className="text-lg font-black mt-1">
+                    اختر نوع ملف الـ PDF: {selectedFolder.title}
+                  </h3>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowPdfModePrompt(false)}
+                className={`p-2 rounded-xl transition cursor-pointer shrink-0 ${
+                  isDarkMode ? 'bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                }`}
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <button
+                type="button"
+                onClick={() => handleExportFolderPdf(true)}
+                className={`group p-5 rounded-2xl border-2 text-right space-y-3 transition cursor-pointer ${
+                  isDarkMode
+                    ? 'bg-gradient-to-b from-emerald-950/40 to-slate-900 border-emerald-500/40 hover:border-emerald-400 hover:shadow-xl hover:shadow-emerald-500/15'
+                    : 'bg-emerald-50/70 border-emerald-300 hover:border-emerald-500 hover:shadow-lg'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="p-2.5 rounded-xl bg-emerald-500/20 text-emerald-500 group-hover:scale-110 transition-transform">
+                    <CheckCircle2 className="w-6 h-6" />
+                  </div>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-500 border border-emerald-500/30">
+                    مع الحلول
+                  </span>
+                </div>
+                <div>
+                  <h5 className={`text-base font-black transition-colors ${
+                    isDarkMode ? 'text-white group-hover:text-emerald-300' : 'text-slate-900 group-hover:text-emerald-700'
+                  }`}>
+                    ملف PDF محلول
+                  </h5>
+                  <p className={`text-xs mt-1 leading-relaxed ${
+                    isDarkMode ? 'text-slate-300' : 'text-slate-600'
+                  }`}>
+                    يتضمن الأسئلة مع تحديد الإجابات الصحيحة وتوضيح الحل للمراجعة السريعة.
+                  </p>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleExportFolderPdf(false)}
+                className={`group p-5 rounded-2xl border-2 text-right space-y-3 transition cursor-pointer ${
+                  isDarkMode
+                    ? 'bg-gradient-to-b from-blue-950/40 to-slate-900 border-blue-500/40 hover:border-blue-400 hover:shadow-xl hover:shadow-blue-500/15'
+                    : 'bg-blue-50/70 border-blue-300 hover:border-blue-500 hover:shadow-lg'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="p-2.5 rounded-xl bg-blue-500/20 text-blue-500 group-hover:scale-110 transition-transform">
+                    <FileText className="w-6 h-6" />
+                  </div>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-500 border border-blue-500/30">
+                    أسئلة فقط
+                  </span>
+                </div>
+                <div>
+                  <h5 className={`text-base font-black transition-colors ${
+                    isDarkMode ? 'text-white group-hover:text-blue-300' : 'text-slate-900 group-hover:text-blue-700'
+                  }`}>
+                    ملف PDF غير محلول
+                  </h5>
+                  <p className={`text-xs mt-1 leading-relaxed ${
+                    isDarkMode ? 'text-slate-300' : 'text-slate-600'
+                  }`}>
+                    يحتوي على الأسئلة والصور والخيارات فقط بدون إظهار الإجابات للتدرب الذاتي.
+                  </p>
+                </div>
+              </button>
+            </div>
+
+            <div className={`flex justify-end pt-2 border-t ${isDarkMode ? 'border-slate-800' : 'border-slate-200'}`}>
+              <button
+                type="button"
+                onClick={() => setShowPdfModePrompt(false)}
+                className={`px-5 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
+                  isDarkMode ? 'text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700' : 'text-slate-700 bg-slate-100 hover:bg-slate-200'
+                }`}
+              >
+                إلغاء
+              </button>
             </div>
           </div>
         </div>

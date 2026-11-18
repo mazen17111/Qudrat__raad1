@@ -1257,7 +1257,7 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
         <div
           className={`rounded-3xl overflow-hidden border shadow-2xl grid grid-cols-1 lg:grid-cols-12 items-stretch ${
             isDarkMode
-              ? 'bg-[#16191D] border-white/10 shadow-black/50'
+              ? 'bg-[#21262E] border-white/12 shadow-slate-950/50'
               : 'bg-white border-slate-200 shadow-slate-200/80'
           }`}
         >
@@ -1269,7 +1269,7 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
             {/* Circular Progress Gauge (Far right in RTL) */}
             <div
               className={`w-36 h-36 sm:w-40 sm:h-40 rounded-full shrink-0 flex items-center justify-center relative shadow-xl ${
-                isDarkMode ? 'bg-[#22252A]' : 'bg-white'
+                isDarkMode ? 'bg-[#2A303A]' : 'bg-white'
               }`}
             >
               <svg
@@ -1344,7 +1344,7 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
           {/* LEFT PANEL (على اليسار في RTL): بطاقات الإحصائيات + الوقت والأسئلة المجابة */}
           <div
             className={`lg:col-span-6 p-6 sm:p-7 flex flex-col justify-between gap-5 ${
-              isDarkMode ? 'bg-[#16191D] text-white' : 'bg-white text-slate-900'
+              isDarkMode ? 'bg-[#21262E] text-white' : 'bg-white text-slate-900'
             }`}
           >
             {/* Top 3 Solid Stat Boxes: صحيحة / خاطئة / غير مجابة */}

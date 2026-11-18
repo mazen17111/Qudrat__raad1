@@ -1262,7 +1262,7 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
     <div
       className={`min-h-screen flex flex-col transition-all duration-300 ${
         currentThemeColor === 'black'
-          ? 'bg-black text-white'
+          ? 'bg-[#1a1d23] text-slate-100'
           : isDarkMode
           ? currentThemeColor && currentThemeColor !== 'default'
             ? `bg-gradient-to-b ${activeTheme.bgGradient} text-slate-100`
@@ -1276,7 +1276,7 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
       <header
         className={`sticky top-0 z-30 px-2.5 sm:px-4 md:px-8 py-2 sm:py-3 border-b backdrop-blur-xl flex items-center justify-between gap-2 transition-all shadow-sm ${
           currentThemeColor === 'black'
-            ? 'bg-black border-white/20'
+            ? 'bg-[#232730] border-white/15'
             : isDarkMode
             ? 'bg-slate-900/90 border-slate-800'
             : 'bg-white/95 border-slate-200'

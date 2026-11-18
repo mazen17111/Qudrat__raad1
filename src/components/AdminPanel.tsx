@@ -8395,7 +8395,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
 
             {/* Live Preview of the 2 Rectangles */}
             {(quickLinkExamId || quickLinkFileId) && (
-              <div className="p-4 rounded-2xl bg-black/50 border border-slate-800 space-y-2">
+              <div className="p-4 rounded-2xl bg-slate-950/60 border border-slate-800 space-y-2">
                 <div className="flex items-center gap-1.5 text-amber-400 text-xs font-bold">
                   <Sparkles className="w-3.5 h-3.5" />
                   <span>معاينة المستطيلين كما يظهران للطالب أسفل الفيديو:</span>

@@ -181,7 +181,7 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
     <div
       className={`min-h-screen flex flex-col justify-between transition-colors duration-200 select-none ${
         currentThemeColor === 'black'
-          ? 'bg-black text-white'
+          ? 'bg-[#1a1d23] text-slate-100'
           : isDarkMode
           ? 'bg-slate-950 text-slate-100'
           : 'bg-slate-50 text-slate-900'
@@ -192,7 +192,7 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
       <header
         className={`sticky top-0 z-40 px-3 sm:px-6 md:px-8 py-2.5 sm:py-3.5 border-b backdrop-blur-xl flex items-center justify-between gap-3 shadow-md ${
           currentThemeColor === 'black'
-            ? 'bg-black border-white/20'
+            ? 'bg-[#232730] border-white/15'
             : isDarkMode
             ? 'bg-slate-900/90 border-slate-800'
             : 'bg-white/95 border-slate-200'
@@ -421,7 +421,7 @@ export const CoursesPortal: React.FC<CoursesPortalProps> = ({
           {/* ================= RIGHT COLUMN (in RTL): قائمة الخانات الـ 4 تحت بعض في مستطيل فخم بملء الشاشة بالعرض المريح ================= */}
           <div className={`lg:col-span-5 xl:col-span-4 order-1 lg:order-1 border-2 rounded-3xl p-3.5 sm:p-4.5 flex flex-col justify-start gap-3.5 shadow-2xl transition-colors ${
             isDarkMode
-              ? 'bg-slate-950 border-slate-800/90 text-white'
+              ? 'bg-slate-900 border-slate-800/90 text-white'
               : 'bg-white border-slate-200 text-slate-900 shadow-xl'
           }`}>
             <div className="space-y-2.5">

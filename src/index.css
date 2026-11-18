@@ -1,4 +1,14 @@
 @import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --radius-md: 0.25rem;
+  --radius-lg: 0.375rem;
+  --radius-xl: 0.375rem;
+  --radius-2xl: 0.5rem;
+  --radius-3xl: 0.5rem;
+  --radius-4xl: 0.625rem;
+}
 
 @layer base {
   html, body {
@@ -121,20 +131,206 @@ html.light .light-card {
 }
 
 /* ========================================================
-   الوضع الأسود الكامل (All-Black Theme) - كل شيء أسود والكلام فقط أبيض
+   تفتيح خلفيات الوضع الليلي والبطاقات إلى درجات Slate / Charcoal مريحة للعين
+   (يحافظ على text-slate-950 والوضع النهاري كما هما تماماً)
+   ======================================================== */
+
+@layer utilities {
+  html.dark .bg-slate-950,
+  .dark.bg-slate-950 {
+    background-color: #181d26;
+  }
+  html.dark .bg-slate-950\/95,
+  .dark .bg-slate-950\/95 {
+    background-color: rgba(24, 29, 38, 0.95);
+  }
+  html.dark .bg-slate-950\/90,
+  .dark .bg-slate-950\/90 {
+    background-color: rgba(24, 29, 38, 0.9);
+  }
+  html.dark .bg-slate-950\/80,
+  .dark .bg-slate-950\/80 {
+    background-color: rgba(24, 29, 38, 0.82);
+  }
+  html.dark .bg-slate-950\/70,
+  .dark .bg-slate-950\/70 {
+    background-color: rgba(24, 29, 38, 0.72);
+  }
+  html.dark .bg-slate-950\/60,
+  .dark .bg-slate-950\/60 {
+    background-color: rgba(24, 29, 38, 0.64);
+  }
+  html.dark .bg-slate-950\/50,
+  .dark .bg-slate-950\/50 {
+    background-color: rgba(24, 29, 38, 0.54);
+  }
+  html.dark .bg-slate-950\/40,
+  .dark .bg-slate-950\/40 {
+    background-color: rgba(24, 29, 38, 0.45);
+  }
+
+  html.dark .bg-slate-900,
+  .dark.bg-slate-900 {
+    background-color: #212834;
+  }
+  html.dark .bg-slate-900\/95,
+  .dark .bg-slate-900\/95 {
+    background-color: rgba(33, 40, 52, 0.95);
+  }
+  html.dark .bg-slate-900\/90,
+  .dark .bg-slate-900\/90 {
+    background-color: rgba(33, 40, 52, 0.92);
+  }
+  html.dark .bg-slate-900\/80,
+  .dark .bg-slate-900\/80 {
+    background-color: rgba(33, 40, 52, 0.84);
+  }
+  html.dark .bg-slate-900\/60,
+  .dark .bg-slate-900\/60 {
+    background-color: rgba(33, 40, 52, 0.68);
+  }
+  html.dark .bg-slate-900\/50,
+  .dark .bg-slate-900\/50 {
+    background-color: rgba(33, 40, 52, 0.56);
+  }
+  html.dark .bg-slate-900\/40,
+  .dark .bg-slate-900\/40 {
+    background-color: rgba(33, 40, 52, 0.46);
+  }
+  html.dark .bg-slate-900\/30,
+  .dark .bg-slate-900\/30 {
+    background-color: rgba(33, 40, 52, 0.36);
+  }
+  html.dark .hover\:bg-slate-900:hover,
+  .dark .hover\:bg-slate-900:hover {
+    background-color: #262e3d;
+  }
+
+  html.dark .bg-slate-800,
+  .dark.bg-slate-800 {
+    background-color: #2a3342;
+  }
+  html.dark .bg-slate-800\/90,
+  .dark .bg-slate-800\/90 {
+    background-color: rgba(42, 51, 66, 0.92);
+  }
+  html.dark .bg-slate-800\/80,
+  .dark .bg-slate-800\/80 {
+    background-color: rgba(42, 51, 66, 0.84);
+  }
+  html.dark .bg-slate-800\/70,
+  .dark .bg-slate-800\/70 {
+    background-color: rgba(42, 51, 66, 0.74);
+  }
+  html.dark .bg-slate-800\/60,
+  .dark .bg-slate-800\/60 {
+    background-color: rgba(42, 51, 66, 0.66);
+  }
+  html.dark .bg-slate-800\/50,
+  .dark .bg-slate-800\/50 {
+    background-color: rgba(42, 51, 66, 0.56);
+  }
+  html.dark .bg-slate-800\/40,
+  .dark .bg-slate-800\/40 {
+    background-color: rgba(42, 51, 66, 0.48);
+  }
+  html.dark .bg-slate-800\/30,
+  .dark .bg-slate-800\/30 {
+    background-color: rgba(42, 51, 66, 0.38);
+  }
+  html.dark .hover\:bg-slate-800:hover,
+  .dark .hover\:bg-slate-800:hover {
+    background-color: #323d50;
+  }
+  html.dark .hover\:bg-slate-800\/90:hover,
+  .dark .hover\:bg-slate-800\/90:hover {
+    background-color: rgba(50, 61, 80, 0.92);
+  }
+  html.dark .hover\:bg-slate-800\/80:hover,
+  .dark .hover\:bg-slate-800\/80:hover {
+    background-color: rgba(50, 61, 80, 0.84);
+  }
+  html.dark .hover\:bg-slate-800\/70:hover,
+  .dark .hover\:bg-slate-800\/70:hover {
+    background-color: rgba(50, 61, 80, 0.74);
+  }
+  html.dark .hover\:bg-slate-800\/60:hover,
+  .dark .hover\:bg-slate-800\/60:hover {
+    background-color: rgba(50, 61, 80, 0.66);
+  }
+  html.dark .hover\:bg-slate-700:hover,
+  .dark .hover\:bg-slate-700:hover {
+    background-color: #3b485e;
+  }
+
+  /* Gradients using Slate-950/900 in Dark Mode */
+  html.dark .from-slate-950 {
+    --tw-gradient-from: #181d26;
+  }
+  html.dark .from-slate-950\/92 {
+    --tw-gradient-from: rgba(24, 29, 38, 0.92);
+  }
+  html.dark .via-slate-950 {
+    --tw-gradient-via: #181d26;
+  }
+  html.dark .via-slate-950\/30 {
+    --tw-gradient-via: rgba(24, 29, 38, 0.3);
+  }
+  html.dark .to-slate-950 {
+    --tw-gradient-to: #181d26;
+  }
+  html.dark .from-slate-900,
+  html.dark .from-slate-900\/90 {
+    --tw-gradient-from: #212834;
+  }
+  html.dark .via-slate-900,
+  html.dark .via-slate-900\/90,
+  html.dark .via-slate-900\/88 {
+    --tw-gradient-via: #212834;
+  }
+  html.dark .to-slate-900 {
+    --tw-gradient-to: #212834;
+  }
+
+  /* Crisp subtle borders on softened dark slate surfaces */
+  html.dark .border-slate-800,
+  html.dark .border-slate-800\/90,
+  html.dark .border-slate-800\/80,
+  html.dark .border-slate-800\/60 {
+    border-color: rgba(71, 85, 105, 0.55);
+  }
+  html.dark .border-slate-700,
+  html.dark .border-slate-700\/80,
+  html.dark .border-slate-700\/60 {
+    border-color: rgba(100, 116, 139, 0.52);
+  }
+}
+
+/* ========================================================
+   الوضع الداكن الفحمي (Charcoal / Graphite Theme) - مريح للعين بدرجات رمادية داكنة أنيقة
    ======================================================== */
 
 html.theme-black:not(.in-exam),
 html.theme-black:not(.in-exam) body,
 html.theme-black:not(.in-exam) #root,
 html.theme-black:not(.in-exam) #root > div {
-  background-color: #000000 !important;
+  background-color: #1a1d23 !important;
   background-image: none !important;
-  color: #ffffff !important;
+  color: #f1f5f9 !important;
 }
 
-/* Force all containers, cards, headers, footers, tabs, buttons, and inputs to pure black */
-html.theme-black:not(.in-exam) div:not([data-theme-swatch]):not([data-transparent-overlay]):not([data-video-controls-bar]):not([data-progress-track]):not([data-progress-fill]):not([data-seek-fill]),
+/* Keep plain wrapper containers transparent so elevated cards pop cleanly over the #1a1d23 canvas */
+html.theme-black:not(.in-exam) div:not([class*="bg-"]):not([class*="border"]):not([class*="rounded-xl"]):not([class*="rounded-2xl"]):not([class*="rounded-3xl"]):not([data-theme-swatch]):not([data-transparent-overlay]):not([data-video-controls-bar]):not([data-progress-track]):not([data-progress-fill]):not([data-seek-fill]) {
+  background-color: transparent !important;
+  background-image: none !important;
+  color: #f1f5f9 !important;
+}
+
+/* Elevated Charcoal surface for cards, headers, footers, nav, panels, tables */
+html.theme-black:not(.in-exam) div[class*="bg-"]:not([data-theme-swatch]):not([data-transparent-overlay]):not([data-video-controls-bar]):not([data-progress-track]):not([data-progress-fill]):not([data-seek-fill]),
+html.theme-black:not(.in-exam) div[class*="border"]:not([data-theme-swatch]):not([data-transparent-overlay]):not([data-video-controls-bar]):not([data-progress-track]):not([data-progress-fill]):not([data-seek-fill]),
+html.theme-black:not(.in-exam) div[class*="rounded-2xl"]:not([data-theme-swatch]):not([data-transparent-overlay]),
+html.theme-black:not(.in-exam) div[class*="rounded-3xl"]:not([data-theme-swatch]):not([data-transparent-overlay]),
 html.theme-black:not(.in-exam) header,
 html.theme-black:not(.in-exam) footer,
 html.theme-black:not(.in-exam) main,
@@ -142,8 +338,6 @@ html.theme-black:not(.in-exam) nav,
 html.theme-black:not(.in-exam) section,
 html.theme-black:not(.in-exam) article,
 html.theme-black:not(.in-exam) aside,
-html.theme-black:not(.in-exam) button:not([data-theme-swatch]),
-html.theme-black:not(.in-exam) a,
 html.theme-black:not(.in-exam) ul,
 html.theme-black:not(.in-exam) li,
 html.theme-black:not(.in-exam) form,
@@ -152,13 +346,31 @@ html.theme-black:not(.in-exam) thead,
 html.theme-black:not(.in-exam) tbody,
 html.theme-black:not(.in-exam) tr,
 html.theme-black:not(.in-exam) th,
-html.theme-black:not(.in-exam) td,
+html.theme-black:not(.in-exam) td {
+  background-color: #232730 !important;
+  background-image: none !important;
+  color: #f1f5f9 !important;
+}
+
+/* Interactive controls (buttons, CTA links, inputs) get a slightly lighter Graphite tint for clear affordance */
+html.theme-black:not(.in-exam) button:not([data-theme-swatch]),
+html.theme-black:not(.in-exam) a[class*="bg-"],
 html.theme-black:not(.in-exam) input,
 html.theme-black:not(.in-exam) textarea,
 html.theme-black:not(.in-exam) select {
-  background-color: #000000 !important;
+  background-color: #2b303b !important;
   background-image: none !important;
   color: #ffffff !important;
+}
+
+html.theme-black:not(.in-exam) button:not([data-theme-swatch]):hover,
+html.theme-black:not(.in-exam) a[class*="bg-"]:hover {
+  background-color: #343a47 !important;
+}
+
+html.theme-black:not(.in-exam) a:not([class*="bg-"]) {
+  background-color: transparent !important;
+  color: #f1f5f9 !important;
 }
 
 /* Preserve transparent overlays (video click shields, iframe wrappers) & control bar bottom fade */
@@ -169,20 +381,20 @@ html.theme-black:not(.in-exam) [data-transparent-overlay="true"] {
 
 html.theme-black:not(.in-exam) [data-video-controls-bar="true"] {
   background-color: transparent !important;
-  background-image: linear-gradient(to top, rgba(0, 0, 0, 0.96), rgba(0, 0, 0, 0.8), transparent) !important;
+  background-image: linear-gradient(to top, rgba(20, 23, 28, 0.94), rgba(20, 23, 28, 0.72), transparent) !important;
 }
 
-/* Keep progress bars & video seek bars clearly legible on pure black */
+/* Keep progress bars & video seek bars clearly legible on Charcoal surfaces */
 html.theme-black:not(.in-exam) [data-progress-track="true"] {
-  background-color: #000000 !important;
+  background-color: #1a1d23 !important;
   background-image: none !important;
-  border: 1px solid rgba(255, 255, 255, 0.28) !important;
+  border: 1px solid rgba(255, 255, 255, 0.22) !important;
 }
 
 html.theme-black:not(.in-exam) [data-progress-fill="true"] {
   background-color: rgba(255, 255, 255, 0.28) !important;
   background-image: none !important;
-  border: 1px solid rgba(255, 255, 255, 0.65) !important;
+  border: 1px solid rgba(255, 255, 255, 0.55) !important;
   color: #ffffff !important;
 }
 
@@ -191,7 +403,7 @@ html.theme-black:not(.in-exam) [data-seek-fill="true"] {
   background-image: none !important;
 }
 
-/* Keep badges black with subtle white outline and pure white text */
+/* Keep typography crisp and legible on Charcoal */
 html.theme-black:not(.in-exam) span:not([data-theme-swatch]),
 html.theme-black:not(.in-exam) p,
 html.theme-black:not(.in-exam) h1,
@@ -203,34 +415,34 @@ html.theme-black:not(.in-exam) h6,
 html.theme-black:not(.in-exam) label,
 html.theme-black:not(.in-exam) strong,
 html.theme-black:not(.in-exam) small {
-  color: #ffffff !important;
+  color: #f1f5f9 !important;
 }
 
 html.theme-black:not(.in-exam) span[class*="bg-"]:not([data-theme-swatch]),
 html.theme-black:not(.in-exam) span[class*="border"]:not([data-theme-swatch]) {
-  background-color: #000000 !important;
+  background-color: #2b303b !important;
   background-image: none !important;
   color: #ffffff !important;
 }
 
-/* Keep crisp subtle borders so cards, tabs, buttons, and inputs remain well-defined on pure black */
+/* Subtle refined borders so cards, tabs, buttons, and inputs stay crisp on Charcoal */
 html.theme-black:not(.in-exam) *[class*="border"]:not([data-theme-swatch]),
 html.theme-black:not(.in-exam) button:not([data-theme-swatch]),
 html.theme-black:not(.in-exam) input,
 html.theme-black:not(.in-exam) textarea,
 html.theme-black:not(.in-exam) select {
-  border-color: rgba(255, 255, 255, 0.22) !important;
+  border-color: rgba(255, 255, 255, 0.16) !important;
   box-shadow: none !important;
 }
 
-/* Icons remain white with transparent background */
+/* Icons remain crisp light with transparent background */
 html.theme-black:not(.in-exam) svg {
-  color: #ffffff !important;
+  color: #f1f5f9 !important;
   background-color: transparent !important;
 }
 
-/* Readable placeholder text on black inputs */
+/* Readable placeholder text on Charcoal inputs */
 html.theme-black:not(.in-exam) input::placeholder,
 html.theme-black:not(.in-exam) textarea::placeholder {
-  color: rgba(255, 255, 255, 0.6) !important;
+  color: rgba(241, 245, 249, 0.58) !important;
 }

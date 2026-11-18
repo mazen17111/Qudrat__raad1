@@ -296,7 +296,7 @@ export const CertificateModal: React.FC<CertificateModalProps> = ({
             padding: 32px !important;
             box-shadow: none !important;
             border: 10px solid #d97706 !important;
-            background: #020617 !important;
+            background: #181d26 !important;
             color: #ffffff !important;
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;

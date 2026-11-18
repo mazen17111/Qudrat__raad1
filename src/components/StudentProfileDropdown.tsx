@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { LogOut, User, Check, ChevronDown, Sparkles, BookOpen } from 'lucide-react';
+import { LogOut, Check, ChevronDown, Sparkles, BookOpen } from 'lucide-react';
 import { StudentUser, CourseThemeColor } from '../types';
 import { COURSE_COLOR_OPTIONS } from '../utils/courseThemes';
 
@@ -71,7 +71,7 @@ export const StudentProfileDropdown: React.FC<StudentProfileDropdownProps> = ({
         onClick={() => setIsOpen((prev) => !prev)}
         aria-haspopup="true"
         aria-expanded={isOpen}
-        className={`flex items-center gap-2 p-1 sm:pr-2.5 sm:pl-2 rounded-2xl border transition shadow-xs cursor-pointer select-none group ${
+        className={`flex items-center gap-2 p-1 sm:pr-2.5 sm:pl-2 rounded-lg border transition shadow-xs cursor-pointer select-none group ${
           isOpen
             ? isDarkMode
               ? 'bg-slate-700/90 border-sky-500/70 ring-2 ring-sky-500/30'
@@ -120,7 +120,7 @@ export const StudentProfileDropdown: React.FC<StudentProfileDropdownProps> = ({
       {/* ================= القائمة المنسدلة (Dropdown Menu) ================= */}
       {isOpen && (
         <div
-          className={`absolute left-0 sm:right-auto sm:left-0 mt-2 w-72 rounded-3xl border shadow-2xl p-3 z-50 animate-in fade-in zoom-in-95 duration-150 backdrop-blur-xl ${
+          className={`absolute left-0 sm:right-auto sm:left-0 mt-2 w-72 rounded-lg border shadow-2xl p-3 z-50 animate-in fade-in zoom-in-95 duration-150 backdrop-blur-xl ${
             isDarkMode
               ? 'bg-slate-900/95 border-slate-700/90 text-white shadow-slate-950/80'
               : 'bg-white/95 border-slate-200 text-slate-900 shadow-slate-300/60'
@@ -155,13 +155,13 @@ export const StudentProfileDropdown: React.FC<StudentProfileDropdownProps> = ({
             <button
               type="button"
               onClick={handleMyAccountClick}
-              className={`w-full flex items-center gap-2.5 p-2.5 rounded-2xl text-xs font-black transition cursor-pointer ${
+              className={`w-full flex items-center gap-2.5 p-2.5 rounded-lg text-xs font-black transition cursor-pointer ${
                 isDarkMode
                   ? 'hover:bg-slate-800 text-slate-200 hover:text-white'
                   : 'hover:bg-slate-100 text-slate-800 hover:text-black'
               }`}
             >
-              <div className="w-8 h-8 rounded-xl bg-sky-500/15 text-sky-500 flex items-center justify-center shrink-0">
+              <div className="w-8 h-8 rounded-md bg-sky-500/15 text-sky-500 flex items-center justify-center shrink-0">
                 <BookOpen className="w-4 h-4" />
               </div>
               <div className="text-right flex-1">
@@ -174,9 +174,9 @@ export const StudentProfileDropdown: React.FC<StudentProfileDropdownProps> = ({
             <button
               type="button"
               onClick={handleLogoutClick}
-              className="w-full flex items-center gap-2.5 p-2.5 rounded-2xl text-xs font-black transition cursor-pointer text-rose-500 dark:text-rose-400 hover:bg-rose-500/10"
+              className="w-full flex items-center gap-2.5 p-2.5 rounded-lg text-xs font-black transition cursor-pointer text-rose-500 dark:text-rose-400 hover:bg-rose-500/10"
             >
-              <div className="w-8 h-8 rounded-xl bg-rose-500/15 text-rose-500 flex items-center justify-center shrink-0">
+              <div className="w-8 h-8 rounded-md bg-rose-500/15 text-rose-500 flex items-center justify-center shrink-0">
                 <LogOut className="w-4 h-4" />
               </div>
               <div className="text-right flex-1">
@@ -201,7 +201,7 @@ export const StudentProfileDropdown: React.FC<StudentProfileDropdownProps> = ({
               </span>
             </div>
 
-            {/* شبكة الدوائر للألوان الثمانية: الافتراضي، أحمر، أخضر، أزرق، بنفسجي، وردي، برتقالي، أسود */}
+            {/* شبكة الدوائر للألوان الثمانية */}
             <div className="grid grid-cols-4 gap-2 pt-1 px-1">
               {COURSE_COLOR_OPTIONS.map((option) => {
                 const isSelected = currentThemeColor === option.id;
@@ -217,7 +217,9 @@ export const StudentProfileDropdown: React.FC<StudentProfileDropdownProps> = ({
                       data-theme-swatch="true"
                       className={`w-7 h-7 rounded-full flex items-center justify-center transition-all duration-200 ${option.circleClass} ${
                         isSelected
-                          ? 'ring-2 ring-offset-2 ring-offset-slate-900 ring-white scale-110 shadow-lg'
+                          ? isDarkMode
+                            ? 'ring-2 ring-offset-2 ring-offset-slate-900 ring-white scale-110 shadow-lg'
+                            : 'ring-2 ring-offset-2 ring-offset-white ring-slate-900 scale-110 shadow-lg'
                           : 'opacity-85 hover:opacity-100 hover:scale-105'
                       }`}
                     >
