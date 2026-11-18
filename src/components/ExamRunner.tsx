@@ -36,6 +36,8 @@ import {
   ShieldAlert,
   ShieldCheck,
   ListChecks,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { StudentUser, ExamQuestion, FolderItem, ExamSystemType } from '../types';
@@ -569,6 +571,7 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
   const [timeSpentSeconds, setTimeSpentSeconds] = useState<number>(0);
   const [isTimed] = useState(isTimedInitial);
   const [showMobileQuestionsList, setShowMobileQuestionsList] = useState(false);
+  const [showQuestionsReview, setShowQuestionsReview] = useState(false);
 
   const finishSubmittedRef = useRef<boolean>(false);
   const selectedAnswersRef = useRef<Record<number, number>>(selectedAnswers);
@@ -935,6 +938,7 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
     const elapsed = Math.max(1, Math.round((Date.now() - examStartTime) / 1000));
 
     setTimeSpentSeconds(elapsed);
+    setShowQuestionsReview(false);
     setIsFinished(true);
 
     if (percentage >= (targetPercentage || 80)) {
@@ -1241,7 +1245,7 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
     const resultTheme = getExamResultTheme(percentage, isDarkMode);
 
     // SVG circular progress gauge math
-    const gaugeRadius = 52;
+    const gaugeRadius = 64;
     const gaugeCircumference = 2 * Math.PI * gaugeRadius;
     const clampedPct = Math.max(0, Math.min(100, percentage));
     const gaugeDashOffset = gaugeCircumference - (clampedPct / 100) * gaugeCircumference;
@@ -1261,73 +1265,103 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
               : 'bg-white border-slate-200 shadow-slate-200/80'
           }`}
         >
-          {/* RIGHT PANEL (على اليمين في RTL): الدرجة المئوية واللون المتغير حسب النتيجة */}
+          {/* RIGHT PANEL (على اليمين في RTL): الدرجة والنسبة المئوية بشكل أكبر واللون المتغير حسب النتيجة */}
           <div
             className="lg:col-span-6 p-6 sm:p-8 flex flex-col sm:flex-row items-center justify-between gap-6 relative overflow-hidden"
             style={{ backgroundImage: resultTheme.rightGradient }}
           >
             {/* Circular Progress Gauge (Far right in RTL) */}
             <div
-              className={`w-36 h-36 sm:w-40 sm:h-40 rounded-full shrink-0 flex items-center justify-center relative shadow-xl ${
+              className={`w-44 h-44 sm:w-52 sm:h-52 rounded-full shrink-0 flex items-center justify-center relative shadow-2xl ${
                 isDarkMode ? 'bg-[#2A303A]' : 'bg-white'
               }`}
             >
               <svg
                 className="w-full h-full -rotate-90 p-2"
-                viewBox="0 0 128 128"
-                aria-label={`النتيجة ${percentage} بالمئة`}
+                viewBox="0 0 160 160"
+                aria-label={`النتيجة ${percentage} بالمئة والدرجة ${score} من ${total}`}
               >
                 <circle
-                  cx="64"
-                  cy="64"
+                  cx="80"
+                  cy="80"
                   r={gaugeRadius}
                   fill="none"
                   stroke={isDarkMode ? '#353941' : '#E2E8F0'}
-                  strokeWidth="10"
+                  strokeWidth="11"
                 />
                 <circle
-                  cx="64"
-                  cy="64"
+                  cx="80"
+                  cy="80"
                   r={gaugeRadius}
                   fill="none"
                   stroke={resultTheme.ringColor}
-                  strokeWidth="10"
+                  strokeWidth="11"
                   strokeLinecap="round"
                   strokeDasharray={gaugeCircumference}
                   strokeDashoffset={gaugeDashOffset}
                   className="transition-all duration-700"
                 />
               </svg>
-              <div
-                className="absolute inset-0 flex items-center justify-center gap-0.5 tabular-nums"
-                dir="ltr"
-              >
-                <span
-                  className={`badge-colored text-3xl sm:text-4xl font-black tracking-tight ${
-                    isDarkMode ? 'text-white' : 'text-slate-900'
+              <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-3">
+                <div
+                  className="flex items-baseline justify-center gap-0.5 tabular-nums leading-none"
+                  dir="ltr"
+                >
+                  <span
+                    className={`badge-colored text-5xl sm:text-6xl font-black tracking-tight ${
+                      isDarkMode ? 'text-white' : 'text-slate-900'
+                    }`}
+                  >
+                    {percentage}
+                  </span>
+                  <span
+                    className={`badge-colored text-2xl sm:text-3xl font-black ${
+                      isDarkMode ? 'text-white/90' : 'text-slate-700'
+                    }`}
+                  >
+                    %
+                  </span>
+                </div>
+                <div
+                  className={`mt-2 px-3 py-0.5 rounded-full text-sm sm:text-base font-black tabular-nums ${
+                    isDarkMode ? 'bg-white/10 text-slate-100' : 'bg-slate-100 text-slate-900'
                   }`}
                 >
-                  {percentage}
-                </span>
-                <span
-                  className={`badge-colored text-lg sm:text-xl font-black mt-1 ${
-                    isDarkMode ? 'text-white/90' : 'text-slate-700'
-                  }`}
-                >
-                  %
-                </span>
+                  <span className={`badge-colored ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
+                    {score} / {total}
+                  </span>
+                </div>
               </div>
             </div>
 
-            {/* Motivational Headline & Pill Badge (Left side of Right Panel in RTL) */}
+            {/* Motivational Headline, Prominent Score/Percentage & Pill Badge */}
             <div
               data-preserve-colors="true"
-              className="flex-1 flex flex-col items-center sm:items-start text-center sm:text-right space-y-3 min-w-0"
+              className="flex-1 flex flex-col items-center sm:items-start text-center sm:text-right space-y-3.5 min-w-0"
             >
               <span className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/15 border border-white/20 backdrop-blur-sm text-xs font-bold text-white whitespace-nowrap">
                 <Trophy className="w-3.5 h-3.5 shrink-0" />
                 <span>نتيجتك في هذه المحاولة</span>
               </span>
+
+              <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2.5 w-full">
+                <div className="px-4 py-2 rounded-xl bg-white/15 border border-white/25 backdrop-blur-sm flex items-baseline gap-2">
+                  <span className="text-xs sm:text-sm font-bold text-white/90">الدرجة:</span>
+                  <span className="text-2xl sm:text-3xl font-black text-white tabular-nums leading-none">
+                    {score}
+                  </span>
+                  <span className="text-sm sm:text-base font-bold text-white/85 tabular-nums">
+                    من {total}
+                  </span>
+                </div>
+
+                <div className="px-4 py-2 rounded-xl bg-white/15 border border-white/25 backdrop-blur-sm flex items-baseline gap-2">
+                  <span className="text-xs sm:text-sm font-bold text-white/90">النسبة:</span>
+                  <span className="text-2xl sm:text-3xl font-black text-white tabular-nums leading-none" dir="ltr">
+                    {percentage}%
+                  </span>
+                </div>
+              </div>
 
               <h2 className="text-xl sm:text-2xl font-black text-white leading-snug text-balance">
                 {resultTheme.headline}
@@ -1496,6 +1530,7 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
                 finishSubmittedRef.current = false;
                 setSelectedAnswers({});
                 setCurrentIdx(0);
+                setShowQuestionsReview(false);
                 setIsFinished(false);
                 setTimeLeft(totalSeconds);
                 setExamStartTime(Date.now());
@@ -1512,6 +1547,31 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
             </button>
 
             <button
+              type="button"
+              data-preserve-colors={showQuestionsReview ? undefined : 'true'}
+              onClick={() => setShowQuestionsReview((prev) => !prev)}
+              className={`flex items-center gap-2 px-7 py-3 rounded-2xl font-black text-xs md:text-sm transition shadow-lg cursor-pointer ${
+                showQuestionsReview
+                  ? isDarkMode
+                    ? 'bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/50 shadow-amber-500/10'
+                    : 'bg-amber-100 hover:bg-amber-200 text-slate-900 border border-amber-400 shadow-amber-200/40'
+                  : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/30'
+              }`}
+            >
+              {showQuestionsReview ? (
+                <>
+                  <EyeOff className="w-4 h-4" />
+                  <span>إخفاء الأسئلة</span>
+                </>
+              ) : (
+                <>
+                  <Eye className="w-4 h-4" />
+                  <span>مراجعة الأسئلة</span>
+                </>
+              )}
+            </button>
+
+            <button
               onClick={handleRequestExit}
               className="flex items-center gap-2 px-8 py-3 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white font-black text-xs md:text-sm transition shadow-lg shadow-blue-600/30 cursor-pointer"
             >
@@ -1521,8 +1581,9 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
           </div>
         </div>
 
-        {/* Detailed Question Review List */}
-        <div className={`border rounded-3xl p-6 md:p-8 shadow-xl space-y-6 ${
+        {/* Detailed Question Review List (Collapsible) */}
+        {showQuestionsReview && (
+        <div className={`border rounded-3xl p-6 md:p-8 shadow-xl space-y-6 animate-in fade-in duration-200 ${
           isDarkMode ? 'bg-slate-900/90 border-slate-800' : 'bg-white border-slate-200'
         }`}>
           <div className="flex items-center justify-between pb-4 border-b border-slate-200 dark:border-slate-800">
@@ -1700,6 +1761,7 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
             })}
           </div>
         </div>
+        )}
 
         {/* Folder Picker Modal (in review screen) */}
         {renderFolderModal()}
