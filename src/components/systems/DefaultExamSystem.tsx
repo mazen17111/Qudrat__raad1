@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Clock,
   Zap,
@@ -11,6 +11,10 @@ import {
   PanelLeftClose,
   BookmarkPlus,
   ChevronDown,
+  CheckCircle2,
+  AlertCircle,
+  ListChecks,
+  Flag,
 } from 'lucide-react';
 import { DefaultExamSystemProps } from './examSystemTypes';
 import { Whiteboard } from '../Whiteboard';
@@ -49,6 +53,460 @@ export const DefaultExamSystem: React.FC<DefaultExamSystemProps> = ({
     : ['الخيار أ', 'الخيار ب', 'الخيار ج', 'الخيار د'];
 
   const answeredCount = Object.keys(selectedAnswers).length;
+  const remainingCount = Math.max(0, safeQuestions.length - answeredCount);
+  const markedCount = Object.values(markedForReview).filter(Boolean).length;
+
+  const [showFinalReview, setShowFinalReview] = useState(false);
+  const [showConfirmFinishModal, setShowConfirmFinishModal] = useState(false);
+  const [isInstructionsOpen, setIsInstructionsOpen] = useState(true);
+  const [isSectionOpen, setIsSectionOpen] = useState(true);
+  const [reviewToast, setReviewToast] = useState<string | null>(null);
+
+  const handleReviewIncomplete = () => {
+    const firstUnanswered = safeQuestions.findIndex((_, idx) => selectedAnswers[idx] === undefined);
+    if (firstUnanswered !== -1) {
+      setCurrentIdx(firstUnanswered);
+      setShowFinalReview(false);
+    } else {
+      setReviewToast('رائع! جميع الأسئلة مكتملة ومجاب عليها بالكامل ✓');
+      setTimeout(() => setReviewToast(null), 3500);
+    }
+  };
+
+  const handleReviewAll = () => {
+    setCurrentIdx(0);
+    setShowFinalReview(false);
+  };
+
+  const handleReviewMarked = () => {
+    const firstMarked = safeQuestions.findIndex((_, idx) => markedForReview[idx]);
+    if (firstMarked !== -1) {
+      setCurrentIdx(firstMarked);
+      setShowFinalReview(false);
+    } else {
+      setReviewToast('لا توجد أسئلة مميزة للمراجعة حالياً ⭐');
+      setTimeout(() => setReviewToast(null), 3500);
+    }
+  };
+
+  // ================= صفحة المراجعة النهائية - النظام الافتراضي للمنصة =================
+  if (showFinalReview) {
+    return (
+      <div
+        className={`flex flex-col min-h-screen p-2 sm:p-3 md:p-5 gap-3 sm:gap-4 max-w-[1600px] mx-auto w-full pb-6 overflow-x-hidden ${
+          isDarkMode ? 'text-white' : 'text-black'
+        }`}
+        dir="rtl"
+      >
+        {/* Header Bar */}
+        <div
+          className={`border rounded-2xl p-3 sm:p-4 md:px-6 shadow-xl flex flex-wrap items-center justify-between gap-3 ${
+            isDarkMode ? 'bg-slate-900/95 border-slate-800' : 'bg-white border-slate-200'
+          }`}
+        >
+          <div className="flex items-center gap-3 flex-wrap">
+            <button
+              type="button"
+              onClick={() => setShowFinalReview(false)}
+              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl border text-xs sm:text-sm font-black transition cursor-pointer ${
+                isDarkMode
+                  ? 'bg-slate-800 border-slate-700 text-slate-200 hover:bg-slate-700'
+                  : 'bg-slate-100 border-slate-300 text-slate-900 hover:bg-slate-200'
+              }`}
+              title="العودة لمتابعة حل الاختبار"
+            >
+              <ArrowRight className="w-4 h-4" />
+              <span>العودة لمتابعة الحل</span>
+            </button>
+
+            <div className="min-w-0">
+              <h2
+                className={`text-sm sm:text-lg font-black flex items-center gap-2 ${
+                  isDarkMode ? 'text-white' : 'text-slate-900'
+                }`}
+              >
+                <Zap className="w-4 h-4 sm:w-5 sm:h-5 text-amber-500 shrink-0" />
+                <span className="truncate">{examTitle}</span>
+                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-black bg-blue-500/15 text-blue-600 border border-blue-500/30 whitespace-nowrap">
+                  المراجعة النهائية
+                </span>
+              </h2>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {isTimed ? (
+              <div
+                className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl border font-mono font-bold text-xs sm:text-sm ${
+                  timeLeft < 60
+                    ? 'bg-rose-500/20 border-rose-500 text-rose-600 animate-pulse'
+                    : isDarkMode
+                    ? 'bg-slate-800 border-slate-700 text-blue-300'
+                    : 'bg-slate-100 border-slate-300 text-black'
+                }`}
+              >
+                <Clock className="w-4 h-4 text-blue-500" />
+                <span>{formatTime(timeLeft)}</span>
+              </div>
+            ) : (
+              <div className="px-3 py-1 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 text-xs font-black">
+                تدريب حر
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Quick Summary Stats */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div
+            className={`border rounded-2xl p-3.5 sm:p-4 shadow-sm flex items-center justify-between ${
+              isDarkMode ? 'bg-slate-900/90 border-slate-800' : 'bg-white border-slate-200'
+            }`}
+          >
+            <div>
+              <div className={`text-xs font-bold ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
+                إجمالي الأسئلة
+              </div>
+              <div className="text-2xl font-black text-blue-500 mt-0.5 tabular-nums">
+                {safeQuestions.length}
+              </div>
+            </div>
+            <div className="p-2.5 rounded-xl bg-blue-500/15 text-blue-500 border border-blue-500/30">
+              <ListChecks className="w-5 h-5" />
+            </div>
+          </div>
+
+          <div
+            className={`border rounded-2xl p-3.5 sm:p-4 shadow-sm flex items-center justify-between ${
+              isDarkMode ? 'bg-slate-900/90 border-slate-800' : 'bg-white border-slate-200'
+            }`}
+          >
+            <div>
+              <div className={`text-xs font-bold ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
+                تمت الإجابة
+              </div>
+              <div className="text-2xl font-black text-emerald-500 mt-0.5 tabular-nums">
+                {answeredCount}
+              </div>
+            </div>
+            <div className="p-2.5 rounded-xl bg-emerald-500/15 text-emerald-500 border border-emerald-500/30">
+              <CheckCircle2 className="w-5 h-5" />
+            </div>
+          </div>
+
+          <div
+            className={`border rounded-2xl p-3.5 sm:p-4 shadow-sm flex items-center justify-between ${
+              isDarkMode ? 'bg-slate-900/90 border-slate-800' : 'bg-white border-slate-200'
+            }`}
+          >
+            <div>
+              <div className={`text-xs font-bold ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
+                غير مكتمل
+              </div>
+              <div className="text-2xl font-black text-rose-500 mt-0.5 tabular-nums">
+                {remainingCount}
+              </div>
+            </div>
+            <div className="p-2.5 rounded-xl bg-rose-500/15 text-rose-500 border border-rose-500/30">
+              <AlertCircle className="w-5 h-5" />
+            </div>
+          </div>
+
+          <div
+            className={`border rounded-2xl p-3.5 sm:p-4 shadow-sm flex items-center justify-between ${
+              isDarkMode ? 'bg-slate-900/90 border-slate-800' : 'bg-white border-slate-200'
+            }`}
+          >
+            <div>
+              <div className={`text-xs font-bold ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
+                مميز للمراجعة
+              </div>
+              <div className="text-2xl font-black text-amber-500 mt-0.5 tabular-nums">
+                {markedCount}
+              </div>
+            </div>
+            <div className="p-2.5 rounded-xl bg-amber-500/15 text-amber-500 border border-amber-500/30">
+              <Flag className="w-5 h-5" />
+            </div>
+          </div>
+        </div>
+
+        {/* Collapsible Instructions Card */}
+        <div
+          className={`border rounded-2xl overflow-hidden shadow-md ${
+            isDarkMode ? 'bg-slate-900/90 border-slate-800' : 'bg-white border-slate-200'
+          }`}
+        >
+          <div
+            data-preserve-colors="true"
+            onClick={() => setIsInstructionsOpen(!isInstructionsOpen)}
+            className="bg-blue-600 hover:bg-blue-500 text-white px-4 sm:px-5 py-3 font-black text-sm flex items-center justify-between cursor-pointer select-none transition"
+          >
+            <span className="flex items-center gap-2">
+              <span>{isInstructionsOpen ? '⊟' : '⊞'}</span>
+              <span>إرشادات المراجعة النهائية</span>
+            </span>
+            <span className="text-xs font-bold opacity-90">
+              {isInstructionsOpen ? 'إخفاء الإرشادات' : 'عرض الإرشادات'}
+            </span>
+          </div>
+          {isInstructionsOpen && (
+            <div
+              className={`p-4 sm:px-5 text-xs sm:text-sm leading-relaxed space-y-2 ${
+                isDarkMode ? 'text-slate-300' : 'text-slate-800'
+              }`}
+            >
+              <p className="font-bold">
+                راجع حالة إجاباتك قبل تسليم الاختبار واعتماد النتيجة النهائية:
+              </p>
+              <ol className="mr-5 space-y-1 list-decimal font-medium">
+                <li>اضغط على <strong>مراجعة الكل</strong> لاستعراض جميع الأسئلة بالترتيب.</li>
+                <li>اضغط على <strong>مراجعة الغير مكتمل</strong> للانتقال مباشرة إلى الأسئلة التي لم تُجب عليها.</li>
+                <li>اضغط على <strong>مراجعة المميز بعلامة</strong> للعودة إلى الأسئلة التي قمت بتمييزها.</li>
+              </ol>
+              <div
+                className={`mt-2 text-xs font-bold p-2.5 rounded-xl border ${
+                  isDarkMode
+                    ? 'bg-blue-500/10 border-blue-500/30 text-blue-300'
+                    : 'bg-blue-50 border-blue-200 text-blue-900'
+                }`}
+              >
+                💡 يمكنك النقر مباشرة على أي سؤال في القائمة أدناه للعودة إليه وتعديل إجابتك.
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Collapsible Questions Summary Grid */}
+        <div
+          className={`border rounded-3xl overflow-hidden shadow-xl flex-1 ${
+            isDarkMode ? 'bg-slate-900/90 border-slate-800' : 'bg-white border-slate-200'
+          }`}
+        >
+          <div
+            data-preserve-colors="true"
+            onClick={() => setIsSectionOpen(!isSectionOpen)}
+            className="bg-blue-600 hover:bg-blue-500 text-white px-4 sm:px-5 py-3 font-black text-sm flex items-center justify-between cursor-pointer select-none transition"
+          >
+            <span className="flex items-center gap-2">
+              <span>{isSectionOpen ? '⊟' : '⊞'}</span>
+              <span>ملخص الأسئلة والإجابات</span>
+            </span>
+            <span className="text-xs font-bold bg-white/15 px-3 py-1 rounded-full">
+              {remainingCount > 0 ? `${remainingCount} غير مكتمل` : 'مكتمل بالكامل ✓'}
+            </span>
+          </div>
+
+          {isSectionOpen && (
+            <div className="p-3 sm:p-5 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5">
+              {safeQuestions.map((_, idx) => {
+                const isAnswered = selectedAnswers[idx] !== undefined;
+                const isFlagged = !!markedForReview[idx];
+
+                return (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => {
+                      setCurrentIdx(idx);
+                      setShowFinalReview(false);
+                    }}
+                    className={`p-3.5 rounded-2xl border flex items-center justify-between transition cursor-pointer text-right group ${
+                      isAnswered
+                        ? isDarkMode
+                          ? 'bg-emerald-950/20 border-emerald-500/30 hover:border-emerald-400'
+                          : 'bg-emerald-50/70 border-emerald-200 hover:border-emerald-400'
+                        : isDarkMode
+                        ? 'bg-rose-950/20 border-rose-500/30 hover:border-rose-400'
+                        : 'bg-rose-50/70 border-rose-200 hover:border-rose-400'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <span
+                        data-preserve-colors="true"
+                        className={`w-8 h-8 rounded-xl flex items-center justify-center text-xs font-black text-white shrink-0 ${
+                          isAnswered ? 'bg-emerald-600' : 'bg-rose-600'
+                        }`}
+                      >
+                        {idx + 1}
+                      </span>
+                      <div className="flex flex-col">
+                        <span
+                          className={`text-sm font-black ${
+                            isDarkMode ? 'text-white' : 'text-slate-900'
+                          }`}
+                        >
+                          السؤال {idx + 1}
+                        </span>
+                        <span
+                          className={`text-[11px] font-bold ${
+                            isAnswered ? 'text-emerald-500' : 'text-rose-500'
+                          }`}
+                        >
+                          {isAnswered ? 'تمت الإجابة ✓' : 'غير مكتمل'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <span
+                      className={`text-sm font-black transition ${
+                        isFlagged ? 'text-amber-500 scale-110' : 'text-slate-400/40'
+                      }`}
+                      title={isFlagged ? 'مميز للمراجعة' : 'غير مميز'}
+                    >
+                      {isFlagged ? '⭐' : '⚑'}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Bottom Review Actions Bar */}
+        <div
+          className={`border rounded-2xl p-3 sm:p-4 shadow-xl flex flex-wrap items-center justify-between gap-3 ${
+            isDarkMode ? 'bg-slate-900/95 border-slate-800' : 'bg-white border-slate-200'
+          }`}
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={handleReviewAll}
+              className={`px-4 py-2.5 rounded-xl border text-xs sm:text-sm font-black transition cursor-pointer ${
+                isDarkMode
+                  ? 'bg-slate-800 border-slate-700 text-slate-200 hover:bg-slate-700'
+                  : 'bg-slate-100 border-slate-300 text-slate-900 hover:bg-slate-200'
+              }`}
+            >
+              📋 مراجعة الكل
+            </button>
+
+            <button
+              type="button"
+              onClick={handleReviewIncomplete}
+              className={`px-4 py-2.5 rounded-xl border text-xs sm:text-sm font-black transition cursor-pointer ${
+                isDarkMode
+                  ? 'bg-rose-500/15 border-rose-500/40 text-rose-300 hover:bg-rose-500/25'
+                  : 'bg-rose-50 border-rose-300 text-rose-900 hover:bg-rose-100'
+              }`}
+            >
+              ✕ مراجعة الغير مكتمل ({remainingCount})
+            </button>
+
+            <button
+              type="button"
+              onClick={handleReviewMarked}
+              className={`px-4 py-2.5 rounded-xl border text-xs sm:text-sm font-black transition cursor-pointer ${
+                isDarkMode
+                  ? 'bg-amber-500/15 border-amber-500/40 text-amber-300 hover:bg-amber-500/25'
+                  : 'bg-amber-50 border-amber-300 text-amber-900 hover:bg-amber-100'
+              }`}
+            >
+              ⭐ مراجعة المميز بعلامة ({markedCount})
+            </button>
+          </div>
+
+          <button
+            type="button"
+            data-preserve-colors="true"
+            onClick={() => setShowConfirmFinishModal(true)}
+            className="px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs sm:text-sm transition shadow-lg shadow-emerald-600/25 cursor-pointer flex items-center gap-2"
+          >
+            <CheckCircle2 className="w-4 h-4" />
+            <span>إنهاء المراجعة وتسليم الاختبار</span>
+          </button>
+        </div>
+
+        {/* Toast Notification */}
+        {reviewToast && (
+          <div
+            data-preserve-colors="true"
+            className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 bg-blue-600 text-white px-6 py-2.5 rounded-full shadow-2xl text-xs sm:text-sm font-black border border-white/25"
+          >
+            {reviewToast}
+          </div>
+        )}
+
+        {/* Confirmation Modal */}
+        {showConfirmFinishModal && (
+          <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+            <div
+              className={`rounded-3xl shadow-2xl border max-w-md w-full overflow-hidden text-right ${
+                isDarkMode ? 'bg-slate-900 border-slate-800 text-white' : 'bg-white border-slate-200 text-slate-900'
+              }`}
+              dir="rtl"
+            >
+              <div
+                data-preserve-colors="true"
+                className="bg-blue-600 text-white px-5 py-3.5 font-black text-base flex justify-between items-center"
+              >
+                <span>تأكيد إنهاء الاختبار وتسليمه</span>
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmFinishModal(false)}
+                  className="text-white hover:text-amber-200 text-lg font-bold cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="p-6 space-y-4">
+                {remainingCount > 0 ? (
+                  <div
+                    className={`p-4 rounded-2xl border text-sm leading-relaxed ${
+                      isDarkMode
+                        ? 'bg-amber-500/10 border-amber-500/30 text-amber-200'
+                        : 'bg-amber-50 border-amber-300 text-amber-950'
+                    }`}
+                  >
+                    ⚠️ <strong>تنبيه هام:</strong> لديك <strong>{remainingCount}</strong> أسئلة غير مكتملة (لم تقم بالإجابة عليها).
+                    <p className="mt-2 text-xs opacity-90">
+                      هل أنت متأكد من إنهاء المراجعة وتسليم الاختبار نهائياً؟
+                    </p>
+                  </div>
+                ) : (
+                  <p className={`text-sm font-bold leading-relaxed ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>
+                    لقد قمت بالإجابة على جميع الأسئلة ({safeQuestions.length} سؤالاً).
+                    <br />
+                    هل أنت متأكد من إنهاء المراجعة وتسليم الاختبار وعرض النتيجة النهائية؟
+                  </p>
+                )}
+
+                <div
+                  className={`flex items-center justify-end gap-3 pt-3 border-t ${
+                    isDarkMode ? 'border-slate-800' : 'border-slate-200'
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmFinishModal(false)}
+                    className={`px-5 py-2.5 rounded-xl text-xs sm:text-sm font-black transition cursor-pointer ${
+                      isDarkMode
+                        ? 'bg-slate-800 hover:bg-slate-700 text-slate-200'
+                        : 'bg-slate-100 hover:bg-slate-200 text-slate-800'
+                    }`}
+                  >
+                    العودة للمراجعة
+                  </button>
+                  <button
+                    type="button"
+                    data-preserve-colors="true"
+                    onClick={() => {
+                      setShowConfirmFinishModal(false);
+                      finishTest();
+                    }}
+                    className="px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs sm:text-sm font-black transition shadow-lg shadow-emerald-600/25 cursor-pointer"
+                  >
+                    نعم، تسليم الاختبار نهائياً ✓
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div
@@ -152,10 +610,10 @@ export const DefaultExamSystem: React.FC<DefaultExamSystemProps> = ({
 
               {/* Finish Button */}
               <button
-                onClick={finishTest}
+                onClick={() => setShowFinalReview(true)}
                 className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-[11px] transition shadow-md shadow-emerald-600/20"
               >
-                إنهاء والنتيجة
+                إنهاء والمراجعة
               </button>
             </div>
           </div>
@@ -241,7 +699,7 @@ export const DefaultExamSystem: React.FC<DefaultExamSystemProps> = ({
             </button>
 
             <button
-              onClick={finishTest}
+              onClick={() => setShowFinalReview(true)}
               className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs md:text-sm transition shadow-lg shadow-emerald-600/20 cursor-pointer"
             >
               إنهاء الاختبار
@@ -462,12 +920,12 @@ export const DefaultExamSystem: React.FC<DefaultExamSystemProps> = ({
                 if (currentIdx < safeQuestions.length - 1) {
                   setCurrentIdx((i) => i + 1);
                 } else {
-                  finishTest();
+                  setShowFinalReview(true);
                 }
               }}
               className="flex items-center gap-1.5 px-6 sm:px-8 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs sm:text-sm font-black transition shadow-lg shadow-blue-600/25 cursor-pointer"
             >
-              <span>{currentIdx < safeQuestions.length - 1 ? 'حفظ والتالي' : 'إنهاء وتسليم الاختبار ✓'}</span>
+              <span>{currentIdx < safeQuestions.length - 1 ? 'حفظ والتالي' : 'إنهاء ومراجعة الاختبار ✓'}</span>
               <ArrowLeft className="w-4 h-4" />
             </button>
           </div>

@@ -1,9 +1,14 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   ArrowRight,
   ZoomIn,
   Check,
   FolderPlus,
+  Flag,
+  Clock,
+  CheckCircle2,
+  AlertCircle,
+  ListChecks,
 } from 'lucide-react';
 import { BaseExamSystemProps } from './examSystemTypes';
 
@@ -42,6 +47,332 @@ export const NimrExamSystem: React.FC<BaseExamSystemProps> = ({
   const visitedCount = Object.keys(visitedIndices).length;
   const answeredCount = Object.keys(selectedAnswers).length;
   const remainingCount = Math.max(0, safeQuestions.length - answeredCount);
+  const markedCount = Object.values(markedForReview).filter(Boolean).length;
+
+  const [showFinalReview, setShowFinalReview] = useState(false);
+  const [showConfirmFinishModal, setShowConfirmFinishModal] = useState(false);
+  const [isInstructionsOpen, setIsInstructionsOpen] = useState(true);
+  const [isSectionOpen, setIsSectionOpen] = useState(true);
+  const [reviewToast, setReviewToast] = useState<string | null>(null);
+
+  const handleReviewIncomplete = () => {
+    const firstUnanswered = safeQuestions.findIndex((_, idx) => selectedAnswers[idx] === undefined);
+    if (firstUnanswered !== -1) {
+      setCurrentIdx(firstUnanswered);
+      setShowFinalReview(false);
+    } else {
+      setReviewToast('رائع! جميع الأسئلة مكتملة ومجاب عليها بالكامل ✓');
+      setTimeout(() => setReviewToast(null), 3500);
+    }
+  };
+
+  const handleReviewAll = () => {
+    setCurrentIdx(0);
+    setShowFinalReview(false);
+  };
+
+  const handleReviewMarked = () => {
+    const firstMarked = safeQuestions.findIndex((_, idx) => markedForReview[idx]);
+    if (firstMarked !== -1) {
+      setCurrentIdx(firstMarked);
+      setShowFinalReview(false);
+    } else {
+      setReviewToast('لا توجد أسئلة مميزة للمراجعة حالياً');
+      setTimeout(() => setReviewToast(null), 3500);
+    }
+  };
+
+  // ================= صفحة المراجعة النهائية - نظام نمر (قياس #00a59a) =================
+  if (showFinalReview) {
+    return (
+      <div
+        className="w-full min-h-screen bg-[#f4f6f8] text-[#333] flex flex-col font-sans select-none"
+        dir="rtl"
+      >
+        {/* الهيدر العلوي بلون نظام نمر */}
+        <header
+          data-preserve-colors="true"
+          className="bg-[#00a59a] text-white flex flex-wrap justify-between items-center gap-3 px-5 py-3 text-sm sm:text-[15px] font-bold shrink-0 shadow-md"
+        >
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="text-xl font-bold tracking-wide">قياس</div>
+            <span className="opacity-70">|</span>
+            <span>{examTitle || 'اختبارات القدرات'} - مراجعة الإجابات</span>
+            <button
+              type="button"
+              onClick={() => setShowFinalReview(false)}
+              className="text-xs bg-[#008f85] hover:bg-[#007a71] text-white px-3 py-1.5 rounded transition cursor-pointer border border-white/25 font-bold"
+              title="العودة لمتابعة حل الاختبار"
+            >
+              العودة لمتابعة الحل ←
+            </button>
+          </div>
+
+          <div className="flex items-center gap-4 text-xs sm:text-sm">
+            <span className="hidden sm:inline bg-white/15 px-2.5 py-1 rounded">
+              الطالب: {currentUser?.name || 'طالب'}
+            </span>
+            <div className="flex items-center gap-1.5 font-mono bg-[#008f85] px-3 py-1 rounded border border-white/20">
+              <Clock className="w-4 h-4" />
+              <span>{isTimed ? formatTime(timeLeft) : 'تدريب حر'}</span>
+            </div>
+          </div>
+        </header>
+
+        {/* المحتوى الرئيسي */}
+        <div className="flex-1 p-4 sm:p-5 max-w-[1400px] w-full mx-auto flex flex-col gap-4 overflow-y-auto">
+          {/* ملخص سريع بحالات نمر المعتمدة */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="bg-white border border-[#e0e0e0] rounded p-3 flex items-center justify-between shadow-xs">
+              <div>
+                <div className="text-xs text-[#666] font-bold">مجموع الأسئلة</div>
+                <div className="text-xl font-black text-[#00796b] mt-0.5">{safeQuestions.length}</div>
+              </div>
+              <ListChecks className="w-6 h-6 text-[#00a59a]" />
+            </div>
+
+            <div className="bg-white border border-[#e0e0e0] rounded p-3 flex items-center justify-between shadow-xs">
+              <div>
+                <div className="text-xs text-[#666] font-bold">تمت الإجابة</div>
+                <div className="text-xl font-black text-[#2e7d32] mt-0.5">{answeredCount}</div>
+              </div>
+              <CheckCircle2 className="w-6 h-6 text-[#2e7d32]" />
+            </div>
+
+            <div className="bg-white border border-[#e0e0e0] rounded p-3 flex items-center justify-between shadow-xs">
+              <div>
+                <div className="text-xs text-[#666] font-bold">غير مكتمل</div>
+                <div className="text-xl font-black text-[#ff5722] mt-0.5">{remainingCount}</div>
+              </div>
+              <AlertCircle className="w-6 h-6 text-[#ff5722]" />
+            </div>
+
+            <div className="bg-white border border-[#e0e0e0] rounded p-3 flex items-center justify-between shadow-xs">
+              <div>
+                <div className="text-xs text-[#666] font-bold">مميز للمراجعة</div>
+                <div className="text-xl font-black text-amber-600 mt-0.5">{markedCount}</div>
+              </div>
+              <Flag className="w-6 h-6 text-amber-500" />
+            </div>
+          </div>
+
+          {/* صندوق الإرشادات */}
+          <div className="bg-white border border-[#dcdcdc] rounded shadow-xs overflow-hidden">
+            <div
+              data-preserve-colors="true"
+              onClick={() => setIsInstructionsOpen(!isInstructionsOpen)}
+              className="bg-[#00a59a] text-white px-4 py-2.5 font-bold flex items-center justify-between cursor-pointer select-none"
+            >
+              <span className="flex items-center gap-2">
+                <span>{isInstructionsOpen ? '⊟' : '⊞'}</span>
+                <span>إرشادات المراجعة</span>
+              </span>
+              <span className="text-xs font-normal opacity-90">
+                {isInstructionsOpen ? 'طي الإرشادات' : 'عرض الإرشادات'}
+              </span>
+            </div>
+            {isInstructionsOpen && (
+              <div className="p-4 sm:px-5 text-sm text-[#444] leading-[1.8]">
+                فيما يلي ملخص لإجاباتك في نظام نمر، يمكنك مراجعة أسئلتك بثلاث (3) طرق مختلفة عبر الأزرار بالأسفل:
+                <ol className="mr-5 mt-1.5 space-y-1 list-decimal">
+                  <li>مراجعة جميع الأسئلة وإجاباتك من البداية.</li>
+                  <li>مراجعة الأسئلة غير المكتملة التي لم تتم الإجابة عليها.</li>
+                  <li>مراجعة الأسئلة المميزة بعلامة للمراجعة.</li>
+                </ol>
+                <div className="mt-2.5 text-xs font-bold text-[#00796b] bg-[#00a59a]/10 p-2.5 rounded border border-[#00a59a]/25">
+                  💡 يمكنك النقر مباشرة على أي سؤال من الجدول أدناه للانتقال إليه وتعديل إجابتك قبل التسليم النهائي.
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* جدول مراجعة أسئلة القسم */}
+          <div className="bg-white border border-[#dcdcdc] rounded shadow-xs overflow-hidden">
+            <div
+              data-preserve-colors="true"
+              onClick={() => setIsSectionOpen(!isSectionOpen)}
+              className="bg-[#00a59a] text-white px-4 py-2.5 font-bold flex justify-between items-center cursor-pointer select-none"
+            >
+              <span className="flex items-center gap-2">
+                <span>{isSectionOpen ? '⊟' : '⊞'}</span>
+                <span>القسم الأول - ملخص الأسئلة</span>
+              </span>
+              <span className="text-xs sm:text-sm font-bold bg-[#008f85] px-2.5 py-0.5 rounded">
+                {remainingCount > 0 ? `(${remainingCount} غير مكتمل)` : 'جميع الأسئلة مكتملة ✓'}
+              </span>
+            </div>
+
+            {isSectionOpen && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 border-t border-[#e0e0e0]">
+                {safeQuestions.map((_, idx) => {
+                  const isAnswered = selectedAnswers[idx] !== undefined;
+                  const isVisited = !!visitedIndices[idx];
+                  const isFlagged = !!markedForReview[idx];
+
+                  return (
+                    <div
+                      key={idx}
+                      onClick={() => {
+                        setCurrentIdx(idx);
+                        setShowFinalReview(false);
+                      }}
+                      className="p-3.5 sm:px-4 border-l border-b border-[#e0e0e0] flex justify-between items-center bg-white hover:bg-[#f0f9f8] cursor-pointer transition select-none group"
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <span
+                          data-preserve-colors="true"
+                          className={`w-7 h-7 rounded-[3px] flex items-center justify-center text-xs font-bold text-white shrink-0 ${
+                            isAnswered
+                              ? 'bg-[#2e7d32]'
+                              : isVisited
+                              ? 'bg-[#4a90e2]'
+                              : 'bg-[#ff5722]'
+                          }`}
+                        >
+                          {idx + 1}
+                        </span>
+                        <div className="flex flex-col">
+                          <span className="text-sm text-[#333] font-bold group-hover:text-[#00796b]">
+                            السؤال {idx + 1}
+                          </span>
+                          <span
+                            className={`text-[11px] font-bold ${
+                              isAnswered
+                                ? 'text-[#2e7d32]'
+                                : isVisited
+                                ? 'text-[#4a90e2]'
+                                : 'text-[#ff5722]'
+                            }`}
+                          >
+                            {isAnswered ? 'تمت الإجابة ✓' : isVisited ? 'تمت زيارته (غير مجاب)' : 'لم تتم زيارته'}
+                          </span>
+                        </div>
+                      </div>
+
+                      <span
+                        className={`text-base transition ${
+                          isFlagged ? 'text-amber-500 font-black scale-125' : 'text-[#ccc]'
+                        }`}
+                        title={isFlagged ? 'مميز للمراجعة' : 'غير مميز'}
+                      >
+                        ⚑
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* الشريط السفلي لأزرار المراجعة والتسليم بلون نمر */}
+        <footer
+          data-preserve-colors="true"
+          className="bg-[#00a59a] text-white flex flex-wrap justify-between items-center px-3 py-2 sm:py-0 sm:h-[56px] gap-2 shrink-0 shadow-inner"
+        >
+          <div className="flex flex-wrap items-center gap-1.5 sm:gap-0 sm:h-full">
+            <button
+              type="button"
+              onClick={handleReviewAll}
+              className="bg-[#008f85] hover:bg-[#007a71] text-white border-l border-white/20 px-4 py-2 sm:py-0 sm:h-full rounded sm:rounded-none text-xs sm:text-sm font-bold cursor-pointer transition whitespace-nowrap"
+            >
+              📋 مراجعة الكل
+            </button>
+            <button
+              type="button"
+              onClick={handleReviewIncomplete}
+              className="bg-[#008f85] hover:bg-[#007a71] text-white border-l border-white/20 px-4 py-2 sm:py-0 sm:h-full rounded sm:rounded-none text-xs sm:text-sm font-bold cursor-pointer transition whitespace-nowrap"
+            >
+              ✕ مراجعة الغير مكتمل ({remainingCount})
+            </button>
+            <button
+              type="button"
+              onClick={handleReviewMarked}
+              className="bg-[#008f85] hover:bg-[#007a71] text-white border-l border-white/20 px-4 py-2 sm:py-0 sm:h-full rounded sm:rounded-none text-xs sm:text-sm font-bold cursor-pointer transition whitespace-nowrap"
+            >
+              ⚑ مراجعة المميز ({markedCount})
+            </button>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setShowConfirmFinishModal(true)}
+            className="bg-[#f44336] hover:bg-[#d32f2f] text-white px-6 py-2 sm:py-0 sm:h-full rounded sm:rounded-none text-sm sm:text-[15px] font-black cursor-pointer flex items-center gap-2 transition whitespace-nowrap shadow-sm"
+          >
+            <span>✓ إنهاء المراجعة وتسليم الاختبار</span>
+          </button>
+        </footer>
+
+        {/* إشعار عائم Toast */}
+        {reviewToast && (
+          <div
+            data-preserve-colors="true"
+            className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 bg-[#00796b] text-white px-6 py-2.5 rounded-full shadow-2xl text-sm font-bold border border-white/30"
+          >
+            {reviewToast}
+          </div>
+        )}
+
+        {/* نافذة تأكيد تسليم الاختبار النهائي */}
+        {showConfirmFinishModal && (
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white rounded-lg shadow-2xl border border-[#dcdcdc] max-w-md w-full overflow-hidden text-right" dir="rtl">
+              <div
+                data-preserve-colors="true"
+                className="bg-[#00a59a] text-white px-5 py-3 font-bold text-base flex justify-between items-center"
+              >
+                <span>تأكيد إنهاء الاختبار وتسليمه</span>
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmFinishModal(false)}
+                  className="text-white hover:text-amber-200 text-lg font-bold cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="p-6 space-y-4">
+                {remainingCount > 0 ? (
+                  <div className="p-4 bg-amber-50 border border-amber-300 rounded text-amber-900 text-sm leading-relaxed">
+                    ⚠️ <strong>تنبيه هام:</strong> لديك <strong>{remainingCount}</strong> أسئلة غير مكتملة (لم تقم بالإجابة عليها).
+                    <p className="mt-2 text-xs text-amber-800">
+                      هل أنت متأكد من إنهاء المراجعة وتسليم الاختبار نهائياً؟
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-sm font-semibold text-[#333] leading-relaxed">
+                    لقد قمت بالإجابة على جميع الأسئلة ({safeQuestions.length} سؤالاً).
+                    <br />
+                    هل أنت متأكد من إنهاء المراجعة وتسليم الاختبار وعرض النتيجة النهائية؟
+                  </p>
+                )}
+
+                <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#eee]">
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmFinishModal(false)}
+                    className="px-5 py-2 rounded bg-[#eee] hover:bg-[#e0e0e0] text-[#333] text-sm font-bold transition cursor-pointer"
+                  >
+                    العودة للمراجعة
+                  </button>
+                  <button
+                    type="button"
+                    data-preserve-colors="true"
+                    onClick={() => {
+                      setShowConfirmFinishModal(false);
+                      finishTest();
+                    }}
+                    className="px-6 py-2 rounded bg-[#00a59a] hover:bg-[#008f85] text-white text-sm font-bold transition shadow cursor-pointer"
+                  >
+                    نعم، تسليم الاختبار نهائياً ✓
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col flex-1 w-full bg-[#f4f6f8] text-[#333] font-sans min-h-screen">
@@ -200,7 +531,7 @@ export const NimrExamSystem: React.FC<BaseExamSystemProps> = ({
               </button>
               <button
                 type="button"
-                onClick={finishTest}
+                onClick={() => setShowFinalReview(true)}
                 className="py-2.5 px-1 rounded text-white font-bold cursor-pointer text-xs sm:text-[13px] bg-[#f44336] hover:bg-[#d32f2f] transition"
               >
                 إنهاء الاختبار
@@ -346,12 +677,12 @@ export const NimrExamSystem: React.FC<BaseExamSystemProps> = ({
                   if (currentIdx < safeQuestions.length - 1) {
                     setCurrentIdx(currentIdx + 1);
                   } else {
-                    finishTest();
+                    setShowFinalReview(true);
                   }
                 }}
                 className="bg-[#00a59a] hover:bg-[#008f85] text-white border-none py-2.5 px-6 rounded-md text-base font-bold cursor-pointer transition shadow-sm"
               >
-                {currentIdx < safeQuestions.length - 1 ? 'حفظ والتالي' : 'إنهاء وتسليم الاختبار ✓'}
+                {currentIdx < safeQuestions.length - 1 ? 'حفظ والتالي' : 'إنهاء ومراجعة الاختبار ✓'}
               </button>
             </div>
           </div>
