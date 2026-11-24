@@ -16,6 +16,7 @@ import {
   UserPlus,
   Wrench,
   X,
+  Info,
 } from 'lucide-react';
 import { StudentUser, SystemSettings } from '../types';
 import { BrandLogo } from './BrandLogo';
@@ -981,63 +982,6 @@ export const AuthView: React.FC<AuthViewProps> = ({
         </div>
       </header>
 
-      {/* ================= IMPORTANT TOP NOTICE BANNER (Appears cleanly on Login View) ================= */}
-      <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 pt-2 pb-1">
-        <div className={`p-3.5 sm:p-4 rounded-2xl border-2 shadow-lg transition-all flex flex-col md:flex-row items-center justify-between gap-3.5 ${
-          isDarkMode
-            ? 'bg-gradient-to-r from-amber-950/40 via-slate-900 to-amber-950/30 border-amber-500/50 shadow-amber-500/10'
-            : 'bg-gradient-to-r from-amber-50 via-white to-amber-50/60 border-amber-400 shadow-amber-200/50'
-        }`}>
-          <div className="flex items-center gap-3 w-full md:w-auto">
-            <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-500 text-slate-950 flex items-center justify-center shrink-0 shadow-md shadow-amber-500/30">
-              <AlertCircle className="w-5 h-5 sm:w-6 sm:h-6 stroke-[2.5]" />
-            </div>
-            <div className="text-right flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] sm:text-xs font-black uppercase tracking-wider text-amber-500 bg-amber-500/15 border border-amber-500/30 px-2 py-0.5 rounded-md">
-                  تنبيه هام ومباشر ⚠️
-                </span>
-                <span className="text-[10px] sm:text-xs text-amber-500 dark:text-amber-400 font-bold">لكل الطلاب</span>
-              </div>
-              <p className={`text-xs sm:text-sm font-black mt-1 leading-relaxed ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
-                من لا يعمل معه تسجيل الدخول للمنصة بحساب تيليجرام، يرجى التوجه فوراً لإنشاء حساب أو تسجيل الدخول بالبريد الإلكتروني وكلمة المرور.
-              </p>
-            </div>
-          </div>
-
-          <div className="w-full md:w-auto flex flex-col sm:flex-row items-stretch sm:items-center gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={() => {
-                setAuthMode('email');
-                setIsSignUp(true);
-                setError('');
-              }}
-              className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black text-xs sm:text-sm flex items-center justify-center gap-2 shadow-lg shadow-amber-500/25 transition transform active:scale-95 cursor-pointer whitespace-nowrap"
-            >
-              <UserPlus className="w-4 h-4" />
-              <span>إنشاء حساب بالبريد</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setAuthMode('email');
-                setIsSignUp(false);
-                setError('');
-              }}
-              className={`px-4 py-2.5 rounded-xl border-2 font-black text-xs sm:text-sm flex items-center justify-center gap-2 transition transform active:scale-95 cursor-pointer whitespace-nowrap ${
-                isDarkMode
-                  ? 'bg-slate-800 hover:bg-slate-700 border-amber-500/50 text-amber-300'
-                  : 'bg-white hover:bg-amber-50 border-amber-400 text-amber-900'
-              }`}
-            >
-              <Mail className="w-4 h-4" />
-              <span>تسجيل الدخول بالبريد</span>
-            </button>
-          </div>
-        </div>
-      </div>
-
       {/* Main Clean Login Area: ONLY Telegram Login or Email Login */}
       <main className="flex-1 max-w-xl mx-auto w-full px-4 sm:px-6 py-6 md:py-10 flex items-center justify-center">
         <div className="w-full space-y-4">
@@ -1266,6 +1210,75 @@ export const AuthView: React.FC<AuthViewProps> = ({
               )}
         </div>
       </main>
+
+      {/* ================= SOFT BLUE NOTE BANNER (Below Login Form) ================= */}
+      <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 pb-8">
+        <div
+          className={`p-3.5 sm:p-4 rounded-2xl border shadow-sm transition-all flex flex-col md:flex-row items-center justify-between gap-3.5 ${
+            isDarkMode
+              ? 'bg-gradient-to-r from-blue-950/35 via-slate-900 to-sky-950/30 border-blue-500/35 shadow-blue-500/10'
+              : 'bg-gradient-to-r from-blue-50 via-white to-sky-50/70 border-blue-200 shadow-blue-100/60'
+          }`}
+        >
+          <div className="flex items-center gap-3 w-full md:w-auto">
+            <div
+              data-preserve-colors="true"
+              className="w-10 h-10 sm:w-11 sm:h-11 rounded-2xl bg-gradient-to-br from-blue-600 to-sky-500 text-white flex items-center justify-center shrink-0 shadow-md shadow-blue-500/25"
+            >
+              <Info className="w-5 h-5 sm:w-6 sm:h-6" />
+            </div>
+            <div className="text-right flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <span
+                  data-preserve-colors="true"
+                  className={`text-[10px] sm:text-xs font-black px-2 py-0.5 rounded-md border ${
+                    isDarkMode
+                      ? 'text-blue-300 bg-blue-500/15 border-blue-500/30'
+                      : 'text-blue-700 bg-blue-100 border-blue-200'
+                  }`}
+                >
+                  ملحوظة
+                </span>
+              </div>
+              <p className={`text-xs sm:text-sm font-bold mt-1 leading-relaxed ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>
+                في حال لم يعمل معك تسجيل الدخول بحساب تيليجرام، يمكنك بكل سهولة إنشاء حساب أو تسجيل الدخول بالبريد الإلكتروني وكلمة المرور.
+              </p>
+            </div>
+          </div>
+
+          <div className="w-full md:w-auto flex flex-col sm:flex-row items-stretch sm:items-center gap-2 shrink-0">
+            <button
+              type="button"
+              data-preserve-colors="true"
+              onClick={() => {
+                setAuthMode('email');
+                setIsSignUp(true);
+                setError('');
+              }}
+              className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-sky-600 hover:from-blue-500 hover:to-sky-500 text-white font-black text-xs sm:text-sm flex items-center justify-center gap-2 shadow-md shadow-blue-600/20 transition transform active:scale-95 cursor-pointer whitespace-nowrap"
+            >
+              <UserPlus className="w-4 h-4" />
+              <span>إنشاء حساب بالبريد</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setAuthMode('email');
+                setIsSignUp(false);
+                setError('');
+              }}
+              className={`px-4 py-2.5 rounded-xl border font-black text-xs sm:text-sm flex items-center justify-center gap-2 transition transform active:scale-95 cursor-pointer whitespace-nowrap ${
+                isDarkMode
+                  ? 'bg-slate-800 hover:bg-slate-700 border-blue-500/40 text-blue-300'
+                  : 'bg-white hover:bg-blue-50 border-blue-300 text-blue-800'
+              }`}
+            >
+              <Mail className="w-4 h-4" />
+              <span>تسجيل الدخول بالبريد</span>
+            </button>
+          </div>
+        </div>
+      </div>
 
       {/* PLATFORM FOOTER WITH THE 3 SENTENCES, FOUNDING DATE & RIGHTS */}
       <PlatformFooter

@@ -498,9 +498,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         {/* ================= 2. 100% EXCELLENCE SECTION (قسم التميز والـ 100%) ================= */}
         <section
           id="excellence-100"
-          className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-14 sm:py-20"
+          className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 pt-10 pb-6 sm:pt-14 sm:pb-8"
         >
-          <div className="text-center max-w-2xl mx-auto mb-10 sm:mb-12">
+          <div className="text-center max-w-2xl mx-auto mb-8 sm:mb-10">
             <h2
               className={`text-2xl sm:text-3xl lg:text-4xl font-black tracking-tight text-balance ${
                 isDarkMode ? 'text-white' : 'text-slate-950'
@@ -643,8 +643,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             isDarkMode ? 'bg-slate-900/40 border-slate-800/80' : 'bg-white border-slate-200'
           }`}
         >
-          <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-14 sm:py-20">
-            <div className="text-center max-w-2xl mx-auto mb-10 sm:mb-12">
+          <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 pb-12 sm:pt-10 sm:pb-14">
+            <div className="text-center max-w-2xl mx-auto mb-8 sm:mb-10">
               <h2
                 className={`text-2xl sm:text-3xl lg:text-4xl font-black tracking-tight text-balance ${
                   isDarkMode ? 'text-white' : 'text-slate-950'
@@ -701,6 +701,32 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                   </div>
                 </article>
               ))}
+            </div>
+
+            {/* More Tech Callout + Discover CTA */}
+            <div
+              className={`mt-8 sm:mt-10 rounded-2xl border p-6 sm:p-7 text-center flex flex-col items-center justify-center gap-4 ${
+                isDarkMode
+                  ? 'bg-gradient-to-r from-blue-950/40 via-slate-900 to-sky-950/30 border-blue-500/25'
+                  : 'bg-gradient-to-r from-blue-50/80 via-white to-sky-50/80 border-blue-200 shadow-xs'
+              }`}
+            >
+              <p
+                className={`text-base sm:text-xl font-black leading-relaxed ${
+                  isDarkMode ? 'text-white' : 'text-slate-950'
+                }`}
+              >
+                ودي لسة البداية.. المنصة فيها تقنيات أكثر وأكثر
+              </p>
+              <button
+                type="button"
+                data-preserve-colors="true"
+                onClick={onGoToLogin}
+                className="inline-flex items-center justify-center gap-2.5 px-7 py-3.5 rounded-2xl bg-gradient-to-r from-blue-600 via-blue-600 to-sky-600 hover:from-blue-500 hover:to-sky-500 text-white font-black text-sm sm:text-base shadow-lg shadow-blue-600/25 transition transform hover:-translate-y-0.5 active:scale-95 cursor-pointer"
+              >
+                <span>اكتشف بنفسك</span>
+                <ArrowLeft className="w-4 h-4 shrink-0" />
+              </button>
             </div>
           </div>
         </section>

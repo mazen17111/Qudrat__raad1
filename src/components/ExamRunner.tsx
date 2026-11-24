@@ -82,7 +82,6 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import { trackLocalRead, trackLocalWrite, trackLocalDelete } from '../utils/localUsageTracker';
-import { recordLessonExam100Pass } from '../utils/lessonProgressStore';
 
 interface FolderQuestionDoc {
   id: string; // Document ID in folder_questions collection
@@ -109,10 +108,6 @@ interface ExamRunnerProps {
   folderTitle?: string;
   courseId?: string;
   courseTitle?: string;
-  lessonId?: string;
-  lessonTitle?: string;
-  nextLessonId?: string;
-  nextLessonTitle?: string;
 }
 
 export type StudentLevelKey = 'excellent' | 'very_good' | 'good' | 'acceptable' | 'weak';
@@ -527,10 +522,6 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
   folderTitle,
   courseId,
   courseTitle,
-  lessonId,
-  lessonTitle,
-  nextLessonId,
-  nextLessonTitle,
 }) => {
   const currentCourseId = courseId || 'course_default_1';
   // Normalize and guard questions to completely eliminate any possibility of an empty or broken screen
@@ -960,17 +951,6 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
       });
     }
 
-    // Record sequential lesson unlock locally immediately if student scored 100% on lesson exam
-    const lessonUnlockUpdate =
-      percentage === 100 && !isFolderExam && lessonId && currentUser?.id
-        ? recordLessonExam100Pass({
-            userId: currentUser.id,
-            lessonId,
-            nextLessonId,
-            userDoc: currentUser,
-          })
-        : null;
-
     if (!currentUser?.id) {
       onFinishExam({ percentage, examId, isFolderExam });
       return;
@@ -1051,14 +1031,6 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
           totalExamsTaken: updatedCount,
           averageScore: updatedAvg,
         };
-        if (lessonUnlockUpdate?.shouldWriteFirestore) {
-          if (lessonUnlockUpdate.passedIdsToAdd.length > 0) {
-            userUpdatePayload.passedLessonIds = arrayUnion(...lessonUnlockUpdate.passedIdsToAdd);
-          }
-          if (lessonUnlockUpdate.unlockedIdsToAdd.length > 0) {
-            userUpdatePayload.unlockedLessonIds = arrayUnion(...lessonUnlockUpdate.unlockedIdsToAdd);
-          }
-        }
 
         const batchOps: Array<{
           ref: ReturnType<typeof doc>;
@@ -1553,31 +1525,6 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
             <div className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-2xl text-emerald-600 dark:text-emerald-400 text-xs md:text-sm font-black text-center">
               ✨ أداء استثنائي! لا توجد أخطاء في هذا الاختبار، درجتك كاملة 100%!
             </div>
-          )}
-
-          {/* Sequential Lesson Unlock Status Notice */}
-          {!isFolderExam && lessonId && nextLessonTitle && (
-            percentage === 100 ? (
-              <div className="p-4 bg-emerald-500/15 border border-emerald-500/40 rounded-2xl text-emerald-600 dark:text-emerald-300 text-xs md:text-sm font-black text-center flex items-center justify-center gap-2">
-                <span>🔓</span>
-                <span>
-                  مبروك! بحصولك على 100% تم فتح الدرس التالي في القائمة الجانبية: <strong>"{nextLessonTitle}"</strong>
-                </span>
-              </div>
-            ) : (
-              <div
-                className={`p-3.5 rounded-2xl border text-xs md:text-sm font-bold text-center flex items-center justify-center gap-2 ${
-                  isDarkMode
-                    ? 'bg-amber-500/10 border-amber-500/30 text-amber-300'
-                    : 'bg-amber-50 border-amber-300 text-amber-900'
-                }`}
-              >
-                <Lock className="w-4 h-4 shrink-0 text-amber-500" />
-                <span>
-                  لفتح الدرس التالي (<strong>"{nextLessonTitle}"</strong>) في القائمة الجانبية، يجب الحصول على نسبة <strong>100%</strong> كاملة في هذا الاختبار.
-                </span>
-              </div>
-            )
           )}
 
           {/* Action Buttons */}
