@@ -323,3 +323,10 @@ export function addLocalDeletedSignature(userId: string, entry: LocalDeletedSign
     saveToStorage(getDeletedKey(userId), bucket.deletedSignatures);
   }
 }
+
+export function clearStudentFoldersMemoryCache(): void {
+  buckets.clear();
+  inFlightFoldersSync.clear();
+  inFlightDeletedSync.clear();
+}
+

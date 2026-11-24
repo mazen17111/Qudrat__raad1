@@ -109,3 +109,8 @@ export function markExamAttemptsSynced(userId?: string): void {
   } catch {}
 }
 
+export function clearExamAttemptsMemoryCache(): void {
+  syncedAttemptUsersInSession.clear();
+}
+
+

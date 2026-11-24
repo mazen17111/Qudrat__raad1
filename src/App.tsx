@@ -12,6 +12,7 @@ import {
 } from './types';
 import {
   db,
+  auth,
   testConnection,
   seedInitialPlatformData,
   DEFAULT_SETTINGS,
@@ -21,6 +22,7 @@ import {
   FIRESTORE_PRICING_URL,
   FIRESTORE_UPGRADE_URL,
 } from './firebase';
+import { signOut, onAuthStateChanged } from 'firebase/auth';
 import {
   loadCachedCourses,
   loadCachedSections,
@@ -29,6 +31,8 @@ import {
   syncCatalogFromFirestore,
   subscribeCatalogUpdated,
 } from './utils/firestoreCache';
+import { clearStudentFoldersMemoryCache } from './utils/studentFoldersStore';
+import { clearExamAttemptsMemoryCache } from './utils/examAttemptsCache';
 import {
   saveCachedTelegramUser,
   getCachedTelegramUser,
@@ -137,17 +141,32 @@ function parseTelegramAuthFromUrl(): StudentUser | null {
   return null;
 }
 
+function hasValidStoredStudentSession(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    const raw = localStorage.getItem(STUDENT_SESSION_KEY) || localStorage.getItem('raad_student_session');
+    if (!raw) return false;
+    const parsed = JSON.parse(raw) as Partial<StudentUser> | null;
+    return Boolean(parsed && typeof parsed === 'object' && typeof parsed.id === 'string' && parsed.id.trim().length > 0);
+  } catch {
+    return false;
+  }
+}
+
 export default function App() {
   const [currentUser, setCurrentUser] = useState<StudentUser | null>(() => {
     // 1. Direct Telegram Login URL Callback check
     const fromUrl = parseTelegramAuthFromUrl();
     if (fromUrl) return fromUrl;
 
-    // 2. Saved session in localStorage
+    // 2. Saved session in localStorage (only when a valid non-empty user ID exists)
     try {
       const saved = localStorage.getItem(STUDENT_SESSION_KEY) || localStorage.getItem('raad_student_session');
       if (saved) {
-        return JSON.parse(saved) as StudentUser;
+        const parsed = JSON.parse(saved) as StudentUser;
+        if (parsed && parsed.id) {
+          return parsed;
+        }
       }
     } catch (e) {
       console.error('Failed to parse saved student session:', e);
@@ -212,6 +231,8 @@ export default function App() {
   const [isQuotaExceeded, setIsQuotaExceeded] = useState<boolean>(false);
   const [isQuotaBannerDismissed, setIsQuotaBannerDismissed] = useState<boolean>(false);
   const pendingThemeRef = useRef<{ userId: string; color: CourseThemeColor } | null>(null);
+  const isLoggingOutRef = useRef<boolean>(false);
+  const authEpochRef = useRef<number>(0);
 
   useEffect(() => {
     return subscribeQuotaExceeded((exceeded) => {
@@ -343,22 +364,21 @@ export default function App() {
   useEffect(() => {
     if (!currentUser?.id) return;
     const uid = currentUser.id;
+    const activeEpoch = authEpochRef.current;
 
     const unsubUser = onSnapshot(
       doc(db, 'users', uid),
       (docSnap) => {
+        if (isLoggingOutRef.current || authEpochRef.current !== activeEpoch) {
+          return;
+        }
         if (!docSnap.metadata?.fromCache) {
           trackLocalRead(1, 'مزامنة حالة حساب الطالب');
         }
         if (!docSnap.exists() || (docSnap.data() as any)?.isDeleted) {
-          // Account was deleted by admin -> clear all local sessions & caches immediately so re-login starts fresh
+          // Account was deleted by admin -> perform full browser session wipe immediately (0 extra Firestore writes)
           removeCachedTelegramUser(currentUser?.telegramId, uid);
-          setActiveCourse(null);
-          setCurrentUser(null);
-          try {
-            localStorage.removeItem(STUDENT_SESSION_KEY);
-            localStorage.removeItem('raad_student_session');
-          } catch (e) {}
+          void performFullBrowserLogoutCleanup();
           return;
         }
 
@@ -436,20 +456,115 @@ export default function App() {
     setIsAdminOpen(true);
   };
 
-  // Student explicit logout: clear session ONLY; preserve per-user preferred theme color permanently
-  const handleStudentLogout = () => {
+  // Clear Firebase Auth IndexedDB persistence safely without touching permanent Firestore database
+  const clearAuthIndexedDb = async () => {
+    if (typeof window === 'undefined' || !('indexedDB' in window)) return;
     try {
-      localStorage.removeItem(STUDENT_SESSION_KEY);
-      localStorage.removeItem(COURSE_THEME_STORAGE_KEY);
-    } catch (e) {}
+      await new Promise<void>((resolve) => {
+        let settled = false;
+        const finish = () => {
+          if (!settled) {
+            settled = true;
+            resolve();
+          }
+        };
+        try {
+          const req = window.indexedDB.deleteDatabase('firebaseLocalStorageDb');
+          req.onsuccess = finish;
+          req.onerror = finish;
+          req.onblocked = finish;
+          setTimeout(finish, 300);
+        } catch {
+          finish();
+        }
+      });
+    } catch {}
+  };
+
+  // Full Logout & Session Wipe (0 Firestore reads/writes; clears browser session only, never permanent DB data)
+  const performFullBrowserLogoutCleanup = async () => {
+    authEpochRef.current += 1;
+    isLoggingOutRef.current = true;
     pendingThemeRef.current = null;
+
+    // 1. Immediately transition React state back to Landing / Auth screen
     setCourseThemeColor('default');
-    setCurrentUser(null);
     setActiveCourse(null);
+    setIsAdminOpen(false);
+    setCurrentUser(null);
+
+    // 2. Preserve ONLY public UI display preferences (dark mode + brand logo URL) — ZERO user/session/auth data
+    let preservedDarkTheme: string | null = null;
+    let preservedLogoUrl: string | null = null;
+    try {
+      preservedDarkTheme = localStorage.getItem(THEME_STORAGE_KEY);
+      preservedLogoUrl = localStorage.getItem('raad_platform_logo_url');
+    } catch {}
+
+    // 3. Wipe all localStorage, sessionStorage, URL auth params, and in-memory user caches
+    try {
+      localStorage.clear();
+      sessionStorage.clear();
+      if (preservedDarkTheme !== null) {
+        localStorage.setItem(THEME_STORAGE_KEY, preservedDarkTheme);
+      }
+      if (preservedLogoUrl) {
+        localStorage.setItem('raad_platform_logo_url', preservedLogoUrl);
+      }
+    } catch {}
+
+    clearStudentFoldersMemoryCache();
+    clearExamAttemptsMemoryCache();
+
+    try {
+      if (typeof window !== 'undefined') {
+        const searchParams = new URLSearchParams(window.location.search);
+        if (searchParams.has('id') || window.location.pathname.includes('callback')) {
+          window.history.replaceState({}, document.title, '/');
+        }
+        window.scrollTo({ top: 0 });
+      }
+    } catch {}
+
+    // 4. Terminate Firebase Authentication session on server & browser IndexedDB (0 Firestore reads/writes)
+    try {
+      await signOut(auth);
+    } catch (err) {
+      console.warn('Firebase Auth signOut notice:', err);
+    }
+    await clearAuthIndexedDb();
+  };
+
+  // Guard Firebase Auth state changes: NEVER auto-login after logout or when no valid active session exists
+  useEffect(() => {
+    const unsubAuth = onAuthStateChanged(auth, (firebaseUser) => {
+      if (!firebaseUser) {
+        // No active Firebase Auth user -> do NOT auto-login
+        return;
+      }
+      // If a stale Firebase Auth token lingers while the local session was cleared/logged out, revoke it silently (0 Firestore reads)
+      if (isLoggingOutRef.current || !hasValidStoredStudentSession()) {
+        setCurrentUser(null);
+        setActiveCourse(null);
+        void signOut(auth).catch(() => {});
+        void clearAuthIndexedDb();
+      }
+    });
+
+    return () => {
+      unsubAuth();
+    };
+  }, []);
+
+  // Student explicit logout: full signOut(auth) + full browser session/cache wipe + instant redirect to Landing/Login
+  const handleStudentLogout = () => {
+    void performFullBrowserLogoutCleanup();
   };
 
   // Student login success: restore saved theme color permanently & enter Courses Portal
   const handleStudentLoginSuccess = (user: StudentUser) => {
+    isLoggingOutRef.current = false;
+    authEpochRef.current += 1;
     const savedLocal = getSavedThemeForUser(user.id);
     const remoteColor = normalizeThemeColor(user.preferredThemeColor);
     const resolvedColor: CourseThemeColor = savedLocal || remoteColor || 'default';
@@ -461,6 +576,7 @@ export default function App() {
 
     try {
       localStorage.setItem(STUDENT_SESSION_KEY, JSON.stringify(syncedUser));
+      localStorage.setItem('raad_student_session', JSON.stringify(syncedUser));
     } catch (e) {}
     if (syncedUser.telegramId) {
       saveCachedTelegramUser(syncedUser);

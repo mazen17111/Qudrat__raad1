@@ -1,4 +1,5 @@
 import { initializeApp } from 'firebase/app';
+import { getAuth, Auth } from 'firebase/auth';
 import {
   getFirestore,
   initializeFirestore,
@@ -92,6 +93,7 @@ if (isBrowserEnv) {
 }
 
 export const db = firestoreDb;
+export const auth: Auth = getAuth(app);
 
 export const FIRESTORE_PRICING_URL = 'https://firebase.google.com/pricing#cloud-firestore';
 export const FIRESTORE_UPGRADE_URL = `https://console.firebase.google.com/project/${firebaseConfig.projectId}/firestore/databases/${firebaseConfig.firestoreDatabaseId}/data?openUpgradeDialog=true`;
@@ -170,8 +172,8 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   const errInfo: FirestoreErrorInfo = {
     error: errorMessage,
     authInfo: {
-      userId: null,
-      email: null,
+      userId: auth?.currentUser?.uid ?? null,
+      email: auth?.currentUser?.email ?? null,
     },
     operationType,
     path
