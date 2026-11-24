@@ -96,6 +96,15 @@ import {
 } from '../utils/studentFoldersStore';
 import { saveCatalogToCache } from '../utils/firestoreCache';
 import { trackLocalRead, trackLocalWrite, trackLocalCacheHit } from '../utils/localUsageTracker';
+import {
+  LessonProgressState,
+  getLessonProgress,
+  isLessonPassed,
+  isLessonUnlocked,
+  sortResourcesOrdered,
+  subscribeLessonProgress,
+  syncLessonProgressFromUser,
+} from '../utils/lessonProgressStore';
 
 interface StudentHomeProps {
   currentUser: StudentUser;
@@ -193,15 +202,54 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
     isFolderExam?: boolean;
     folderId?: string;
     folderTitle?: string;
+    lessonId?: string;
+    lessonTitle?: string;
+    nextLessonId?: string;
+    nextLessonTitle?: string;
   } | null>(null);
 
   // Timed & system prompt modal for exam start (Step 1: Choose system 'nimr' vs 'standard' vs 'blue', Step 2: Choose timed vs untimed)
   const [examToStart, setExamToStart] = useState<ContentItem | null>(null);
+  const [examSourceLessonId, setExamSourceLessonId] = useState<string>('');
   const [examStartStep, setExamStartStep] = useState<1 | 2>(1);
   const [selectedExamSystem, setSelectedExamSystem] = useState<ExamSystemType>('nimr');
 
-  const handleOpenExamPrompt = (exam: ContentItem) => {
+  // Sequential lesson progress (cached locally + synced on 100% completion)
+  const [lessonProgress, setLessonProgress] = useState<LessonProgressState>(() =>
+    syncLessonProgressFromUser(currentUser)
+  );
+  const [lockedLessonNotice, setLockedLessonNotice] = useState<string | null>(null);
+  const lockedNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showLockedLessonMessage = useCallback((message: string) => {
+    setLockedLessonNotice(message);
+    if (lockedNoticeTimerRef.current) {
+      clearTimeout(lockedNoticeTimerRef.current);
+    }
+    lockedNoticeTimerRef.current = setTimeout(() => {
+      setLockedLessonNotice(null);
+    }, 4500);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (lockedNoticeTimerRef.current) {
+        clearTimeout(lockedNoticeTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    setLessonProgress(syncLessonProgressFromUser(currentUser));
+    return subscribeLessonProgress(currentUser.id, () => {
+      setLessonProgress(getLessonProgress(currentUser.id, currentUser));
+    });
+  }, [currentUser.id, currentUser.passedLessonIds, currentUser.unlockedLessonIds]);
+
+  const handleOpenExamPrompt = (exam: ContentItem, sourceLessonId?: string) => {
     setExamToStart(exam);
+    setExamSourceLessonId(sourceLessonId || exam.resourceId || '');
     setExamStartStep(1);
     setSelectedExamSystem('nimr');
   };
@@ -568,34 +616,19 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
     }
   }, [sections, activeCourse, selectedSectionId]);
 
-  // When selectedSectionId or resources change, ensure valid resource from latest updates
+  // When selectedSectionId or resources change, ensure valid & unlocked resource is selected
   useEffect(() => {
     if (!selectedSectionId) return;
-    const resList = resources.filter((r) => r.sectionId === selectedSectionId);
+    const resList = sortResourcesOrdered(resources.filter((r) => r.sectionId === selectedSectionId));
     if (resList.length > 0) {
-      if (!selectedResourceId || !resList.some((r) => r.id === selectedResourceId)) {
+      const selIdx = resList.findIndex((r) => r.id === selectedResourceId);
+      if (selIdx === -1 || !isLessonUnlocked(resList, selIdx, lessonProgress)) {
         setSelectedResourceId(resList[0].id);
       }
     } else {
       setSelectedResourceId('');
     }
-  }, [selectedSectionId, resources, selectedResourceId]);
-
-  // When selectedResourceId or contentItems change, ensure valid active video
-  useEffect(() => {
-    if (!selectedResourceId) {
-      setActiveVideo(null);
-      return;
-    }
-    const vids = contentItems.filter((i) => i.resourceId === selectedResourceId && i.type === 'video');
-    if (vids.length > 0) {
-      if (!activeVideo || !vids.some((v) => v.id === activeVideo.id)) {
-        setActiveVideo(vids[0]);
-      }
-    } else {
-      setActiveVideo(null);
-    }
-  }, [selectedResourceId, contentItems, activeVideo]);
+  }, [selectedSectionId, resources, selectedResourceId, lessonProgress]);
 
   // Calculate subscription status: VIP, Unlimited, Paused Counter, Unspecified (no days counter until admin sets days), or Active Days
   const isVipActive = Boolean(currentUser.isVip);
@@ -806,6 +839,19 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
       ];
     }
 
+    const resolvedLessonId = examSourceLessonId || examToStart.resourceId || '';
+    const lessonObj = resolvedLessonId ? resources.find((r) => r.id === resolvedLessonId) : undefined;
+    let nextLessonObj: ResourceItem | undefined;
+    if (lessonObj) {
+      const secLessons = sortResourcesOrdered(
+        resources.filter((r) => r.sectionId === lessonObj.sectionId)
+      );
+      const lessonIndex = secLessons.findIndex((r) => r.id === lessonObj.id);
+      if (lessonIndex >= 0 && lessonIndex < secLessons.length - 1) {
+        nextLessonObj = secLessons[lessonIndex + 1];
+      }
+    }
+
     setActiveExam({
       id: examToStart.id,
       title: examToStart.title,
@@ -814,8 +860,13 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
       examSystem: systemMode,
       durationMinutes: examToStart.durationMinutes || 15,
       targetPercentage: examToStart.targetPercentage || 90,
+      lessonId: lessonObj?.id,
+      lessonTitle: lessonObj?.title,
+      nextLessonId: nextLessonObj?.id,
+      nextLessonTitle: nextLessonObj?.title,
     });
     setExamToStart(null);
+    setExamSourceLessonId('');
     setExamStartStep(1);
     setIsStartingExam(false);
   };
@@ -920,17 +971,36 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
   }, [courseSections, selectedSectionId]);
 
   const currentSectionResources = useMemo(
-    () => (effectiveSectionId ? resources.filter((r) => r.sectionId === effectiveSectionId) : []),
+    () => (effectiveSectionId ? sortResourcesOrdered(resources.filter((r) => r.sectionId === effectiveSectionId)) : []),
     [resources, effectiveSectionId]
   );
 
   const effectiveResourceId = useMemo(() => {
     if (currentSectionResources.length === 0) return '';
-    if (selectedResourceId && currentSectionResources.some((r) => r.id === selectedResourceId)) {
-      return selectedResourceId;
+    if (selectedResourceId) {
+      const selIdx = currentSectionResources.findIndex((r) => r.id === selectedResourceId);
+      if (selIdx !== -1 && isLessonUnlocked(currentSectionResources, selIdx, lessonProgress)) {
+        return selectedResourceId;
+      }
     }
     return currentSectionResources[0].id;
-  }, [currentSectionResources, selectedResourceId]);
+  }, [currentSectionResources, selectedResourceId, lessonProgress]);
+
+  // Keep activeVideo strictly synced to the unlocked effectiveResourceId
+  useEffect(() => {
+    if (!effectiveResourceId) {
+      setActiveVideo(null);
+      return;
+    }
+    const vids = contentItems.filter((i) => i.resourceId === effectiveResourceId && i.type === 'video');
+    if (vids.length > 0) {
+      if (!activeVideo || !vids.some((v) => v.id === activeVideo.id)) {
+        setActiveVideo(vids[0]);
+      }
+    } else {
+      setActiveVideo(null);
+    }
+  }, [effectiveResourceId, contentItems, activeVideo]);
 
   const currentResourceItems = useMemo(
     () =>
@@ -1240,6 +1310,10 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
             defaultFolders={courseFolders}
             courseId={activeCourse?.id || 'course_default_1'}
             courseTitle={activeCourse?.title}
+            lessonId={activeExam.lessonId}
+            lessonTitle={activeExam.lessonTitle}
+            nextLessonId={activeExam.nextLessonId}
+            nextLessonTitle={activeExam.nextLessonTitle}
             isTimedInitial={activeExam.isTimed}
             examSystem={activeExam.examSystem || 'nimr'}
             durationMinutes={activeExam.durationMinutes}
@@ -1249,7 +1323,7 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
             folderId={activeExam.folderId}
             folderTitle={activeExam.folderTitle}
             onFinishExam={() => {
-              // Exam finished and recorded
+              setLessonProgress(getLessonProgress(currentUser.id, currentUser));
             }}
             onExit={() => setActiveExam(null)}
           />
@@ -1784,9 +1858,20 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                   <div className={`flex items-center justify-between pb-3 border-b mb-3 ${
                     isDarkMode ? 'border-slate-800/60' : 'border-slate-200'
                   }`}>
-                    <span className={`text-xs font-black ${isDarkMode ? 'text-slate-400' : 'text-slate-700'}`}>
-                      المصادر المتاحة ({currentSectionResources.length})
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className={`text-xs font-black ${isDarkMode ? 'text-slate-400' : 'text-slate-700'}`}>
+                        المصادر المتاحة ({currentSectionResources.length})
+                      </span>
+                      {currentSectionResources.length > 1 && (
+                        <span className={`text-[10px] font-black px-2 py-0.5 rounded-full border ${
+                          isDarkMode
+                            ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                            : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                        }`}>
+                          {currentSectionResources.filter((_, idx) => isLessonUnlocked(currentSectionResources, idx, lessonProgress)).length}/{currentSectionResources.length} مفتوح
+                        </span>
+                      )}
+                    </div>
                     <span
                       className="text-[11px] font-black"
                       style={{ color: activeTheme?.accent || '#2563eb' }}
@@ -1795,63 +1880,156 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                     </span>
                   </div>
 
-                  <div className="flex flex-col gap-2 max-h-48 overflow-y-auto pr-1">
+                  {lockedLessonNotice && (
+                    <div
+                      className={`mb-3 p-3 rounded-2xl border text-[11px] font-black flex items-start gap-2 animate-in fade-in duration-150 ${
+                        isDarkMode
+                          ? 'bg-amber-500/10 border-amber-500/40 text-amber-300'
+                          : 'bg-amber-50 border-amber-300 text-amber-950'
+                      }`}
+                    >
+                      <Lock className="w-4 h-4 shrink-0 text-amber-500 mt-0.5" />
+                      <span>{lockedLessonNotice}</span>
+                    </div>
+                  )}
+
+                  <div className="flex flex-col gap-2 max-h-60 overflow-y-auto pr-1">
                     {currentSectionResources.length === 0 ? (
                       <div className="py-6 text-center text-xs text-slate-500 font-bold">
                         لا توجد مصادر في هذا القسم بعد
                       </div>
                     ) : (
                       currentSectionResources.map((res, rIdx) => {
-                        const isSelected = effectiveResourceId === res.id;
+                        const isUnlocked = isLessonUnlocked(currentSectionResources, rIdx, lessonProgress);
+                        const isPassed = isLessonPassed(res.id, lessonProgress);
+                        const prevLesson = rIdx > 0 ? currentSectionResources[rIdx - 1] : null;
+                        const isSelected = isUnlocked && effectiveResourceId === res.id;
+
                         return (
                           <button
                             key={res.id}
+                            type="button"
                             onClick={() => {
+                              if (!isUnlocked) {
+                                showLockedLessonMessage(
+                                  `الدرس "${res.title}" مقفول 🔒 — يجب إنهاء اختبار درس "${prevLesson?.title || 'الدرس السابق'}" والحصول على نتيجة 100% أولاً.`
+                                );
+                                return;
+                              }
+                              setLockedLessonNotice(null);
                               pauseAllVideos();
                               setSelectedResourceId(res.id);
                             }}
-                            className={`w-full text-right p-3 rounded-2xl border text-xs font-bold transition flex items-center justify-between gap-2.5 cursor-pointer ${
-                              isSelected
-                          ? isDarkMode
-                            ? 'text-white shadow-md'
-                            : 'text-slate-950 font-black shadow-md bg-blue-50/70 border-blue-400'
-                          : isDarkMode
-                          ? 'bg-slate-800/40 border-slate-700/60 text-slate-300 hover:bg-slate-800'
-                          : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50 shadow-sm'
-                      }`}
-                      style={
-                        isSelected
-                          ? {
-                              backgroundColor: isDarkMode ? `${activeTheme?.primary || '#2563eb'}25` : undefined,
-                              borderColor: activeTheme?.primary || '#2563eb',
-                              boxShadow: `0 4px 14px ${activeTheme?.primary || '#2563eb'}25`,
+                            aria-disabled={!isUnlocked}
+                            title={
+                              isUnlocked
+                                ? res.title
+                                : `مقفول — يتطلب الحصول على 100% في اختبار "${prevLesson?.title || 'الدرس السابق'}"`
                             }
-                          : {}
-                      }
-                    >
-                      <div className="flex items-center gap-2.5 truncate">
-                        <span className={`w-5 h-5 rounded-full text-[10px] font-black font-mono flex items-center justify-center shrink-0 ${
-                          isDarkMode ? 'bg-slate-700/80 text-white' : 'bg-slate-100 text-slate-800 border border-slate-200'
-                        }`}>
-                          {res.order || rIdx + 1}
-                        </span>
-                        <div className="truncate">
-                          <div className={`truncate ${isDarkMode ? 'text-white' : 'text-slate-950 font-black'}`}>{res.title}</div>
-                          {res.description && (
-                            <div className={`text-[10px] font-medium mt-0.5 truncate ${
-                              isDarkMode ? 'text-slate-400' : 'text-slate-600'
-                            }`}>
-                              {res.description}
+                            className={`w-full text-right p-3 rounded-2xl border text-xs font-bold transition flex items-center justify-between gap-2.5 ${
+                              !isUnlocked
+                                ? isDarkMode
+                                  ? 'bg-slate-900/60 border-slate-800/90 text-slate-500 opacity-75 cursor-not-allowed'
+                                  : 'bg-slate-100/80 border-slate-200 text-slate-500 opacity-85 cursor-not-allowed'
+                                : isSelected
+                                ? isDarkMode
+                                  ? 'text-white shadow-md cursor-pointer'
+                                  : 'text-slate-950 font-black shadow-md bg-blue-50/70 border-blue-400 cursor-pointer'
+                                : isDarkMode
+                                ? 'bg-slate-800/40 border-slate-700/60 text-slate-300 hover:bg-slate-800 cursor-pointer'
+                                : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50 shadow-sm cursor-pointer'
+                            }`}
+                            style={
+                              isSelected
+                                ? {
+                                    backgroundColor: isDarkMode ? `${activeTheme?.primary || '#2563eb'}25` : undefined,
+                                    borderColor: activeTheme?.primary || '#2563eb',
+                                    boxShadow: `0 4px 14px ${activeTheme?.primary || '#2563eb'}25`,
+                                  }
+                                : {}
+                            }
+                          >
+                            <div className="flex items-center gap-2.5 truncate min-w-0">
+                              <span
+                                className={`w-6 h-6 rounded-full text-[10px] font-black font-mono flex items-center justify-center shrink-0 ${
+                                  !isUnlocked
+                                    ? isDarkMode
+                                      ? 'bg-slate-800 text-amber-500 border border-amber-500/30'
+                                      : 'bg-amber-50 text-amber-700 border border-amber-300'
+                                    : isPassed
+                                    ? 'bg-emerald-500/20 text-emerald-500 border border-emerald-500/40'
+                                    : isDarkMode
+                                    ? 'bg-slate-700/80 text-white'
+                                    : 'bg-slate-100 text-slate-800 border border-slate-200'
+                                }`}
+                              >
+                                {!isUnlocked ? (
+                                  <Lock className="w-3 h-3" />
+                                ) : isPassed ? (
+                                  <CheckCircle className="w-3.5 h-3.5" />
+                                ) : (
+                                  res.order || rIdx + 1
+                                )}
+                              </span>
+                              <div className="truncate min-w-0">
+                                <div className="flex items-center gap-1.5 truncate">
+                                  <span
+                                    className={`truncate ${
+                                      !isUnlocked
+                                        ? isDarkMode
+                                          ? 'text-slate-400'
+                                          : 'text-slate-600'
+                                        : isDarkMode
+                                        ? 'text-white'
+                                        : 'text-slate-950 font-black'
+                                    }`}
+                                  >
+                                    {res.title}
+                                  </span>
+                                  {isPassed && (
+                                    <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-emerald-500/15 text-emerald-500 border border-emerald-500/30 font-black shrink-0">
+                                      100% ✓
+                                    </span>
+                                  )}
+                                </div>
+                                {!isUnlocked ? (
+                                  <div className="text-[10px] font-bold mt-0.5 truncate text-amber-500">
+                                    🔒 يتطلب 100% في اختبار {prevLesson?.title || 'الدرس السابق'}
+                                  </div>
+                                ) : (
+                                  res.description && (
+                                    <div
+                                      className={`text-[10px] font-medium mt-0.5 truncate ${
+                                        isDarkMode ? 'text-slate-400' : 'text-slate-600'
+                                      }`}
+                                    >
+                                      {res.description}
+                                    </div>
+                                  )
+                                )}
+                              </div>
                             </div>
-                          )}
-                        </div>
-                      </div>
-                      <ChevronLeft className={`w-4 h-4 shrink-0 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`} />
-                    </button>
-                  );
-                }))}
-              </div>
-            </div>
+
+                            {!isUnlocked ? (
+                              <span
+                                className={`text-[10px] font-black px-2 py-0.5 rounded-lg border shrink-0 flex items-center gap-1 ${
+                                  isDarkMode
+                                    ? 'bg-slate-800 border-slate-700 text-amber-400'
+                                    : 'bg-amber-50 border-amber-300 text-amber-800'
+                                }`}
+                              >
+                                <Lock className="w-3 h-3" />
+                                <span>مقفول</span>
+                              </span>
+                            ) : (
+                              <ChevronLeft className={`w-4 h-4 shrink-0 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`} />
+                            )}
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
 
             {/* ================= الحصة التعريفية ================= */}
             {/* "تحت كلمة المصادر المتاحة وفوق الفيديوهات والملفات والاختبارات يكون فالمنتصف بينهم حصة اسمه الحصة التعريفية" */}
@@ -1916,8 +2094,8 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
               </div>
             )}
 
-            {/* When resource is selected: 3 TABS (فيديوهات، اختبارات، ملفات) */}
-            {selectedResourceId && (
+            {/* When unlocked resource is selected: 3 TABS (فيديوهات، اختبارات، ملفات) */}
+            {effectiveResourceId && (
               <div
                 className={`p-4 md:p-5 rounded-3xl border shadow-xl space-y-4 ${
                   isDarkMode ? 'bg-slate-900/90 border-slate-800' : 'bg-white border-slate-200 shadow-sm'
@@ -2107,7 +2285,7 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                           </div>
 
                           <button
-                            onClick={() => handleOpenExamPrompt(ex)}
+                            onClick={() => handleOpenExamPrompt(ex, effectiveResourceId)}
                             className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black text-xs shadow-lg shadow-amber-500/20 transition transform active:scale-95 cursor-pointer"
                           >
                             <Play className="w-3.5 h-3.5 fill-current" />
@@ -2478,7 +2656,7 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
 
                             <button
                               type="button"
-                              onClick={() => handleOpenExamPrompt(linkedEx)}
+                              onClick={() => handleOpenExamPrompt(linkedEx, effectiveResourceId)}
                               className={`w-full py-3.5 px-4 rounded-2xl ${linkedExamTheme.button} font-black text-xs md:text-sm transition-all flex items-center justify-center gap-2 cursor-pointer hover:scale-[1.01] active:scale-[0.99]`}
                             >
                               <Zap className="w-4 h-4" />
@@ -3275,6 +3453,18 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
         onSelectVideo={(videoItem) => {
           const res = resources.find((r) => r.id === videoItem.resourceId);
           if (res) {
+            const secLessons = sortResourcesOrdered(
+              resources.filter((r) => r.sectionId === res.sectionId)
+            );
+            const rIdx = secLessons.findIndex((r) => r.id === res.id);
+            if (rIdx > 0 && !isLessonUnlocked(secLessons, rIdx, lessonProgress)) {
+              const prev = secLessons[rIdx - 1];
+              setShowStatsModal(false);
+              showLockedLessonMessage(
+                `الدرس "${res.title}" مقفول 🔒 — يجب إنهاء اختبار درس "${prev?.title || 'الدرس السابق'}" والحصول على نتيجة 100% أولاً.`
+              );
+              return;
+            }
             setSelectedSectionId(res.sectionId);
             setSelectedResourceId(res.id);
           }

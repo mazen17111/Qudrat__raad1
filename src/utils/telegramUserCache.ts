@@ -168,6 +168,13 @@ export function removeCachedTelegramUser(
         }
       } catch {}
     });
+    if (targetUid) {
+      localStorage.removeItem(`raad_lesson_progress_${targetUid}`);
+    }
+    if (tgKey) {
+      localStorage.removeItem(`raad_lesson_progress_tg_${tgKey}`);
+    }
+    localStorage.removeItem('raad_cached_selected_resource_id');
   } catch {}
 
   try {

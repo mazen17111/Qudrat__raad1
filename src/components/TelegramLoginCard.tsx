@@ -31,6 +31,7 @@ export const TelegramLoginCard: React.FC<TelegramLoginCardProps> = ({
   return (
     <div
       dir="rtl"
+      data-preserve-colors="true"
       className="w-full max-w-md mx-auto rounded-3xl bg-[#1E293B] border border-slate-700/80 shadow-2xl p-6 sm:p-7 text-right transition-all duration-300 select-none text-slate-100 font-sans"
     >
       {/* ================= 1. رأس الكارت ================= */}

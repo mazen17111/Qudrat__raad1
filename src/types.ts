@@ -52,6 +52,8 @@ export interface StudentUser {
   pausedRemainingDays?: number; // عدد الأيام المتبقية المحفوظة عند قفل العداد
   pausedAt?: string; // تاريخ ووقت قفل العداد
   preferredThemeColor?: CourseThemeColor; // ثيم ولون الكورس المخصص المختار من الطالب
+  passedLessonIds?: string[]; // معرّفات الدروس التي حقق فيها الطالب 100% في اختبارها
+  unlockedLessonIds?: string[]; // معرّفات الدروس المفتوحة بالتسلسل
 }
 
 export type CourseThemeColor = 'default' | 'red' | 'green' | 'blue' | 'purple' | 'pink' | 'orange' | 'black';

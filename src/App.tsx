@@ -168,17 +168,24 @@ export default function App() {
   const [isAdminOpen, setIsAdminOpen] = useState<boolean>(false);
   const [isAdminPasswordModalOpen, setIsAdminPasswordModalOpen] = useState<boolean>(false);
 
-  // Initialize systemSettings from cached localStorage immediately for instant logo & branding rendering
+  // Initialize systemSettings from cached localStorage immediately for instant logo & branding rendering (0 Firestore reads)
   const [systemSettings, setSystemSettings] = useState<SystemSettings>(() => {
     try {
       const cached = localStorage.getItem(CACHED_SETTINGS_KEY);
+      const savedLogo = localStorage.getItem('raad_platform_logo_url') || '';
       if (cached) {
         const parsed = JSON.parse(cached);
-        if (parsed?.logoUrl) {
+        const resolvedLogo = parsed?.logoUrl || savedLogo;
+        if (resolvedLogo) {
           const img = new Image();
-          img.src = parsed.logoUrl;
+          img.src = resolvedLogo;
         }
-        return { ...DEFAULT_SETTINGS, ...parsed };
+        return { ...DEFAULT_SETTINGS, ...parsed, logoUrl: resolvedLogo };
+      }
+      if (savedLogo) {
+        const img = new Image();
+        img.src = savedLogo;
+        return { ...DEFAULT_SETTINGS, logoUrl: savedLogo };
       }
     } catch (e) {}
     return DEFAULT_SETTINGS;
@@ -214,8 +221,9 @@ export default function App() {
     });
   }, []);
 
-  // Initialize and test connection on mount (only run seeder automatically if DB is completely uninitialized)
+  // Connect to Firestore system_settings ONLY after the user logs in or enters Admin Panel (0 reads/writes on Landing Page)
   useEffect(() => {
+    if (!currentUser?.id && !isAdminOpen) return;
     void testConnection();
 
     // Listen to real-time global settings & theme
@@ -267,7 +275,7 @@ export default function App() {
     return () => {
       unsub();
     };
-  }, []);
+  }, [currentUser?.id, isAdminOpen]);
 
   // Smart cached sync for courses, sections, resources & content_items:
   // Only reads Firestore when user is logged in AND cache is empty, expired, or admin updated catalogUpdatedAt
