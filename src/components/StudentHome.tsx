@@ -179,6 +179,7 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
   const [showStatsModal, setShowStatsModal] = useState(false);
   const [showFoldersModal, setShowFoldersModal] = useState(false);
   const [showFeaturesModal, setShowFeaturesModal] = useState(false);
+  const [featuresInitialView, setFeaturesInitialView] = useState<'main' | 'results'>('main');
   const [showCertificateModal, setShowCertificateModal] = useState(false);
 
   // Active exam state
@@ -188,6 +189,7 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
     questions: ExamQuestion[];
     isTimed: boolean;
     examSystem?: ExamSystemType;
+    resultDisplayMode?: 'immediate' | 'my_results';
     durationMinutes?: number;
     targetPercentage?: number;
     isFolderExam?: boolean;
@@ -195,15 +197,17 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
     folderTitle?: string;
   } | null>(null);
 
-  // Timed & system prompt modal for exam start (Step 1: Choose system 'nimr' vs 'standard' vs 'blue', Step 2: Choose timed vs untimed)
+  // Timed & system prompt modal for exam start (Step 1: Choose system + result display mode, Step 2: Choose timed vs untimed)
   const [examToStart, setExamToStart] = useState<ContentItem | null>(null);
   const [examStartStep, setExamStartStep] = useState<1 | 2>(1);
   const [selectedExamSystem, setSelectedExamSystem] = useState<ExamSystemType>('nimr');
+  const [selectedResultDisplayMode, setSelectedResultDisplayMode] = useState<'immediate' | 'my_results'>('immediate');
 
   const handleOpenExamPrompt = (exam: ContentItem) => {
     setExamToStart(exam);
     setExamStartStep(1);
     setSelectedExamSystem('nimr');
+    setSelectedResultDisplayMode('immediate');
   };
 
   // Educational Data with instant preloaded data & cache fallback
@@ -798,6 +802,7 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
       questions: finalQuestions,
       isTimed,
       examSystem: systemMode,
+      resultDisplayMode: selectedResultDisplayMode,
       durationMinutes: examToStart.durationMinutes || 15,
       targetPercentage: examToStart.targetPercentage || 90,
     });
@@ -1249,6 +1254,7 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
             courseTitle={activeCourse?.title}
             isTimedInitial={activeExam.isTimed}
             examSystem={activeExam.examSystem || 'nimr'}
+            resultDisplayMode={activeExam.resultDisplayMode || 'immediate'}
             durationMinutes={activeExam.durationMinutes}
             targetPercentage={activeExam.targetPercentage}
             isDarkMode={isDarkMode}
@@ -1257,6 +1263,11 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
             folderTitle={activeExam.folderTitle}
             onFinishExam={() => {}}
             onExit={() => setActiveExam(null)}
+            onOpenMyResults={() => {
+              setActiveExam(null);
+              setFeaturesInitialView('results');
+              setShowFeaturesModal(true);
+            }}
           />
         </ErrorBoundary>
       </div>
@@ -1346,7 +1357,10 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
         <div className="flex items-center gap-1 sm:gap-2 shrink-0">
           {/* كلمة المميزات باللون الذهبي بجانب احصائياتي */}
           <button
-            onClick={() => setShowFeaturesModal(true)}
+            onClick={() => {
+              setFeaturesInitialView('main');
+              setShowFeaturesModal(true);
+            }}
             className="flex items-center gap-1 px-2 sm:px-3 py-1.5 sm:py-2 rounded-xl text-[11px] sm:text-xs font-black border transition shadow-sm hover:scale-105 bg-gradient-to-r from-amber-500/20 via-amber-400/25 to-yellow-500/20 border-amber-400 text-amber-500 dark:text-amber-300 hover:border-amber-300 cursor-pointer"
             title="المميزات الإضافية"
           >
@@ -2717,394 +2731,456 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                 </span>
               </div>
 
-              {/* ================= STEP 1: اختيار نظام عرض الاختبار (3 أنظمة) ================= */}
+              {/* ================= STEP 1: اختيار نظام عرض الاختبار ومكان عرض النتيجة ================= */}
               {examStartStep === 1 && (
-                <div className="space-y-6 animate-in fade-in duration-150">
-                  {/* Top user prompt styled card: بطاقة اختيار نظام عرض الاختبار */}
-                  <div className={`p-5 sm:p-6 rounded-2xl border text-center space-y-4 shadow-sm ${
-                    isDarkMode ? 'bg-slate-800/80 border-slate-700' : 'bg-[#f8fafc] border-slate-200'
-                  }`}>
-                    <h2 className="text-xl sm:text-2xl font-black text-[#1b4f72] dark:text-blue-300">
-                      اختر نظام عرض الاختبار
-                    </h2>
-                    <p className={`text-xs sm:text-sm max-w-xl mx-auto font-medium ${
-                      isDarkMode ? 'text-slate-300' : 'text-slate-600'
-                    }`}>
-                      اختر طريقة العرض المفضلة لك لأداء هذا الاختبار. جميع بياناتك وإجاباتك المسجلة محفوظة وموثقة في كل الأنظمة:
-                    </p>
-
-                    {/* Quick Selection Buttons styled according to user mockup */}
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-2xl mx-auto pt-1">
-                      {/* Button 1: نظام نمر */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedExamSystem('nimr');
-                          setExamStartStep(2);
-                        }}
-                        className={`p-3.5 rounded-xl border-2 font-bold text-sm transition-all duration-200 flex items-center justify-center gap-2 cursor-pointer ${
-                          selectedExamSystem === 'nimr'
-                            ? 'border-[#00a59a] bg-[#f0fdfc] text-[#00a59a] ring-2 ring-[#00a59a]/30 -translate-y-0.5 shadow-sm'
-                            : 'border-slate-300 bg-white hover:border-[#00a59a] hover:bg-[#f0fdfc] hover:text-[#00a59a] text-slate-800 hover:-translate-y-0.5'
+                <div className="space-y-5 animate-in fade-in duration-150">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-1">
+                    <div>
+                      <h4
+                        className={`text-base sm:text-lg font-black ${
+                          isDarkMode ? 'text-white' : 'text-slate-900'
                         }`}
                       >
-                        <span className="text-lg">🐅</span>
-                        <span>نظام نمر</span>
-                      </button>
-
-                      {/* Button 2: النظام الافتراضي للمنصة */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedExamSystem('standard');
-                          setExamStartStep(2);
-                        }}
-                        className={`p-3.5 rounded-xl border-2 font-bold text-sm transition-all duration-200 flex items-center justify-center gap-2 cursor-pointer ${
-                          selectedExamSystem === 'standard'
-                            ? 'border-blue-600 bg-blue-50 text-blue-700 ring-2 ring-blue-500/30 -translate-y-0.5 shadow-sm'
-                            : 'border-slate-300 bg-white hover:border-blue-500 hover:bg-blue-50/60 hover:text-blue-700 text-slate-800 hover:-translate-y-0.5'
+                        اختر نظام عرض الاختبار المفضل لديك
+                      </h4>
+                      <p
+                        className={`text-xs mt-0.5 ${
+                          isDarkMode ? 'text-slate-400' : 'text-slate-600 font-medium'
                         }`}
                       >
-                        <span className="text-lg">💻</span>
-                        <span>النظام الافتراضي للمنصة</span>
-                      </button>
-
-                      {/* Button 3: النظام الأزرق (#1b4f72 / #ebf5fb) */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedExamSystem('blue');
-                          setExamStartStep(2);
-                        }}
-                        className={`p-3.5 rounded-xl border-2 font-bold text-sm transition-all duration-200 flex items-center justify-center gap-2 cursor-pointer ${
-                          selectedExamSystem === 'blue'
-                            ? 'border-[#1b4f72] bg-[#ebf5fb] text-[#1b4f72] ring-2 ring-[#1b4f72]/40 -translate-y-0.5 shadow-sm'
-                            : 'border-slate-300 bg-white hover:border-[#1b4f72] hover:bg-[#ebf5fb] hover:text-[#1b4f72] text-slate-800 hover:-translate-y-0.5'
-                        }`}
-                      >
-                        <span className="text-lg">🔷</span>
-                        <span>النظام الأزرق</span>
-                      </button>
+                        اضغط على أي نظام لتحديده، ثم اختر طريقة عرض نتيجتك بعد انتهاء الاختبار.
+                      </p>
                     </div>
                   </div>
 
-                  {/* 3 Detailed Cards Grid */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
+                  {/* 3 Clean, Organized System Cards */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     {/* Card 1: نظام نمر */}
-                    <div
-                      onClick={() => {
-                        setSelectedExamSystem('nimr');
-                        setExamStartStep(2);
-                      }}
-                      className={`group relative rounded-3xl p-5 border-2 cursor-pointer transition-all duration-200 hover:shadow-xl hover:-translate-y-1 flex flex-col justify-between space-y-4 ${
+                    <button
+                      type="button"
+                      onClick={() => setSelectedExamSystem('nimr')}
+                      className={`group text-right relative rounded-2xl p-5 border-2 cursor-pointer transition-all duration-200 flex flex-col justify-between gap-4 ${
                         selectedExamSystem === 'nimr'
-                          ? 'border-emerald-400 ring-2 ring-emerald-400/50'
-                          : 'border-emerald-500/30 hover:border-emerald-400'
-                      } ${
-                        isDarkMode
-                          ? 'bg-gradient-to-b from-emerald-950/40 to-slate-900 shadow-md'
-                          : 'bg-gradient-to-b from-emerald-50/70 to-white border-emerald-300 shadow-sm'
+                          ? isDarkMode
+                            ? 'border-emerald-400 bg-emerald-950/35 ring-2 ring-emerald-400/30 shadow-lg shadow-emerald-950/40'
+                            : 'border-[#00a59a] bg-[#f0fdfc] ring-2 ring-[#00a59a]/25 shadow-md'
+                          : isDarkMode
+                          ? 'border-slate-800 bg-slate-900/70 hover:border-emerald-500/50'
+                          : 'border-slate-200 bg-white hover:border-[#00a59a]/60 hover:bg-slate-50/70'
                       }`}
                     >
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between">
-                          <div className="p-2.5 rounded-2xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 group-hover:scale-110 transition-transform">
-                            <span className="text-2xl">🐅</span>
+                      <div className="space-y-3 w-full">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2.5">
+                            <div
+                              className={`w-10 h-10 rounded-xl flex items-center justify-center text-xl border shrink-0 ${
+                                isDarkMode
+                                  ? 'bg-emerald-500/15 border-emerald-500/30'
+                                  : 'bg-emerald-50 border-emerald-200'
+                              }`}
+                            >
+                              🐅
+                            </div>
+                            <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-300 border border-emerald-500/30">
+                              محاكي قياس
+                            </span>
                           </div>
-                          <span className="text-[10px] font-black px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-300 border border-emerald-500/40">
-                            محاكي قياس 🌟
+                          <span
+                            className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition ${
+                              selectedExamSystem === 'nimr'
+                                ? 'border-emerald-500 bg-emerald-500 text-white'
+                                : isDarkMode
+                                ? 'border-slate-600'
+                                : 'border-slate-300'
+                            }`}
+                          >
+                            {selectedExamSystem === 'nimr' && <CheckCircle className="w-3.5 h-3.5" />}
                           </span>
                         </div>
 
                         <div>
-                          <h5 className={`text-base font-black transition-colors ${
-                            isDarkMode ? 'text-white group-hover:text-emerald-300' : 'text-slate-950 group-hover:text-emerald-700'
-                          }`}>
+                          <h5
+                            className={`text-base font-black ${
+                              isDarkMode ? 'text-white' : 'text-slate-900'
+                            }`}
+                          >
                             نظام نمر
                           </h5>
-                          <p className={`text-xs leading-relaxed mt-1 ${
-                            isDarkMode ? 'text-slate-300' : 'text-slate-600 font-medium'
-                          }`}>
-                            واجهة قياس الفعلية بشريط علوي أخضر وقائمة جانبية متكاملة لبيانات الطالب وأرقام الأسئلة.
+                          <p
+                            className={`text-xs leading-relaxed mt-1 ${
+                              isDarkMode ? 'text-slate-300' : 'text-slate-600'
+                            }`}
+                          >
+                            واجهة قياس الفعلية بشريط علوي أخضر وقائمة جانبية لبيانات الطالب وأرقام الأسئلة.
                           </p>
                         </div>
-
-                        <div className={`space-y-1.5 pt-1 text-[11px] font-bold ${
-                          isDarkMode ? 'text-emerald-200/90' : 'text-emerald-950'
-                        }`}>
-                          <div className="flex items-center gap-1.5">
-                            <CheckCircle className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                            <span>قائمة الأسئلة وإحصائياتها على اليسار</span>
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            <CheckCircle className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                            <span>رقم هوية معتمد واسم الطالب بالهيدر</span>
-                          </div>
-                        </div>
                       </div>
 
-                      <div className="space-y-2 pt-1">
-                        <button
-                          type="button"
-                          disabled={isStartingExam}
-                          onClick={() => {
-                            setSelectedExamSystem('nimr');
-                            setExamStartStep(2);
-                          }}
-                          className="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs shadow-md transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
-                        >
-                          <span>اختيار نظام نمر ⬅️</span>
-                        </button>
-
-                        <div className="grid grid-cols-2 gap-1.5">
-                          <button
-                            type="button"
-                            disabled={isStartingExam}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              confirmStartExam(true, 'nimr');
-                            }}
-                            className="py-2 px-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 font-black text-[10px] flex items-center justify-center gap-1 transition cursor-pointer"
-                          >
-                            <Clock className="w-3 h-3 text-emerald-400" />
-                            <span>بوقت ⏱️</span>
-                          </button>
-                          <button
-                            type="button"
-                            disabled={isStartingExam}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              confirmStartExam(false, 'nimr');
-                            }}
-                            className="py-2 px-1.5 rounded-lg bg-teal-500/20 hover:bg-teal-500/30 text-teal-300 border border-teal-500/40 font-black text-[10px] flex items-center justify-center gap-1 transition cursor-pointer"
-                          >
-                            <Sparkles className="w-3 h-3 text-teal-400" />
-                            <span>حر 🎯</span>
-                          </button>
+                      <div
+                        className={`w-full pt-3 border-t space-y-1.5 text-[11px] font-bold ${
+                          isDarkMode
+                            ? 'border-slate-800 text-emerald-200/90'
+                            : 'border-slate-100 text-emerald-900'
+                        }`}
+                      >
+                        <div className="flex items-center gap-1.5">
+                          <CheckCircle className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                          <span>قائمة الأسئلة وإحصائياتها على اليسار</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <CheckCircle className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                          <span>رقم الهوية واسم الطالب بالهيدر</span>
                         </div>
                       </div>
-                    </div>
+                    </button>
 
                     {/* Card 2: النظام الافتراضي للمنصة */}
-                    <div
-                      onClick={() => {
-                        setSelectedExamSystem('standard');
-                        setExamStartStep(2);
-                      }}
-                      className={`group relative rounded-3xl p-5 border-2 cursor-pointer transition-all duration-200 hover:shadow-xl hover:-translate-y-1 flex flex-col justify-between space-y-4 ${
+                    <button
+                      type="button"
+                      onClick={() => setSelectedExamSystem('standard')}
+                      className={`group text-right relative rounded-2xl p-5 border-2 cursor-pointer transition-all duration-200 flex flex-col justify-between gap-4 ${
                         selectedExamSystem === 'standard'
-                          ? 'border-blue-400 ring-2 ring-blue-400/50'
-                          : 'border-blue-500/30 hover:border-blue-400'
-                      } ${
-                        isDarkMode
-                          ? 'bg-gradient-to-b from-blue-950/40 to-slate-900 shadow-md'
-                          : 'bg-gradient-to-b from-blue-50/70 to-white border-blue-300 shadow-sm'
+                          ? isDarkMode
+                            ? 'border-blue-400 bg-blue-950/35 ring-2 ring-blue-400/30 shadow-lg shadow-blue-950/40'
+                            : 'border-blue-600 bg-blue-50/70 ring-2 ring-blue-500/25 shadow-md'
+                          : isDarkMode
+                          ? 'border-slate-800 bg-slate-900/70 hover:border-blue-500/50'
+                          : 'border-slate-200 bg-white hover:border-blue-400 hover:bg-slate-50/70'
                       }`}
                     >
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between">
-                          <div className="p-2.5 rounded-2xl bg-blue-500/20 text-blue-400 border border-blue-500/40 group-hover:scale-110 transition-transform">
-                            <span className="text-2xl">💻</span>
+                      <div className="space-y-3 w-full">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2.5">
+                            <div
+                              className={`w-10 h-10 rounded-xl flex items-center justify-center text-xl border shrink-0 ${
+                                isDarkMode
+                                  ? 'bg-blue-500/15 border-blue-500/30'
+                                  : 'bg-blue-50 border-blue-200'
+                              }`}
+                            >
+                              💻
+                            </div>
+                            <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-600 dark:text-blue-300 border border-blue-500/30">
+                              الكلاسيكي المعتاد
+                            </span>
                           </div>
-                          <span className="text-[10px] font-black px-2.5 py-1 rounded-full bg-blue-500/20 text-blue-600 dark:text-blue-300 border border-blue-500/40">
-                            الكلاسيكي المعتاد 💻
+                          <span
+                            className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition ${
+                              selectedExamSystem === 'standard'
+                                ? 'border-blue-500 bg-blue-500 text-white'
+                                : isDarkMode
+                                ? 'border-slate-600'
+                                : 'border-slate-300'
+                            }`}
+                          >
+                            {selectedExamSystem === 'standard' && (
+                              <CheckCircle className="w-3.5 h-3.5" />
+                            )}
                           </span>
                         </div>
 
                         <div>
-                          <h5 className={`text-base font-black transition-colors ${
-                            isDarkMode ? 'text-white group-hover:text-blue-300' : 'text-slate-950 group-hover:text-blue-700'
-                          }`}>
-                            النظام الافتراضي
+                          <h5
+                            className={`text-base font-black ${
+                              isDarkMode ? 'text-white' : 'text-slate-900'
+                            }`}
+                          >
+                            النظام الافتراضي للمنصة
                           </h5>
-                          <p className={`text-xs leading-relaxed mt-1 ${
-                            isDarkMode ? 'text-slate-300' : 'text-slate-600 font-medium'
-                          }`}>
-                            طريقة العرض القياسية لمنصة رعد مع شريط أرقام أفقي والسبورة الذكية المفتوحة جنباً إلى جنب.
+                          <p
+                            className={`text-xs leading-relaxed mt-1 ${
+                              isDarkMode ? 'text-slate-300' : 'text-slate-600'
+                            }`}
+                          >
+                            طريقة العرض القياسية للمنصة مع شريط أرقام أفقي والسبورة الذكية المفتوحة.
                           </p>
                         </div>
-
-                        <div className={`space-y-1.5 pt-1 text-[11px] font-bold ${
-                          isDarkMode ? 'text-blue-200/90' : 'text-blue-950'
-                        }`}>
-                          <div className="flex items-center gap-1.5">
-                            <CheckCircle className="w-3.5 h-3.5 text-blue-500 shrink-0" />
-                            <span>شريط تنقل أفقي سريع بين الأسئلة</span>
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            <CheckCircle className="w-3.5 h-3.5 text-blue-500 shrink-0" />
-                            <span>السبورة الذكية المفتوحة للحل المباشر</span>
-                          </div>
-                        </div>
                       </div>
 
-                      <div className="space-y-2 pt-1">
-                        <button
-                          type="button"
-                          disabled={isStartingExam}
-                          onClick={() => {
-                            setSelectedExamSystem('standard');
-                            setExamStartStep(2);
-                          }}
-                          className="w-full py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-black text-xs shadow-md transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
-                        >
-                          <span>اختيار النظام الافتراضي ⬅️</span>
-                        </button>
-
-                        <div className="grid grid-cols-2 gap-1.5">
-                          <button
-                            type="button"
-                            disabled={isStartingExam}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              confirmStartExam(true, 'standard');
-                            }}
-                            className="py-2 px-1.5 rounded-lg bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 border border-blue-500/40 font-black text-[10px] flex items-center justify-center gap-1 transition cursor-pointer"
-                          >
-                            <Clock className="w-3 h-3 text-blue-400" />
-                            <span>بوقت ⏱️</span>
-                          </button>
-                          <button
-                            type="button"
-                            disabled={isStartingExam}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              confirmStartExam(false, 'standard');
-                            }}
-                            className="py-2 px-1.5 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 border border-indigo-500/40 font-black text-[10px] flex items-center justify-center gap-1 transition cursor-pointer"
-                          >
-                            <Sparkles className="w-3 h-3 text-indigo-400" />
-                            <span>حر 🎯</span>
-                          </button>
+                      <div
+                        className={`w-full pt-3 border-t space-y-1.5 text-[11px] font-bold ${
+                          isDarkMode
+                            ? 'border-slate-800 text-blue-200/90'
+                            : 'border-slate-100 text-blue-900'
+                        }`}
+                      >
+                        <div className="flex items-center gap-1.5">
+                          <CheckCircle className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                          <span>شريط تنقل أفقي سريع بين الأسئلة</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <CheckCircle className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                          <span>السبورة الذكية المفتوحة للحل المباشر</span>
                         </div>
                       </div>
-                    </div>
+                    </button>
 
-                    {/* Card 3: النظام الأزرق (#1b4f72) */}
-                    <div
-                      onClick={() => {
-                        setSelectedExamSystem('blue');
-                        setExamStartStep(2);
-                      }}
-                      className={`group relative rounded-3xl p-5 border-2 cursor-pointer transition-all duration-200 hover:shadow-xl hover:-translate-y-1 flex flex-col justify-between space-y-4 ${
+                    {/* Card 3: النظام الأزرق */}
+                    <button
+                      type="button"
+                      onClick={() => setSelectedExamSystem('blue')}
+                      className={`group text-right relative rounded-2xl p-5 border-2 cursor-pointer transition-all duration-200 flex flex-col justify-between gap-4 ${
                         selectedExamSystem === 'blue'
-                          ? 'border-[#1b4f72] ring-2 ring-[#1b4f72]/60'
-                          : 'border-[#1b4f72]/40 hover:border-[#1b4f72]'
-                      } ${
-                        isDarkMode
-                          ? 'bg-gradient-to-b from-[#1b4f72]/30 to-slate-900 shadow-md'
-                          : 'bg-gradient-to-b from-[#ebf5fb] to-white border-[#1b4f72]/30 shadow-sm'
+                          ? isDarkMode
+                            ? 'border-sky-400 bg-[#1b4f72]/35 ring-2 ring-sky-400/30 shadow-lg shadow-[#1b4f72]/30'
+                            : 'border-[#1b4f72] bg-[#ebf5fb] ring-2 ring-[#1b4f72]/25 shadow-md'
+                          : isDarkMode
+                          ? 'border-slate-800 bg-slate-900/70 hover:border-[#1b4f72]'
+                          : 'border-slate-200 bg-white hover:border-[#1b4f72]/60 hover:bg-slate-50/70'
                       }`}
                     >
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between">
-                          <div className="p-2.5 rounded-2xl bg-[#1b4f72]/20 text-[#1b4f72] dark:text-blue-300 border border-[#1b4f72]/40 group-hover:scale-110 transition-transform">
-                            <span className="text-2xl">🔷</span>
+                      <div className="space-y-3 w-full">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2.5">
+                            <div
+                              className={`w-10 h-10 rounded-xl flex items-center justify-center text-xl border shrink-0 ${
+                                isDarkMode
+                                  ? 'bg-[#1b4f72]/30 border-[#1b4f72]/50'
+                                  : 'bg-[#ebf5fb] border-[#1b4f72]/30'
+                              }`}
+                            >
+                              🔷
+                            </div>
+                            <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-[#1b4f72]/15 text-[#1b4f72] dark:text-sky-300 border border-[#1b4f72]/30">
+                              تصميم العمودين
+                            </span>
                           </div>
-                          <span className="text-[10px] font-black px-2.5 py-1 rounded-full bg-[#1b4f72]/20 text-[#1b4f72] dark:text-blue-300 border border-[#1b4f72]/40">
-                            تصميم العمودين #1b4f72 🚀
+                          <span
+                            className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition ${
+                              selectedExamSystem === 'blue'
+                                ? 'border-[#1b4f72] bg-[#1b4f72] text-white'
+                                : isDarkMode
+                                ? 'border-slate-600'
+                                : 'border-slate-300'
+                            }`}
+                          >
+                            {selectedExamSystem === 'blue' && (
+                              <CheckCircle className="w-3.5 h-3.5" />
+                            )}
                           </span>
                         </div>
 
                         <div>
-                          <h5 className={`text-base font-black transition-colors ${
-                            isDarkMode ? 'text-white group-hover:text-blue-300' : 'text-[#1b4f72] group-hover:text-[#153e5a]'
-                          }`}>
+                          <h5
+                            className={`text-base font-black ${
+                              isDarkMode ? 'text-white' : 'text-[#1b4f72]'
+                            }`}
+                          >
                             النظام الأزرق
                           </h5>
-                          <p className={`text-xs leading-relaxed mt-1 ${
-                            isDarkMode ? 'text-slate-300' : 'text-slate-600 font-medium'
-                          }`}>
-                            تصميم العمودين المطور بألوان زرقاء داكنة #1b4f72: عمود لبيانات الطالب والوقت والأسئلة وعمود للسؤال والخيارات.
+                          <p
+                            className={`text-xs leading-relaxed mt-1 ${
+                              isDarkMode ? 'text-slate-300' : 'text-slate-600'
+                            }`}
+                          >
+                            تصميم عمودين متطور بألوان زرقاء داكنة لبيانات الطالب والأسئلة والخيارات.
                           </p>
                         </div>
-
-                        <div className={`space-y-1.5 pt-1 text-[11px] font-bold ${
-                          isDarkMode ? 'text-blue-200/90' : 'text-slate-800'
-                        }`}>
-                          <div className="flex items-center gap-1.5">
-                            <CheckCircle className="w-3.5 h-3.5 text-[#1b4f72] shrink-0" />
-                            <span>تصميم متوازن على عمودين عصري وأنيق</span>
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            <CheckCircle className="w-3.5 h-3.5 text-[#1b4f72] shrink-0" />
-                            <span>لوحة بيانات الطالب الموثقة وشبكة تحكم متقدمة</span>
-                          </div>
-                        </div>
                       </div>
 
-                      <div className="space-y-2 pt-1">
-                        <button
-                          type="button"
-                          disabled={isStartingExam}
-                          onClick={() => {
-                            setSelectedExamSystem('blue');
-                            setExamStartStep(2);
-                          }}
-                          className="w-full py-2.5 rounded-xl bg-[#1b4f72] hover:bg-[#153e5a] text-white font-black text-xs shadow-md transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                      <div
+                        className={`w-full pt-3 border-t space-y-1.5 text-[11px] font-bold ${
+                          isDarkMode
+                            ? 'border-slate-800 text-sky-200/90'
+                            : 'border-slate-100 text-slate-800'
+                        }`}
+                      >
+                        <div className="flex items-center gap-1.5">
+                          <CheckCircle className="w-3.5 h-3.5 text-[#1b4f72] dark:text-sky-400 shrink-0" />
+                          <span>تنظيم متوازن على عمودين أنيق</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <CheckCircle className="w-3.5 h-3.5 text-[#1b4f72] dark:text-sky-400 shrink-0" />
+                          <span>لوحة بيانات وشبكة تحكم متقدمة</span>
+                        </div>
+                      </div>
+                    </button>
+                  </div>
+
+                  {/* خيار طريقة عرض النتيجة */}
+                  <div
+                    className={`rounded-2xl border p-4 sm:p-5 space-y-3 ${
+                      isDarkMode
+                        ? 'bg-slate-800/60 border-slate-700/80'
+                        : 'bg-slate-50 border-slate-200'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <BarChart3 className="w-4 h-4 text-emerald-500 shrink-0" />
+                      <h5
+                        className={`text-xs sm:text-sm font-black ${
+                          isDarkMode ? 'text-white' : 'text-slate-900'
+                        }`}
+                      >
+                        هل تود عرض نتيجتك بعد الاختبار مباشرة أم في قسم «نتائجي» في المميزات؟
+                      </h5>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedResultDisplayMode('immediate')}
+                        className={`text-right p-3.5 rounded-xl border-2 transition cursor-pointer flex items-start gap-3 ${
+                          selectedResultDisplayMode === 'immediate'
+                            ? isDarkMode
+                              ? 'border-blue-400 bg-blue-950/40 text-white'
+                              : 'border-blue-600 bg-white text-slate-900 shadow-sm'
+                            : isDarkMode
+                            ? 'border-slate-700 bg-slate-900/60 text-slate-300 hover:border-slate-600'
+                            : 'border-slate-200 bg-white/70 text-slate-700 hover:border-slate-300'
+                        }`}
+                      >
+                        <span
+                          className={`mt-0.5 w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${
+                            selectedResultDisplayMode === 'immediate'
+                              ? 'border-blue-500 bg-blue-500 text-white'
+                              : isDarkMode
+                              ? 'border-slate-600'
+                              : 'border-slate-300'
+                          }`}
                         >
-                          <span>اختيار النظام الأزرق ⬅️</span>
-                        </button>
-
-                        <div className="grid grid-cols-2 gap-1.5">
-                          <button
-                            type="button"
-                            disabled={isStartingExam}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              confirmStartExam(true, 'blue');
-                            }}
-                            className="py-2 px-1.5 rounded-lg bg-[#1b4f72]/20 hover:bg-[#1b4f72]/30 text-[#1b4f72] dark:text-blue-300 border border-[#1b4f72]/40 font-black text-[10px] flex items-center justify-center gap-1 transition cursor-pointer"
+                          {selectedResultDisplayMode === 'immediate' && (
+                            <span className="w-1.5 h-1.5 rounded-full bg-white" />
+                          )}
+                        </span>
+                        <div className="space-y-0.5">
+                          <div className="text-xs sm:text-sm font-black">
+                            عرض النتيجة بعد الاختبار مباشرة
+                          </div>
+                          <div
+                            className={`text-[11px] leading-relaxed ${
+                              isDarkMode ? 'text-slate-400' : 'text-slate-500'
+                            }`}
                           >
-                            <Clock className="w-3 h-3 text-[#1b4f72] dark:text-blue-400" />
-                            <span>بوقت ⏱️</span>
-                          </button>
-                          <button
-                            type="button"
-                            disabled={isStartingExam}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              confirmStartExam(false, 'blue');
-                            }}
-                            className="py-2 px-1.5 rounded-lg bg-[#ebf5fb] hover:bg-[#d6eaf8] text-[#1b4f72] border border-[#1b4f72]/30 font-black text-[10px] flex items-center justify-center gap-1 transition cursor-pointer"
-                          >
-                            <Sparkles className="w-3 h-3 text-[#1b4f72]" />
-                            <span>حر 🎯</span>
-                          </button>
+                            تظهر لك الدرجة والنسبة المئوية ومراجعة الأسئلة فور التسليم.
+                          </div>
                         </div>
-                      </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setSelectedResultDisplayMode('my_results')}
+                        className={`text-right p-3.5 rounded-xl border-2 transition cursor-pointer flex items-start gap-3 ${
+                          selectedResultDisplayMode === 'my_results'
+                            ? isDarkMode
+                              ? 'border-emerald-400 bg-emerald-950/40 text-white'
+                              : 'border-[#006837] bg-white text-slate-900 shadow-sm'
+                            : isDarkMode
+                            ? 'border-slate-700 bg-slate-900/60 text-slate-300 hover:border-slate-600'
+                            : 'border-slate-200 bg-white/70 text-slate-700 hover:border-slate-300'
+                        }`}
+                      >
+                        <span
+                          className={`mt-0.5 w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${
+                            selectedResultDisplayMode === 'my_results'
+                              ? 'border-[#006837] bg-[#006837] text-white'
+                              : isDarkMode
+                              ? 'border-slate-600'
+                              : 'border-slate-300'
+                          }`}
+                        >
+                          {selectedResultDisplayMode === 'my_results' && (
+                            <span className="w-1.5 h-1.5 rounded-full bg-white" />
+                          )}
+                        </span>
+                        <div className="space-y-0.5">
+                          <div className="text-xs sm:text-sm font-black">
+                            عرض النتيجة في قسم «نتائجي» في المميزات
+                          </div>
+                          <div
+                            className={`text-[11px] leading-relaxed ${
+                              isDarkMode ? 'text-slate-400' : 'text-slate-500'
+                            }`}
+                          >
+                            تُحفظ نتيجتك وتُعرض داخل قسم «نتائجي» في المميزات دون كشفها فوراً.
+                          </div>
+                        </div>
+                      </button>
                     </div>
                   </div>
+
+                  {/* Primary Next Button */}
+                  <button
+                    type="button"
+                    data-preserve-colors="true"
+                    onClick={() => setExamStartStep(2)}
+                    className={`w-full py-3.5 px-6 rounded-2xl text-white font-black text-sm shadow-lg transition flex items-center justify-center gap-2 cursor-pointer ${
+                      selectedExamSystem === 'nimr'
+                        ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 shadow-emerald-600/25'
+                        : selectedExamSystem === 'blue'
+                        ? 'bg-[#1b4f72] hover:bg-[#153e5a] shadow-[#1b4f72]/25'
+                        : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 shadow-blue-600/25'
+                    }`}
+                  >
+                    <span>
+                      متابعة لتحديد وقت الاختبار (
+                      {selectedExamSystem === 'nimr'
+                        ? 'نظام نمر'
+                        : selectedExamSystem === 'blue'
+                        ? 'النظام الأزرق'
+                        : 'النظام الافتراضي'}
+                      )
+                    </span>
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
                 </div>
               )}
 
               {/* ================= STEP 2: اختيار بوقت أو بدون وقت ================= */}
               {examStartStep === 2 && (
                 <div className="space-y-4 animate-in fade-in duration-150">
-                  <div className="flex flex-wrap items-center justify-between gap-3 pb-2 border-b border-slate-800">
-                    <div>
-                      <h4 className={`text-base md:text-lg font-black ${
-                        isDarkMode ? 'text-slate-100' : 'text-slate-900'
-                      }`}>
+                  <div
+                    className={`flex flex-wrap items-center justify-between gap-3 pb-3 border-b ${
+                      isDarkMode ? 'border-slate-800' : 'border-slate-200'
+                    }`}
+                  >
+                    <div className="space-y-1">
+                      <h4
+                        className={`text-base md:text-lg font-black ${
+                          isDarkMode ? 'text-slate-100' : 'text-slate-900'
+                        }`}
+                      >
                         الخطوة الثانية: اختر وضع الوقت (بوقت أو بدون وقت) ⏱️
                       </h4>
-                      <p className={`text-xs md:text-sm mt-0.5 ${
-                        isDarkMode ? 'text-slate-400' : 'text-slate-600 font-medium'
-                      }`}>
-                        النظام المختار: <strong className={
-                          selectedExamSystem === 'nimr'
-                            ? 'text-emerald-400'
-                            : selectedExamSystem === 'blue'
-                            ? 'text-blue-400 dark:text-blue-300'
-                            : 'text-blue-400'
-                        }>
-                          {selectedExamSystem === 'nimr'
-                            ? 'نظام نمر 🐅'
-                            : selectedExamSystem === 'blue'
-                            ? 'النظام الأزرق 🔷'
-                            : 'النظام الافتراضي للمنصة 💻'}
-                        </strong>
-                      </p>
+                      <div className="flex flex-wrap items-center gap-2 text-xs">
+                        <span
+                          className={isDarkMode ? 'text-slate-400' : 'text-slate-600 font-medium'}
+                        >
+                          النظام:{' '}
+                          <strong
+                            className={
+                              selectedExamSystem === 'nimr'
+                                ? 'text-emerald-500'
+                                : selectedExamSystem === 'blue'
+                                ? 'text-[#1b4f72] dark:text-sky-300'
+                                : 'text-blue-500'
+                            }
+                          >
+                            {selectedExamSystem === 'nimr'
+                              ? 'نظام نمر 🐅'
+                              : selectedExamSystem === 'blue'
+                              ? 'النظام الأزرق 🔷'
+                              : 'النظام الافتراضي 💻'}
+                          </strong>
+                        </span>
+                        <span className="opacity-40">•</span>
+                        <span
+                          className={isDarkMode ? 'text-slate-400' : 'text-slate-600 font-medium'}
+                        >
+                          عرض النتيجة:{' '}
+                          <strong
+                            className={
+                              selectedResultDisplayMode === 'my_results'
+                                ? 'text-emerald-500'
+                                : 'text-blue-500'
+                            }
+                          >
+                            {selectedResultDisplayMode === 'my_results'
+                              ? 'في قسم «نتائجي» بالمميزات'
+                              : 'مباشرة بعد الاختبار'}
+                          </strong>
+                        </span>
+                      </div>
                     </div>
 
                     {/* Back to Step 1 Button */}
@@ -3118,7 +3194,7 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                       }`}
                     >
                       <ArrowRight className="w-4 h-4" />
-                      <span>تغيير نظام الاختبار</span>
+                      <span>تعديل النظام أو عرض النتيجة</span>
                     </button>
                   </div>
 
@@ -3143,21 +3219,29 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                           </span>
                         </div>
 
-                        <h5 className={`text-lg md:text-xl font-black transition-colors ${
-                          isDarkMode ? 'text-white group-hover:text-blue-300' : 'text-slate-950 group-hover:text-blue-700'
-                        }`}>
+                        <h5
+                          className={`text-lg md:text-xl font-black transition-colors ${
+                            isDarkMode
+                              ? 'text-white group-hover:text-blue-300'
+                              : 'text-slate-950 group-hover:text-blue-700'
+                          }`}
+                        >
                           اختبار بوقت محدد ⏱️
                         </h5>
 
-                        <p className={`text-xs leading-relaxed ${
-                          isDarkMode ? 'text-slate-300' : 'text-slate-700 font-medium'
-                        }`}>
-                          يبدأ بعد تنازلي فور دخولك للاختبار، لقياس سرعتك الحقيقية وتدريب عقلك على إدارة الوقت بدقة واحترافية.
+                        <p
+                          className={`text-xs leading-relaxed ${
+                            isDarkMode ? 'text-slate-300' : 'text-slate-700 font-medium'
+                          }`}
+                        >
+                          يبدأ عد تنازلي فور دخولك للاختبار، لقياس سرعتك الحقيقية وتدريب عقلك على إدارة الوقت بدقة واحترافية.
                         </p>
 
-                        <div className={`space-y-1.5 pt-2 text-[11px] font-bold ${
-                          isDarkMode ? 'text-blue-200/80' : 'text-blue-900'
-                        }`}>
+                        <div
+                          className={`space-y-1.5 pt-2 text-[11px] font-bold ${
+                            isDarkMode ? 'text-blue-200/80' : 'text-blue-900'
+                          }`}
+                        >
                           <div className="flex items-center gap-1.5">
                             <CheckCircle className="w-3.5 h-3.5 text-blue-500" />
                             <span>محاكاة أجواء الاختبارات القياسية وقاعات الاختبار</span>
@@ -3182,12 +3266,12 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                         <span>
                           {isStartingExam
                             ? 'جاري بدء الاختبار...'
-                            : `بدأ الاختبار بوقت الآن (${
+                            : `بدء الاختبار بوقت الآن (${
                                 selectedExamSystem === 'nimr'
-                                  ? 'نظام نمر 🐅'
+                                  ? 'نظام نمر'
                                   : selectedExamSystem === 'blue'
-                                  ? 'النظام الأزرق 🔷'
-                                  : 'النظام الافتراضي 💻'
+                                  ? 'النظام الأزرق'
+                                  : 'النظام الافتراضي'
                               })`}
                         </span>
                       </button>
@@ -3212,21 +3296,29 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                           </span>
                         </div>
 
-                        <h5 className={`text-lg md:text-xl font-black transition-colors ${
-                          isDarkMode ? 'text-white group-hover:text-emerald-300' : 'text-slate-950 group-hover:text-emerald-700'
-                        }`}>
+                        <h5
+                          className={`text-lg md:text-xl font-black transition-colors ${
+                            isDarkMode
+                              ? 'text-white group-hover:text-emerald-300'
+                              : 'text-slate-950 group-hover:text-emerald-700'
+                          }`}
+                        >
                           تدريب هادئ بدون وقت 🎯
                         </h5>
 
-                        <p className={`text-xs leading-relaxed ${
-                          isDarkMode ? 'text-slate-300' : 'text-slate-700 font-medium'
-                        }`}>
+                        <p
+                          className={`text-xs leading-relaxed ${
+                            isDarkMode ? 'text-slate-300' : 'text-slate-700 font-medium'
+                          }`}
+                        >
                           بدون أي ضغوط زمنية! خذ كامل وقتك في تحليل السؤال وكتابة خطوات الحل والمسودة على السبورة الذكية بهدوء.
                         </p>
 
-                        <div className={`space-y-1.5 pt-2 text-[11px] font-bold ${
-                          isDarkMode ? 'text-emerald-200/80' : 'text-emerald-900'
-                        }`}>
+                        <div
+                          className={`space-y-1.5 pt-2 text-[11px] font-bold ${
+                            isDarkMode ? 'text-emerald-200/80' : 'text-emerald-900'
+                          }`}
+                        >
                           <div className="flex items-center gap-1.5">
                             <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />
                             <span>استيعاب عميق للقوانين وطرق الحل المبتكرة</span>
@@ -3251,12 +3343,12 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
                         <span>
                           {isStartingExam
                             ? 'جاري بدء الاختبار...'
-                            : `بدأ التدريب بدون وقت الآن (${
+                            : `بدء التدريب بدون وقت الآن (${
                                 selectedExamSystem === 'nimr'
-                                  ? 'نظام نمر 🐅'
+                                  ? 'نظام نمر'
                                   : selectedExamSystem === 'blue'
-                                  ? 'النظام الأزرق 🔷'
-                                  : 'النظام الافتراضي 💻'
+                                  ? 'النظام الأزرق'
+                                  : 'النظام الافتراضي'
                               })`}
                         </span>
                       </button>
@@ -3325,7 +3417,10 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
       {/* المميزات Modal */}
       <FeaturesModal
         isOpen={showFeaturesModal}
-        onClose={() => setShowFeaturesModal(false)}
+        onClose={() => {
+          setShowFeaturesModal(false);
+          setFeaturesInitialView('main');
+        }}
         currentUser={currentUser}
         systemSettings={{
           ...systemSettings,
@@ -3339,6 +3434,7 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
         sections={courseSections}
         resources={courseResources}
         contentItems={courseContentItems}
+        initialView={featuresInitialView}
         onStartDiagnosticExam={(examData) => {
           pauseAllVideos();
           setActiveExam({
@@ -3349,6 +3445,12 @@ export const StudentHome: React.FC<StudentHomeProps> = ({
             durationMinutes: examData.durationMinutes,
             targetPercentage: examData.targetPercentage || 85,
           });
+        }}
+        onSelectExam={(exam) => {
+          pauseAllVideos();
+          setShowFeaturesModal(false);
+          setFeaturesInitialView('main');
+          handleOpenExamPrompt(exam);
         }}
       />
 

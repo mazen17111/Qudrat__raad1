@@ -109,6 +109,58 @@ html.light [data-preserve-colors="true"] svg {
   color: #ffffff !important;
 }
 
+/* Keep Qiyas green accent text exact inside the Results Query screen in light mode */
+html.light [data-qiyas-results="true"][data-qiyas-dark="false"] .text-\[\#16a34a\] {
+  color: #16a34a !important;
+}
+html.light [data-qiyas-results="true"][data-qiyas-dark="false"] .text-gray-600 {
+  color: #4b5563 !important;
+}
+html.light [data-qiyas-results="true"][data-qiyas-dark="false"] .text-gray-500 {
+  color: #6b7280 !important;
+}
+
+/* When Qiyas Results internal Dark Mode is active, protect light/colored text & dark select from outer html.light black overrides */
+html.light [data-qiyas-results="true"][data-qiyas-dark="true"] h1,
+html.light [data-qiyas-results="true"][data-qiyas-dark="true"] h2,
+html.light [data-qiyas-results="true"][data-qiyas-dark="true"] h3,
+html.light [data-qiyas-results="true"][data-qiyas-dark="true"] h4,
+html.light [data-qiyas-results="true"][data-qiyas-dark="true"] p,
+html.light [data-qiyas-results="true"][data-qiyas-dark="true"] span:not(.text-emerald-400):not(.text-rose-400):not(.text-green-400):not(.text-sky-400):not(.text-amber-300):not(.text-slate-400):not(.text-slate-300),
+html.light [data-qiyas-results="true"][data-qiyas-dark="true"] label {
+  color: #f8fafc !important;
+}
+html.light [data-qiyas-results="true"][data-qiyas-dark="true"] .text-slate-400 {
+  color: #94a3b8 !important;
+}
+html.light [data-qiyas-results="true"][data-qiyas-dark="true"] .text-slate-300 {
+  color: #cbd5e1 !important;
+}
+html.light [data-qiyas-results="true"][data-qiyas-dark="true"] .text-emerald-400 {
+  color: #34d399 !important;
+}
+html.light [data-qiyas-results="true"][data-qiyas-dark="true"] .text-rose-400 {
+  color: #fb7185 !important;
+}
+html.light [data-qiyas-results="true"][data-qiyas-dark="true"] .text-green-400 {
+  color: #4ade80 !important;
+}
+html.light [data-qiyas-results="true"][data-qiyas-dark="true"] .text-sky-400 {
+  color: #38bdf8 !important;
+}
+html.light [data-qiyas-results="true"][data-qiyas-dark="true"] .text-amber-300 {
+  color: #fcd34d !important;
+}
+html.light [data-qiyas-results="true"][data-qiyas-dark="true"] select,
+html.light [data-qiyas-results="true"][data-qiyas-dark="true"] input {
+  background-color: #0f172a !important;
+  color: #f8fafc !important;
+  border-color: #334155 !important;
+}
+html.light [data-qiyas-results="true"][data-qiyas-dark="true"] input::placeholder {
+  color: #94a3b8 !important;
+}
+
 /* Ensure inputs and textareas in light mode have pure black text */
 html.light input,
 html.light textarea,
@@ -310,139 +362,153 @@ html.light .light-card {
    الوضع الداكن الفحمي (Charcoal / Graphite Theme) - مريح للعين بدرجات رمادية داكنة أنيقة
    ======================================================== */
 
-html.theme-black:not(.in-exam),
-html.theme-black:not(.in-exam) body,
-html.theme-black:not(.in-exam) #root,
-html.theme-black:not(.in-exam) #root > div {
+html.theme-black:not(.in-exam):not(.qiyas-results-open),
+html.theme-black:not(.in-exam):not(.qiyas-results-open) body,
+html.theme-black:not(.in-exam):not(.qiyas-results-open) #root,
+html.theme-black:not(.in-exam):not(.qiyas-results-open) #root > div {
   background-color: #1a1d23 !important;
   background-image: none !important;
   color: #f1f5f9 !important;
 }
 
 /* Keep plain wrapper containers transparent so elevated cards pop cleanly over the #1a1d23 canvas */
-html.theme-black:not(.in-exam) div:not([class*="bg-"]):not([class*="border"]):not([class*="rounded-xl"]):not([class*="rounded-2xl"]):not([class*="rounded-3xl"]):not([data-theme-swatch]):not([data-transparent-overlay]):not([data-video-controls-bar]):not([data-progress-track]):not([data-progress-fill]):not([data-seek-fill]) {
+html.theme-black:not(.in-exam):not(.qiyas-results-open) div:not([class*="bg-"]):not([class*="border"]):not([class*="rounded-xl"]):not([class*="rounded-2xl"]):not([class*="rounded-3xl"]):not([data-theme-swatch]):not([data-transparent-overlay]):not([data-video-controls-bar]):not([data-progress-track]):not([data-progress-fill]):not([data-seek-fill]) {
   background-color: transparent !important;
   background-image: none !important;
   color: #f1f5f9 !important;
 }
 
 /* Elevated Charcoal surface for cards, headers, footers, nav, panels, tables */
-html.theme-black:not(.in-exam) div[class*="bg-"]:not([data-theme-swatch]):not([data-transparent-overlay]):not([data-video-controls-bar]):not([data-progress-track]):not([data-progress-fill]):not([data-seek-fill]),
-html.theme-black:not(.in-exam) div[class*="border"]:not([data-theme-swatch]):not([data-transparent-overlay]):not([data-video-controls-bar]):not([data-progress-track]):not([data-progress-fill]):not([data-seek-fill]),
-html.theme-black:not(.in-exam) div[class*="rounded-2xl"]:not([data-theme-swatch]):not([data-transparent-overlay]),
-html.theme-black:not(.in-exam) div[class*="rounded-3xl"]:not([data-theme-swatch]):not([data-transparent-overlay]),
-html.theme-black:not(.in-exam) header,
-html.theme-black:not(.in-exam) footer,
-html.theme-black:not(.in-exam) main,
-html.theme-black:not(.in-exam) nav,
-html.theme-black:not(.in-exam) section,
-html.theme-black:not(.in-exam) article,
-html.theme-black:not(.in-exam) aside,
-html.theme-black:not(.in-exam) ul,
-html.theme-black:not(.in-exam) li,
-html.theme-black:not(.in-exam) form,
-html.theme-black:not(.in-exam) table,
-html.theme-black:not(.in-exam) thead,
-html.theme-black:not(.in-exam) tbody,
-html.theme-black:not(.in-exam) tr,
-html.theme-black:not(.in-exam) th,
-html.theme-black:not(.in-exam) td {
+html.theme-black:not(.in-exam):not(.qiyas-results-open) div[class*="bg-"]:not([data-theme-swatch]):not([data-transparent-overlay]):not([data-video-controls-bar]):not([data-progress-track]):not([data-progress-fill]):not([data-seek-fill]),
+html.theme-black:not(.in-exam):not(.qiyas-results-open) div[class*="border"]:not([data-theme-swatch]):not([data-transparent-overlay]):not([data-video-controls-bar]):not([data-progress-track]):not([data-progress-fill]):not([data-seek-fill]),
+html.theme-black:not(.in-exam):not(.qiyas-results-open) div[class*="rounded-2xl"]:not([data-theme-swatch]):not([data-transparent-overlay]),
+html.theme-black:not(.in-exam):not(.qiyas-results-open) div[class*="rounded-3xl"]:not([data-theme-swatch]):not([data-transparent-overlay]),
+html.theme-black:not(.in-exam):not(.qiyas-results-open) header,
+html.theme-black:not(.in-exam):not(.qiyas-results-open) footer,
+html.theme-black:not(.in-exam):not(.qiyas-results-open) main,
+html.theme-black:not(.in-exam):not(.qiyas-results-open) nav,
+html.theme-black:not(.in-exam):not(.qiyas-results-open) section,
+html.theme-black:not(.in-exam):not(.qiyas-results-open) article,
+html.theme-black:not(.in-exam):not(.qiyas-results-open) aside,
+html.theme-black:not(.in-exam):not(.qiyas-results-open) ul,
+html.theme-black:not(.in-exam):not(.qiyas-results-open) li,
+html.theme-black:not(.in-exam):not(.qiyas-results-open) form,
+html.theme-black:not(.in-exam):not(.qiyas-results-open) table,
+html.theme-black:not(.in-exam):not(.qiyas-results-open) thead,
+html.theme-black:not(.in-exam):not(.qiyas-results-open) tbody,
+html.theme-black:not(.in-exam):not(.qiyas-results-open) tr,
+html.theme-black:not(.in-exam):not(.qiyas-results-open) th,
+html.theme-black:not(.in-exam):not(.qiyas-results-open) td {
   background-color: #232730 !important;
   background-image: none !important;
   color: #f1f5f9 !important;
 }
 
 /* Interactive controls (buttons, CTA links, inputs) get a slightly lighter Graphite tint for clear affordance */
-html.theme-black:not(.in-exam) button:not([data-theme-swatch]),
-html.theme-black:not(.in-exam) a[class*="bg-"],
-html.theme-black:not(.in-exam) input,
-html.theme-black:not(.in-exam) textarea,
-html.theme-black:not(.in-exam) select {
+html.theme-black:not(.in-exam):not(.qiyas-results-open) button:not([data-theme-swatch]),
+html.theme-black:not(.in-exam):not(.qiyas-results-open) a[class*="bg-"],
+html.theme-black:not(.in-exam):not(.qiyas-results-open) input,
+html.theme-black:not(.in-exam):not(.qiyas-results-open) textarea,
+html.theme-black:not(.in-exam):not(.qiyas-results-open) select {
   background-color: #2b303b !important;
   background-image: none !important;
   color: #ffffff !important;
 }
 
-html.theme-black:not(.in-exam) button:not([data-theme-swatch]):hover,
-html.theme-black:not(.in-exam) a[class*="bg-"]:hover {
+html.theme-black:not(.in-exam):not(.qiyas-results-open) button:not([data-theme-swatch]):hover,
+html.theme-black:not(.in-exam):not(.qiyas-results-open) a[class*="bg-"]:hover {
   background-color: #343a47 !important;
 }
 
-html.theme-black:not(.in-exam) a:not([class*="bg-"]) {
+html.theme-black:not(.in-exam):not(.qiyas-results-open) a:not([class*="bg-"]) {
   background-color: transparent !important;
   color: #f1f5f9 !important;
 }
 
 /* Preserve transparent overlays (video click shields, iframe wrappers) & control bar bottom fade */
-html.theme-black:not(.in-exam) [data-transparent-overlay="true"] {
+html.theme-black:not(.in-exam):not(.qiyas-results-open) [data-transparent-overlay="true"] {
   background-color: transparent !important;
   background-image: none !important;
 }
 
-html.theme-black:not(.in-exam) [data-video-controls-bar="true"] {
+html.theme-black:not(.in-exam):not(.qiyas-results-open) [data-video-controls-bar="true"] {
   background-color: transparent !important;
   background-image: linear-gradient(to top, rgba(20, 23, 28, 0.94), rgba(20, 23, 28, 0.72), transparent) !important;
 }
 
 /* Keep progress bars & video seek bars clearly legible on Charcoal surfaces */
-html.theme-black:not(.in-exam) [data-progress-track="true"] {
+html.theme-black:not(.in-exam):not(.qiyas-results-open) [data-progress-track="true"] {
   background-color: #1a1d23 !important;
   background-image: none !important;
   border: 1px solid rgba(255, 255, 255, 0.22) !important;
 }
 
-html.theme-black:not(.in-exam) [data-progress-fill="true"] {
+html.theme-black:not(.in-exam):not(.qiyas-results-open) [data-progress-fill="true"] {
   background-color: rgba(255, 255, 255, 0.28) !important;
   background-image: none !important;
   border: 1px solid rgba(255, 255, 255, 0.55) !important;
   color: #ffffff !important;
 }
 
-html.theme-black:not(.in-exam) [data-seek-fill="true"] {
+html.theme-black:not(.in-exam):not(.qiyas-results-open) [data-seek-fill="true"] {
   background-color: #ffffff !important;
   background-image: none !important;
 }
 
 /* Keep typography crisp and legible on Charcoal */
-html.theme-black:not(.in-exam) span:not([data-theme-swatch]),
-html.theme-black:not(.in-exam) p,
-html.theme-black:not(.in-exam) h1,
-html.theme-black:not(.in-exam) h2,
-html.theme-black:not(.in-exam) h3,
-html.theme-black:not(.in-exam) h4,
-html.theme-black:not(.in-exam) h5,
-html.theme-black:not(.in-exam) h6,
-html.theme-black:not(.in-exam) label,
-html.theme-black:not(.in-exam) strong,
-html.theme-black:not(.in-exam) small {
+html.theme-black:not(.in-exam):not(.qiyas-results-open) span:not([data-theme-swatch]),
+html.theme-black:not(.in-exam):not(.qiyas-results-open) p,
+html.theme-black:not(.in-exam):not(.qiyas-results-open) h1,
+html.theme-black:not(.in-exam):not(.qiyas-results-open) h2,
+html.theme-black:not(.in-exam):not(.qiyas-results-open) h3,
+html.theme-black:not(.in-exam):not(.qiyas-results-open) h4,
+html.theme-black:not(.in-exam):not(.qiyas-results-open) h5,
+html.theme-black:not(.in-exam):not(.qiyas-results-open) h6,
+html.theme-black:not(.in-exam):not(.qiyas-results-open) label,
+html.theme-black:not(.in-exam):not(.qiyas-results-open) strong,
+html.theme-black:not(.in-exam):not(.qiyas-results-open) small {
   color: #f1f5f9 !important;
 }
 
-html.theme-black:not(.in-exam) span[class*="bg-"]:not([data-theme-swatch]),
-html.theme-black:not(.in-exam) span[class*="border"]:not([data-theme-swatch]) {
+html.theme-black:not(.in-exam):not(.qiyas-results-open) span[class*="bg-"]:not([data-theme-swatch]),
+html.theme-black:not(.in-exam):not(.qiyas-results-open) span[class*="border"]:not([data-theme-swatch]) {
   background-color: #2b303b !important;
   background-image: none !important;
   color: #ffffff !important;
 }
 
 /* Subtle refined borders so cards, tabs, buttons, and inputs stay crisp on Charcoal */
-html.theme-black:not(.in-exam) *[class*="border"]:not([data-theme-swatch]),
-html.theme-black:not(.in-exam) button:not([data-theme-swatch]),
-html.theme-black:not(.in-exam) input,
-html.theme-black:not(.in-exam) textarea,
-html.theme-black:not(.in-exam) select {
+html.theme-black:not(.in-exam):not(.qiyas-results-open) *[class*="border"]:not([data-theme-swatch]),
+html.theme-black:not(.in-exam):not(.qiyas-results-open) button:not([data-theme-swatch]),
+html.theme-black:not(.in-exam):not(.qiyas-results-open) input,
+html.theme-black:not(.in-exam):not(.qiyas-results-open) textarea,
+html.theme-black:not(.in-exam):not(.qiyas-results-open) select {
   border-color: rgba(255, 255, 255, 0.16) !important;
   box-shadow: none !important;
 }
 
 /* Icons remain crisp light with transparent background */
-html.theme-black:not(.in-exam) svg {
+html.theme-black:not(.in-exam):not(.qiyas-results-open) svg {
   color: #f1f5f9 !important;
   background-color: transparent !important;
 }
 
 /* Readable placeholder text on Charcoal inputs */
-html.theme-black:not(.in-exam) input::placeholder,
-html.theme-black:not(.in-exam) textarea::placeholder {
+html.theme-black:not(.in-exam):not(.qiyas-results-open) input::placeholder,
+html.theme-black:not(.in-exam):not(.qiyas-results-open) textarea::placeholder {
   color: rgba(241, 245, 249, 0.58) !important;
+}
+
+@media print {
+  html.qiyas-results-open body * {
+    visibility: hidden !important;
+  }
+  html.qiyas-results-open [data-qiyas-results="true"],
+  html.qiyas-results-open [data-qiyas-results="true"] * {
+    visibility: visible !important;
+  }
+  html.qiyas-results-open [data-qiyas-results="true"] {
+    position: static !important;
+    overflow: visible !important;
+  }
 }

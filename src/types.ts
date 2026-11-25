@@ -164,6 +164,8 @@ export interface ExamAttempt {
   studentName: string;
   examId: string;
   examTitle: string;
+  examSystem?: ExamSystemType;
+  sectionId?: string;
   score: number;
   totalQuestions: number;
   percentage: number;

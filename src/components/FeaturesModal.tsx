@@ -22,8 +22,10 @@ import {
   Layers,
   FileCheck,
   Flame,
-  ChevronLeft
+  ChevronLeft,
+  ClipboardCheck
 } from 'lucide-react';
+import { MyResultsQiyasModal } from './MyResultsQiyasModal';
 import {
   StudentUser,
   SystemSettings,
@@ -76,6 +78,8 @@ interface FeaturesModalProps {
     isTimed: boolean;
     targetPercentage?: number;
   }) => void;
+  onSelectExam?: (exam: ContentItem) => void;
+  initialView?: 'main' | 'diagnostic' | 'challenge' | 'results';
 }
 
 export const FeaturesModal: React.FC<FeaturesModalProps> = ({
@@ -91,9 +95,11 @@ export const FeaturesModal: React.FC<FeaturesModalProps> = ({
   resources,
   contentItems,
   onStartDiagnosticExam,
+  onSelectExam,
+  initialView = 'main',
 }) => {
   // Navigation inside the features modal
-  const [activeView, setActiveView] = useState<'main' | 'diagnostic' | 'challenge'>('main');
+  const [activeView, setActiveView] = useState<'main' | 'diagnostic' | 'challenge' | 'results'>(initialView);
 
   // ================= 1. DIAGNOSTIC EXAM STATE =================
   const [selectedDiagnosticResource, setSelectedDiagnosticResource] = useState<string>('all');
@@ -127,15 +133,15 @@ export const FeaturesModal: React.FC<FeaturesModalProps> = ({
   const [challengeAnswers, setChallengeAnswers] = useState<Record<number, number>>({});
   const [isSubmittingChallengeAnswer, setIsSubmittingChallengeAnswer] = useState<boolean>(false);
 
-  // Reset to main view whenever modal opens
+  // Reset to initialView whenever modal opens
   useEffect(() => {
     if (isOpen) {
-      setActiveView('main');
+      setActiveView(initialView || 'main');
       setJoinError('');
       setChallengeActionError('');
       setDiagnosticError('');
     }
-  }, [isOpen]);
+  }, [isOpen, initialView]);
 
   // Extract all available internal exams from contentItems
   const allPlatformExams = contentItems.filter(
@@ -719,6 +725,21 @@ export const FeaturesModal: React.FC<FeaturesModalProps> = ({
 
   if (!isOpen) return null;
 
+  if (activeView === 'results') {
+    return (
+      <MyResultsQiyasModal
+        isOpen={true}
+        onClose={() => setActiveView('main')}
+        currentUser={currentUser}
+        isDarkMode={isDarkMode}
+        sections={sections}
+        resources={resources}
+        contentItems={contentItems}
+        onSelectExam={onSelectExam}
+      />
+    );
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/85 backdrop-blur-md animate-in fade-in duration-200">
       <div
@@ -953,6 +974,48 @@ export const FeaturesModal: React.FC<FeaturesModalProps> = ({
                 >
                   <Users className="w-4 h-4" />
                   <span>دخول تحدي الأصدقاء ⚔️</span>
+                </button>
+              </div>
+
+              {/* المستطيل 5: نتائجي (استعلام نتائج الاختبارات بتصميم قياس) */}
+              <div
+                onClick={() => setActiveView('results')}
+                className={`md:col-span-2 p-5 rounded-3xl border-2 transition-all duration-200 flex flex-col justify-between space-y-4 group hover:shadow-xl hover:-translate-y-0.5 cursor-pointer ${
+                  isDarkMode
+                    ? 'bg-gradient-to-br from-slate-900 via-slate-900/90 to-green-950/40 border-green-500/35 hover:border-green-400'
+                    : 'bg-gradient-to-br from-green-50/80 via-white to-emerald-50/60 border-green-200 hover:border-green-400 shadow-sm'
+                }`}
+              >
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div
+                      data-preserve-colors="true"
+                      className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-[#006837] to-green-600 flex items-center justify-center text-white shadow-md shadow-green-600/25 group-hover:scale-105 transition-transform"
+                    >
+                      <ClipboardCheck className="w-6 h-6" />
+                    </div>
+                    <span className="badge-colored text-[11px] font-black px-2.5 py-1 rounded-full bg-green-500/20 text-green-700 dark:text-green-300 border border-green-500/30">
+                      استعلام النتائج والتقييم
+                    </span>
+                  </div>
+
+                  <div>
+                    <h4 className={`text-base md:text-lg font-black ${isDarkMode ? 'text-white' : 'text-slate-950'}`}>
+                      نتائجي
+                    </h4>
+                    <p className={`text-xs mt-1 leading-relaxed ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>
+                      استعلم عن نتائج اختباراتك المكتملة واستعرض درجتك الكلية ومستوى أدائك في كل اختبار مع إمكانية طباعة النتيجة مباشرة.
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  data-preserve-colors="true"
+                  className="w-full py-3 px-4 rounded-2xl bg-gradient-to-r from-[#006837] to-green-600 hover:from-[#00552d] hover:to-green-500 text-white font-black text-xs md:text-sm flex items-center justify-center gap-2 shadow-lg shadow-green-700/25 transition cursor-pointer"
+                >
+                  <ClipboardCheck className="w-4 h-4" />
+                  <span>عرض نتائجي</span>
                 </button>
               </div>
             </div>

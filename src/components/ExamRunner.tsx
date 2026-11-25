@@ -108,6 +108,8 @@ interface ExamRunnerProps {
   folderTitle?: string;
   courseId?: string;
   courseTitle?: string;
+  resultDisplayMode?: 'immediate' | 'my_results';
+  onOpenMyResults?: () => void;
 }
 
 export type StudentLevelKey = 'excellent' | 'very_good' | 'good' | 'acceptable' | 'weak';
@@ -522,6 +524,8 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
   folderTitle,
   courseId,
   courseTitle,
+  resultDisplayMode = 'immediate',
+  onOpenMyResults,
 }) => {
   const currentCourseId = courseId || 'course_default_1';
   // Normalize and guard questions to completely eliminate any possibility of an empty or broken screen
@@ -943,7 +947,7 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
     setShowQuestionsReview(false);
     setIsFinished(true);
 
-    if (percentage >= (targetPercentage || 80)) {
+    if (resultDisplayMode !== 'my_results' && percentage >= (targetPercentage || 80)) {
       confetti({
         particleCount: 120,
         spread: 90,
@@ -1232,6 +1236,93 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
 
   // ================= 4. RESULTS / FINISHED SCREEN =================
   if (isFinished) {
+    if (resultDisplayMode === 'my_results') {
+      return (
+        <div
+          dir="rtl"
+          className={`min-h-[75vh] flex items-center justify-center p-4 md:p-8 ${
+            isDarkMode ? 'text-white' : 'text-slate-900'
+          }`}
+        >
+          <div
+            className={`w-full max-w-xl rounded-3xl border shadow-2xl p-6 sm:p-10 text-center space-y-6 ${
+              isDarkMode
+                ? 'bg-[#21262E] border-white/10 shadow-slate-950/60'
+                : 'bg-white border-slate-200 shadow-slate-200/80'
+            }`}
+          >
+            <div className="w-20 h-20 rounded-3xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-500 mx-auto flex items-center justify-center shadow-lg">
+              <CheckCircle2 className="w-10 h-10" />
+            </div>
+
+            <div className="space-y-2">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 text-xs font-black">
+                <Award className="w-3.5 h-3.5" />
+                <span>تم تسليم الاختبار بنجاح</span>
+              </span>
+              <h2 className="text-2xl sm:text-3xl font-black leading-snug">
+                تم حفظ نتيجتك في قسم «نتائجي»
+              </h2>
+              <p
+                className={`text-sm leading-relaxed max-w-md mx-auto font-medium ${
+                  isDarkMode ? 'text-slate-300' : 'text-slate-600'
+                }`}
+              >
+                بناءً على اختيارك قبل بدء الاختبار، تم إرسال درجتك وتفاصيل أدائك في{' '}
+                <strong className={isDarkMode ? 'text-white' : 'text-slate-900'}>{examTitle}</strong>{' '}
+                إلى قسم <strong>«نتائجي»</strong> داخل قائمة المميزات للاطلاع عليها في أي وقت.
+              </p>
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
+              {onOpenMyResults && (
+                <button
+                  type="button"
+                  data-preserve-colors="true"
+                  onClick={onOpenMyResults}
+                  className="w-full sm:w-auto flex items-center justify-center gap-2 px-7 py-3.5 rounded-2xl bg-[#006837] hover:bg-[#00552d] text-white font-black text-sm shadow-lg transition cursor-pointer"
+                >
+                  <Trophy className="w-4 h-4" />
+                  <span>عرض نتيجتي في قسم «نتائجي»</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => {
+                  finishSubmittedRef.current = false;
+                  setSelectedAnswers({});
+                  setCurrentIdx(0);
+                  setShowQuestionsReview(false);
+                  setIsFinished(false);
+                  setTimeLeft(totalSeconds);
+                  setExamStartTime(Date.now());
+                  setTimeSpentSeconds(0);
+                }}
+                className={`w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3.5 rounded-2xl font-black text-sm transition border cursor-pointer ${
+                  isDarkMode
+                    ? 'bg-slate-800 hover:bg-slate-700 text-white border-slate-700'
+                    : 'bg-slate-100 hover:bg-slate-200 text-slate-900 border-slate-300'
+                }`}
+              >
+                <RefreshCw className="w-4 h-4" />
+                <span>إعادة الاختبار</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleRequestExit}
+                className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3.5 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white font-black text-sm transition shadow-lg shadow-blue-600/25 cursor-pointer"
+              >
+                <Home className="w-4 h-4" />
+                <span>العودة للمنصة</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     const score = calculateScore();
     const total = Math.max(1, safeQuestions.length);
     const percentage = Math.round((score / total) * 100);
