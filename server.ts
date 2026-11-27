@@ -814,6 +814,36 @@ app.post('/api/upload', upload.single('file'), async (req: Request, res: Respons
   }
 });
 
+// 1.1 Zero-Firestore Bulk Exam Cropped Images Upload (saves directly to disk /uploads/images/ to preserve Firebase quota)
+app.post('/api/upload-exam-images', upload.array('files', 100), (req: Request, res: Response) => {
+  try {
+    const uploadedFiles = Array.isArray(req.files) ? req.files : [];
+    if (uploadedFiles.length === 0) {
+      res.status(400).json({ success: false, error: 'لم يتم استلام أي صور' });
+      return;
+    }
+
+    const items = uploadedFiles.map((file) => {
+      const relativeUrl = `/uploads/images/${file.filename}`;
+      return {
+        url: relativeUrl,
+        fileName: file.originalname,
+        size: file.size,
+      };
+    });
+
+    res.json({
+      success: true,
+      urls: items.map((i) => i.url),
+      items,
+      savedFirebaseOps: items.length * 2,
+    });
+  } catch (err: any) {
+    console.error('Bulk Exam Image Upload Error:', err);
+    res.status(500).json({ success: false, error: err.message || 'حدث خطأ أثناء رفع صور الاختبار' });
+  }
+});
+
 // Track active disk cache jobs so simultaneous byte-range requests don't re-read Firestore chunks
 const inFlightFirestoreDiskCaches = new Map<string, Promise<string | null>>();
 

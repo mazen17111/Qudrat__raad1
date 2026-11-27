@@ -21,6 +21,7 @@
     "jspdf": "^4.2.1",
     "lucide-react": "^0.546.0",
     "multer": "^2.5.0",
+    "pdfjs-dist": "^6.5.438",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "tailwindcss": "^4.3.3",

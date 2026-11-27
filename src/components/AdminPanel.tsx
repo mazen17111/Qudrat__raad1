@@ -76,6 +76,7 @@ import {
 import { BrandLogo } from './BrandLogo';
 import { CertificateModal } from './CertificateModal';
 import { SmartVideoPlayer } from './SmartVideoPlayer';
+import { PdfExamCropImporter } from './PdfExamCropImporter';
 import {
   db,
   THEME_PRESETS,
@@ -7972,6 +7973,39 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                       </div>
                     </div>
 
+                    {/* PDF Crop & Bulk Exam Importer (توفير فايربيس 100%) */}
+                    <PdfExamCropImporter
+                      hasExistingFilledQuestions={examQuestions.some(
+                        (q) =>
+                          Boolean((q.questionText || '').trim()) ||
+                          Boolean((q.imageUrl || '').trim()) ||
+                          (Array.isArray(q.options) && q.options.some((o) => Boolean((o || '').trim())))
+                      )}
+                      onFileSelected={(fileName, fileSizeLabel) => {
+                        setItemFileName(fileName);
+                        setItemFileSize(fileSizeLabel);
+                        if (!itemTitle.trim() && !pinnedTitleRef.current.trim()) {
+                          updateItemTitle(fileName.replace(/\.[^/.]+$/, ''));
+                        }
+                      }}
+                      onImportQuestions={(importedQuestions, mode) => {
+                        if (mode === 'replace') {
+                          setExamQuestions(importedQuestions);
+                        } else {
+                          setExamQuestions((prev) => {
+                            const filtered = prev.filter(
+                              (q) =>
+                                Boolean((q.questionText || '').trim()) ||
+                                Boolean((q.imageUrl || '').trim()) ||
+                                (Array.isArray(q.options) && q.options.some((o) => Boolean((o || '').trim())))
+                            );
+                            return [...filtered, ...importedQuestions];
+                          });
+                        }
+                      }}
+                      onNotify={(msg) => notifySave(msg)}
+                    />
+
                     <div className="flex items-center justify-between pt-2">
                       <span className="text-xs font-bold text-amber-400">
                         الأسئلة الداخلية ({examQuestions.length})
@@ -8054,18 +8088,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                             className="w-full text-[11px] text-slate-400 file:mr-2 file:py-1 file:px-2 file:rounded-lg file:border-0 file:text-[10px] file:bg-slate-800 file:text-slate-200"
                           />
                           {q.imageUrl && (
-                            <div className="mt-1.5 max-w-[130px] rounded-lg border border-slate-700 overflow-hidden bg-slate-950">
-                              <img src={q.imageUrl} alt="سؤال" className="h-16 w-full object-contain" />
+                            <div className="mt-2 max-w-lg rounded-xl border border-slate-700 overflow-hidden bg-slate-950">
+                              <img
+                                src={q.imageUrl}
+                                alt={`سؤال ${qIdx + 1}`}
+                                className="max-h-72 w-full object-contain bg-white p-1"
+                              />
                               <button
                                 type="button"
                                 onClick={() => {
-                                  setExamQuestions((prev) => {
-                                    const next = [...prev];
-                                    next[qIdx].imageUrl = '';
-                                    return next;
-                                  });
+                                  setExamQuestions((prev) =>
+                                    prev.map((item, idx) => (idx === qIdx ? { ...item, imageUrl: '' } : item))
+                                  );
                                 }}
-                                className="w-full bg-rose-950/90 hover:bg-rose-900 text-rose-300 text-[10px] py-1 text-center flex items-center justify-center gap-1 transition font-bold"
+                                className="w-full bg-rose-950/90 hover:bg-rose-900 text-rose-300 text-[10px] py-1.5 text-center flex items-center justify-center gap-1 transition font-bold"
                               >
                                 <Trash2 className="w-3 h-3" />
                                 <span>حذف الصورة</span>
@@ -8074,8 +8110,32 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                           )}
                         </div>
 
-                        <div className="space-y-1">
-                          <span className="text-[10px] text-slate-400 block">الخيارات (حدد الخيار الصحيح):</span>
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                            <span className="text-[10px] text-slate-400">الخيارات (حدد الإجابة الصحيحة):</span>
+                            <div className="flex items-center gap-1">
+                              {['أ', 'ب', 'ج', 'د'].map((letter, oIdx) => (
+                                <button
+                                  key={letter}
+                                  type="button"
+                                  onClick={() => {
+                                    setExamQuestions((prev) =>
+                                      prev.map((item, idx) =>
+                                        idx === qIdx ? { ...item, correctOptionIndex: oIdx } : item
+                                      )
+                                    );
+                                  }}
+                                  className={`px-2.5 py-1 rounded-lg text-[11px] font-black border transition ${
+                                    q.correctOptionIndex === oIdx
+                                      ? 'bg-emerald-500 text-slate-950 border-emerald-400 shadow'
+                                      : 'bg-slate-800 text-slate-300 border-slate-700 hover:border-emerald-500/50'
+                                  }`}
+                                >
+                                  {letter}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
                           {q.options.map((opt, oIdx) => (
                             <div key={oIdx} className="flex items-center gap-2">
                               <input
@@ -8083,11 +8143,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                                 name={`correct_${qIdx}`}
                                 checked={q.correctOptionIndex === oIdx}
                                 onChange={() => {
-                                  setExamQuestions((prev) => {
-                                    const next = [...prev];
-                                    next[qIdx].correctOptionIndex = oIdx;
-                                    return next;
-                                  });
+                                  setExamQuestions((prev) =>
+                                    prev.map((item, idx) =>
+                                      idx === qIdx ? { ...item, correctOptionIndex: oIdx } : item
+                                    )
+                                  );
                                 }}
                                 className="accent-emerald-500"
                               />
@@ -8097,11 +8157,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                                 value={opt}
                                 onChange={(e) => {
                                   const val = e.target.value;
-                                  setExamQuestions((prev) => {
-                                    const next = [...prev];
-                                    next[qIdx].options[oIdx] = val;
-                                    return next;
-                                  });
+                                  setExamQuestions((prev) =>
+                                    prev.map((item, idx) =>
+                                      idx === qIdx
+                                        ? {
+                                            ...item,
+                                            options: item.options.map((o, oi) => (oi === oIdx ? val : o)),
+                                          }
+                                        : item
+                                    )
+                                  );
                                 }}
                                 className="flex-1 px-2.5 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-white text-xs"
                               />
