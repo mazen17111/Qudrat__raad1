@@ -14,6 +14,7 @@ import {
   Upload,
 } from 'lucide-react';
 import { ExamQuestion } from '../types';
+import { saveCompressedExamImagePacks } from '../utils/examImagePack';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
@@ -97,6 +98,15 @@ async function safeParseJsonResponse(resp: Response): Promise<{ ok: boolean; dat
     }
   }
   return { ok: false, data: null, rawText };
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('تعذر قراءة الصورة'));
+    reader.readAsDataURL(blob);
+  });
 }
 
 export const PdfExamCropImporter: React.FC<PdfExamCropImporterProps> = ({
@@ -377,11 +387,6 @@ export const PdfExamCropImporter: React.FC<PdfExamCropImporterProps> = ({
     setProgressInfo({ current: 0, total, stage: 'جاري تجهيز الصفحات والقص بنفس المقاس...' });
 
     try {
-      try {
-        renderTaskRef.current?.cancel();
-      } catch {}
-      await new Promise((r) => setTimeout(r, 40));
-
       const renderCanvas = document.createElement('canvas');
       const cropCanvas = document.createElement('canvas');
       const renderCtx = renderCanvas.getContext('2d');
@@ -391,7 +396,8 @@ export const PdfExamCropImporter: React.FC<PdfExamCropImporterProps> = ({
         throw new Error('المتصفح لا يدعم معالجة الصور');
       }
 
-      const croppedBlobs: { pageNumber: number; blob: Blob; ext: string }[] = [];
+      type CroppedItem = { pageNumber: number; blob: Blob; ext: string; dataUrl: string };
+      const croppedItems: CroppedItem[] = [];
 
       for (let idx = 0; idx < total; idx++) {
         const pageNum = startP + idx;
@@ -403,11 +409,11 @@ export const PdfExamCropImporter: React.FC<PdfExamCropImporterProps> = ({
 
         const page = await pdfDoc.getPage(pageNum);
         const baseViewport = page.getViewport({ scale: 1 });
-        const scale = clamp(1100 / Math.max(baseViewport.width, 1), 1.05, 1.75);
+        const scale = clamp(1050 / Math.max(baseViewport.width, 1), 1.05, 1.75);
         const viewport = page.getViewport({ scale });
 
-        renderCanvas.width = Math.max(1, Math.round(viewport.width));
-        renderCanvas.height = Math.max(1, Math.round(viewport.height));
+        renderCanvas.width = Math.round(viewport.width);
+        renderCanvas.height = Math.round(viewport.height);
         renderCtx.fillStyle = '#ffffff';
         renderCtx.fillRect(0, 0, renderCanvas.width, renderCanvas.height);
 
@@ -419,12 +425,12 @@ export const PdfExamCropImporter: React.FC<PdfExamCropImporterProps> = ({
 
         page.cleanup();
 
-        const sx = clamp(Math.round(crop.x * renderCanvas.width), 0, Math.max(0, renderCanvas.width - 20));
-        const sy = clamp(Math.round(crop.y * renderCanvas.height), 0, Math.max(0, renderCanvas.height - 20));
-        const sw = clamp(Math.round(crop.width * renderCanvas.width), 20, renderCanvas.width - sx);
-        const sh = clamp(Math.round(crop.height * renderCanvas.height), 20, renderCanvas.height - sy);
+        const sx = Math.max(0, Math.round(crop.x * renderCanvas.width));
+        const sy = Math.max(0, Math.round(crop.y * renderCanvas.height));
+        const sw = Math.max(20, Math.round(crop.width * renderCanvas.width));
+        const sh = Math.max(20, Math.round(crop.height * renderCanvas.height));
 
-        const maxCropDim = 1050;
+        const maxCropDim = 960;
         const downscale = Math.min(1, maxCropDim / Math.max(sw, sh));
         const targetW = Math.max(20, Math.round(sw * downscale));
         const targetH = Math.max(20, Math.round(sh * downscale));
@@ -435,74 +441,90 @@ export const PdfExamCropImporter: React.FC<PdfExamCropImporterProps> = ({
         cropCtx.fillRect(0, 0, targetW, targetH);
         cropCtx.drawImage(renderCanvas, sx, sy, sw, sh, 0, 0, targetW, targetH);
 
-        let compressed = await canvasToCompressedBlob(cropCanvas, 0.76);
+        let compressed = await canvasToCompressedBlob(cropCanvas, 0.74);
         if (compressed.blob.size > 320 * 1024) {
           compressed = await canvasToCompressedBlob(cropCanvas, 0.62);
         }
-        croppedBlobs.push({ pageNumber: pageNum, blob: compressed.blob, ext: compressed.ext });
+        const dataUrl = await blobToDataUrl(compressed.blob);
+        croppedItems.push({ pageNumber: pageNum, blob: compressed.blob, ext: compressed.ext, dataUrl });
       }
 
-      // Build small byte-capped batches (max 350 KB and max 4 images per request)
-      type CroppedItem = { pageNumber: number; blob: Blob; ext: string };
+      // Helper to upload one small batch to server (JSON first, then FormData) with 0 Firestore ops
+      const tryServerUploadBatch = async (chunk: CroppedItem[]): Promise<string[] | null> => {
+        // 1) Pure JSON batch upload (bypasses strict multipart proxies)
+        try {
+          const rJson = await fetch('/api/upload-exam-images-json', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              images: chunk.map((it) => ({
+                name: `pdf_q_p${it.pageNumber}.${it.ext}`,
+                dataUrl: it.dataUrl,
+              })),
+            }),
+          });
+          const pJson = await safeParseJsonResponse(rJson);
+          if (
+            pJson.ok &&
+            pJson.data?.success &&
+            Array.isArray(pJson.data.urls) &&
+            pJson.data.urls.length === chunk.length
+          ) {
+            return pJson.data.urls;
+          }
+        } catch {}
+
+        // 2) Multipart FormData upload (/api/upload-exam-images)
+        try {
+          const formData = new FormData();
+          chunk.forEach((item) => {
+            formData.append('files', item.blob, `pdf_q_p${item.pageNumber}.${item.ext}`);
+          });
+          const rBulk = await fetch('/api/upload-exam-images', { method: 'POST', body: formData });
+          const pBulk = await safeParseJsonResponse(rBulk);
+          if (
+            pBulk.ok &&
+            pBulk.data?.success &&
+            Array.isArray(pBulk.data.urls) &&
+            pBulk.data.urls.length === chunk.length
+          ) {
+            return pBulk.data.urls;
+          }
+        } catch {}
+
+        return null;
+      };
+
+      // Build small byte-capped batches (max 360 KB and max 4 images per request)
       const batches: CroppedItem[][] = [];
       let currentBatch: CroppedItem[] = [];
       let currentBytes = 0;
-      const MAX_BATCH_BYTES = 350 * 1024;
+      const MAX_BATCH_BYTES = 360 * 1024;
       const MAX_BATCH_COUNT = 4;
 
-      for (const item of croppedBlobs) {
+      for (const item of croppedItems) {
         if (
           currentBatch.length > 0 &&
-          (currentBatch.length >= MAX_BATCH_COUNT || currentBytes + item.blob.size > MAX_BATCH_BYTES)
+          (currentBatch.length >= MAX_BATCH_COUNT || currentBytes + item.dataUrl.length > MAX_BATCH_BYTES)
         ) {
           batches.push(currentBatch);
           currentBatch = [];
           currentBytes = 0;
         }
         currentBatch.push(item);
-        currentBytes += item.blob.size;
+        currentBytes += item.dataUrl.length;
       }
       if (currentBatch.length > 0) {
         batches.push(currentBatch);
       }
 
-      const uploadSingleImageFallback = async (item: CroppedItem): Promise<string> => {
-        for (let tryNum = 0; tryNum < 2; tryNum++) {
-          // 1. Try /api/upload-exam-images with single image
-          try {
-            const singleBulkForm = new FormData();
-            singleBulkForm.append('files', item.blob, `pdf_q_p${item.pageNumber}.${item.ext}`);
-            const r1 = await fetch('/api/upload-exam-images', { method: 'POST', body: singleBulkForm });
-            const p1 = await safeParseJsonResponse(r1);
-            if (p1.ok && p1.data?.success && Array.isArray(p1.data.urls) && p1.data.urls[0]) {
-              return p1.data.urls[0];
-            }
-          } catch {}
-
-          // 2. Fallback to standard /api/upload?skipFirebase=1
-          try {
-            const singleForm = new FormData();
-            singleForm.append('file', item.blob, `pdf_q_p${item.pageNumber}.${item.ext}`);
-            const r2 = await fetch('/api/upload?skipFirebase=1', { method: 'POST', body: singleForm });
-            const p2 = await safeParseJsonResponse(r2);
-            const resolvedUrl = p2.data?.localUrl || p2.data?.url;
-            if (p2.ok && p2.data?.success && resolvedUrl) {
-              return resolvedUrl;
-            }
-          } catch {}
-
-          await new Promise((r) => setTimeout(r, 300));
-        }
-
-        throw new Error(
-          `تعذر رفع صورة الصفحة ${item.pageNumber}. تأكد من تحديث الصفحة والمحاولة مرة أخرى.`
-        );
-      };
-
       const uploadedUrls: string[] = [];
       let processedCount = 0;
+      let serverUploadAvailable = true;
 
       for (let b = 0; b < batches.length; b++) {
+        if (!serverUploadAvailable) break;
+
         const chunk = batches[b];
         setProgressInfo({
           current: Math.min(processedCount + chunk.length, total),
@@ -510,47 +532,47 @@ export const PdfExamCropImporter: React.FC<PdfExamCropImporterProps> = ({
           stage: `جاري رفع الصور (${Math.min(processedCount + chunk.length, total)} من ${total}) بتوفير فايربيس...`,
         });
 
-        let batchUrls: string[] | null = null;
-
-        // Try batch upload up to 2 times
-        for (let attempt = 0; attempt < 2 && !batchUrls; attempt++) {
-          try {
-            const formData = new FormData();
-            chunk.forEach((item) => {
-              formData.append('files', item.blob, `pdf_q_p${item.pageNumber}.${item.ext}`);
-            });
-
-            const resp = await fetch('/api/upload-exam-images', {
-              method: 'POST',
-              body: formData,
-            });
-            const parsed = await safeParseJsonResponse(resp);
-            if (
-              parsed.ok &&
-              parsed.data?.success &&
-              Array.isArray(parsed.data.urls) &&
-              parsed.data.urls.length === chunk.length
-            ) {
-              batchUrls = parsed.data.urls;
-              break;
-            }
-          } catch {}
-          if (!batchUrls && attempt === 0) {
-            await new Promise((r) => setTimeout(r, 250));
-          }
+        const serverUrls = await tryServerUploadBatch(chunk);
+        if (serverUrls) {
+          uploadedUrls.push(...serverUrls);
+          processedCount += chunk.length;
+        } else {
+          // Server endpoint unavailable or proxy blocked — seamlessly switch remaining items to packed client mode
+          serverUploadAvailable = false;
+          break;
         }
+      }
 
-        // Fallback: upload items in this batch one-by-one safely
-        if (!batchUrls) {
-          batchUrls = [];
-          for (const item of chunk) {
-            const singleUrl = await uploadSingleImageFallback(item);
-            batchUrls.push(singleUrl);
-          }
+      // Tier 3 Seamless Fallback: If server /api/* was unavailable/blocked, save remaining items directly without failing!
+      if (uploadedUrls.length < croppedItems.length) {
+        const remainingItems = croppedItems.slice(uploadedUrls.length);
+        const remainingDataUrls = remainingItems.map((it) => it.dataUrl);
+        const totalInlineBytes = remainingDataUrls.reduce((acc, s) => acc + s.length, 0);
+
+        if (totalInlineBytes <= 520 * 1024) {
+          // Small enough to embed directly in the single exam doc (0 extra Firestore writes!)
+          setProgressInfo({
+            current: total,
+            total,
+            stage: 'جاري تجهيز الصور المضغوطة داخل الاختبار (صفر استهلاك فايربيس)...',
+          });
+          uploadedUrls.push(...remainingDataUrls);
+        } else {
+          // Pack ~30 images per single Firestore document (minimal 1-4 writes total)
+          setProgressInfo({
+            current: uploadedUrls.length,
+            total,
+            stage: 'جاري حفظ حزم الصور المضغوطة بأقل استهلاك لفايربيس...',
+          });
+          const packedUrls = await saveCompressedExamImagePacks(remainingDataUrls, (done) => {
+            setProgressInfo({
+              current: uploadedUrls.length + done,
+              total,
+              stage: `جاري حفظ الصور المضغوطة (${uploadedUrls.length + done} من ${total})...`,
+            });
+          });
+          uploadedUrls.push(...packedUrls);
         }
-
-        uploadedUrls.push(...batchUrls);
-        processedCount += chunk.length;
       }
 
       const baseTimestamp = Date.now();
@@ -591,7 +613,7 @@ export const PdfExamCropImporter: React.FC<PdfExamCropImporterProps> = ({
                 رفع وقص أسئلة الاختبار تلقائياً من ملف PDF 📄✂️
               </span>
               <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-bold">
-                توفير فايربيس (تُثبّت بحزمة واحدة عند الحفظ)
+                توفير فايربيس 100% (حفظ مضغوط مباشر)
               </span>
             </div>
             <p className="text-[10px] text-slate-400 mt-0.5">

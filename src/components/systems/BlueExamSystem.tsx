@@ -11,6 +11,7 @@ import {
   FileText,
 } from 'lucide-react';
 import { BaseExamSystemProps } from './examSystemTypes';
+import { ExamQuestionImage } from '../../utils/examImagePack';
 
 export const BlueExamSystem: React.FC<BaseExamSystemProps> = ({
   safeQuestions,
@@ -452,7 +453,7 @@ export const BlueExamSystem: React.FC<BaseExamSystemProps> = ({
             {/* في حال وجود صورة للسؤال */}
             {currentQ.imageUrl && (
               <div className="mb-6 p-2 bg-slate-50 border border-slate-200 rounded-lg relative group max-w-md">
-                <img
+                <ExamQuestionImage
                   src={currentQ.imageUrl}
                   alt="صورة السؤال"
                   className="max-h-60 mx-auto rounded object-contain cursor-pointer transition hover:opacity-95"

@@ -26,6 +26,7 @@ import {
   ClipboardCheck
 } from 'lucide-react';
 import { MyResultsQiyasModal } from './MyResultsQiyasModal';
+import { ExamQuestionImage } from '../utils/examImagePack';
 import {
   StudentUser,
   SystemSettings,
@@ -349,7 +350,12 @@ export const FeaturesModal: React.FC<FeaturesModalProps> = ({
       if (trimmed.startsWith('data:') || trimmed.includes('base64,') || trimmed.length > 300) {
         return undefined;
       }
-      if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      if (
+        trimmed.startsWith('http://') ||
+        trimmed.startsWith('https://') ||
+        trimmed.startsWith('/uploads/') ||
+        trimmed.startsWith('fbpack://')
+      ) {
         return trimmed;
       }
       return undefined;
@@ -1442,7 +1448,7 @@ export const FeaturesModal: React.FC<FeaturesModalProps> = ({
                       {/* Optional Question Image */}
                       {activeQuestions[challengeCurrentQIdx]?.imageUrl && (
                         <div className="max-h-64 overflow-hidden rounded-2xl border border-slate-700/60 flex items-center justify-center bg-black/20 p-2">
-                          <img
+                          <ExamQuestionImage
                             src={activeQuestions[challengeCurrentQIdx]?.imageUrl}
                             alt="صورة السؤال"
                             className="max-h-56 object-contain rounded-xl"

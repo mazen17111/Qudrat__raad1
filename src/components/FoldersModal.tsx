@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { StudentUser, FolderItem, FolderQuestionItem, ExamQuestion } from '../types';
 import { exportFolderQuestionsToPdf } from '../utils/folderPdfExport';
+import { ExamQuestionImage } from '../utils/examImagePack';
 import { db } from '../firebase';
 import { markQuestionAsPermanentlyDeleted } from '../mistakesService';
 import {
@@ -700,7 +701,7 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
                                 className="my-2.5 max-w-xl rounded-xl overflow-hidden border border-emerald-500/30 bg-white dark:bg-slate-950/60 p-2 shadow-sm cursor-pointer hover:border-emerald-400 transition"
                                 title="انقر لتكبير صورة السؤال"
                               >
-                                <img
+                                <ExamQuestionImage
                                   src={q.imageUrl}
                                   alt="صورة السؤال"
                                   loading="eager"
@@ -1083,7 +1084,7 @@ export const FoldersModal: React.FC<FoldersModalProps> = ({
           className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/95 backdrop-blur-md animate-in fade-in duration-200 cursor-zoom-out"
         >
           <div className="relative max-w-4xl max-h-[90vh] flex flex-col items-center">
-            <img
+            <ExamQuestionImage
               src={zoomedImage}
               alt="صورة السؤال مكبرة"
               className="max-w-full max-h-[85vh] object-contain rounded-2xl border-2 border-emerald-500 shadow-2xl bg-white"

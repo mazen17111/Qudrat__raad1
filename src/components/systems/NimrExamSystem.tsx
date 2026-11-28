@@ -11,6 +11,7 @@ import {
   ListChecks,
 } from 'lucide-react';
 import { BaseExamSystemProps } from './examSystemTypes';
+import { ExamQuestionImage } from '../../utils/examImagePack';
 
 export const NimrExamSystem: React.FC<BaseExamSystemProps> = ({
   safeQuestions,
@@ -580,7 +581,7 @@ export const NimrExamSystem: React.FC<BaseExamSystemProps> = ({
             {/* مكان صورة السؤال المرفوعة */}
             {currentQ.imageUrl && (
               <div className="text-center my-4 p-2.5 bg-white border border-[#e8e8e8] rounded-md relative group">
-                <img
+                <ExamQuestionImage
                   id="questionImage"
                   src={currentQ.imageUrl}
                   alt="صورة السؤال"

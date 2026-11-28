@@ -46,6 +46,7 @@ import { Whiteboard } from './Whiteboard';
 import { NimrExamSystem } from './systems/NimrExamSystem';
 import { DefaultExamSystem } from './systems/DefaultExamSystem';
 import { BlueExamSystem } from './systems/BlueExamSystem';
+import { ExamQuestionImage } from '../utils/examImagePack';
 import {
   db,
   isQuotaExceededActive,
@@ -1770,7 +1771,7 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
                             className="rounded-xl overflow-hidden border border-slate-700 p-1 bg-black/40 cursor-pointer hover:border-amber-400 transition"
                             title="انقر لتكبير صورة السؤال"
                           >
-                            <img
+                            <ExamQuestionImage
                               src={q.imageUrl}
                               alt="صورة السؤال"
                               className="max-h-48 object-contain rounded-lg mx-auto"
@@ -2263,7 +2264,7 @@ export const ExamRunner: React.FC<ExamRunnerProps> = ({
           onClick={(e) => e.stopPropagation()}
           className="w-full max-w-4xl max-h-[80vh] overflow-auto rounded-3xl border border-slate-800 bg-slate-950/80 p-2 sm:p-4 flex items-center justify-center shadow-2xl"
         >
-          <img
+          <ExamQuestionImage
             src={zoomedImageUrl}
             alt="صورة مكبرة"
             style={{ transform: `scale(${imageZoomScale})`, transformOrigin: 'center' }}

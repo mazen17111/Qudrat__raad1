@@ -1,5 +1,6 @@
 import { jsPDF } from 'jspdf';
 import { FolderQuestionItem } from '../types';
+import { resolveExamImageUrl } from './examImagePack';
 
 export interface ExportFolderPdfParams {
   folderTitle: string;
@@ -122,11 +123,15 @@ function wrapTextLines(
   return result;
 }
 
-function loadSafeImage(url?: string, timeoutMs = 5000): Promise<HTMLImageElement | null> {
+async function loadSafeImage(url?: string, timeoutMs = 5000): Promise<HTMLImageElement | null> {
   if (!url || typeof url !== 'string' || !url.trim()) {
-    return Promise.resolve(null);
+    return null;
   }
-  const src = url.trim();
+  const resolved = await resolveExamImageUrl(url.trim());
+  if (!resolved) {
+    return null;
+  }
+  const src = resolved.trim();
   const isInlineOrSameOrigin =
     src.startsWith('data:') || src.startsWith('blob:') || src.startsWith('/');
 

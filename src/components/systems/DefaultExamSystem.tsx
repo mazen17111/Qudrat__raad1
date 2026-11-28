@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { DefaultExamSystemProps } from './examSystemTypes';
 import { Whiteboard } from '../Whiteboard';
+import { ExamQuestionImage } from '../../utils/examImagePack';
 
 export const DefaultExamSystem: React.FC<DefaultExamSystemProps> = ({
   safeQuestions,
@@ -831,7 +832,7 @@ export const DefaultExamSystem: React.FC<DefaultExamSystemProps> = ({
             {/* Question Image */}
             {currentQ.imageUrl && (
               <div className="relative rounded-2xl overflow-hidden border border-slate-700/60 bg-slate-950/40 p-2 group text-center">
-                <img
+                <ExamQuestionImage
                   src={currentQ.imageUrl}
                   alt="صورة السؤال"
                   className="max-h-[380px] mx-auto object-contain rounded-xl cursor-pointer"

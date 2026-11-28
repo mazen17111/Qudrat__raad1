@@ -77,6 +77,7 @@ import { BrandLogo } from './BrandLogo';
 import { CertificateModal } from './CertificateModal';
 import { SmartVideoPlayer } from './SmartVideoPlayer';
 import { PdfExamCropImporter } from './PdfExamCropImporter';
+import { ExamQuestionImage, saveCompressedExamImagePacks } from '../utils/examImagePack';
 import {
   db,
   THEME_PRESETS,
@@ -2318,39 +2319,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         if (isExternalExam) {
           basePayload.url = itemUrl.trim();
         } else {
-          // Persist any local /uploads/ exam images into a compact Firestore bundle (~1 write) so images never break across servers/restarts
-          let bundleUrlMap: Record<string, string> = {};
-          const localImageUrls = Array.from(
-            new Set(
-              examQuestions
-                .map((q) => (q.imageUrl || '').trim())
-                .filter((u) => u.startsWith('/uploads/'))
-            )
-          );
-          if (localImageUrls.length > 0) {
-            try {
-              const bundleResp = await fetch('/api/persist-exam-images-bundle', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ examId: targetId, imageUrls: localImageUrls }),
-              });
-              const bundleText = await bundleResp.text();
-              if (bundleText.trim().startsWith('{')) {
-                const bundleData = JSON.parse(bundleText);
-                if (bundleData?.success && bundleData?.urlMap && typeof bundleData.urlMap === 'object') {
-                  bundleUrlMap = bundleData.urlMap;
-                }
-              }
-            } catch (bundleErr) {
-              console.warn('Bundle persistence warning (keeping local urls):', bundleErr);
-            }
-          }
-
           // Process ALL questions: ensure questions are preserved even if only image or choices were added
           const cleanQuestions: ExamQuestion[] = examQuestions.map((q, idx) => {
             const text = (q.questionText || '').trim();
-            const rawImage = (q.imageUrl || '').trim();
-            const image = bundleUrlMap[rawImage] || rawImage;
+            const image = (q.imageUrl || '').trim();
             const opts = (Array.isArray(q.options) && q.options.length > 0)
               ? q.options.map((opt, oIdx) => (opt || '').trim() || `الخيار ${['أ', 'ب', 'ج', 'د'][oIdx] || oIdx + 1}`)
               : ['الخيار أ', 'الخيار ب', 'الخيار ج', 'الخيار د'];
@@ -2365,7 +2337,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
             };
           });
 
-          basePayload.questions = cleanQuestions.length > 0 ? cleanQuestions : [
+          let finalQuestions = cleanQuestions.length > 0 ? cleanQuestions : [
             {
               id: 'q_1',
               questionText: 'سؤال رقم 1',
@@ -2375,6 +2347,28 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
               explanation: '',
             }
           ];
+
+          // Safety guard: if inline data:image URLs push the exam doc near Firestore 1 MiB limit, auto-pack them
+          const estimatedBytes = JSON.stringify(finalQuestions).length;
+          if (estimatedBytes > 750000) {
+            const inlineIndices: number[] = [];
+            const inlineDataUrls: string[] = [];
+            finalQuestions.forEach((fq, fIdx) => {
+              if (fq.imageUrl && fq.imageUrl.startsWith('data:image/')) {
+                inlineIndices.push(fIdx);
+                inlineDataUrls.push(fq.imageUrl);
+              }
+            });
+            if (inlineDataUrls.length > 0) {
+              const packed = await saveCompressedExamImagePacks(inlineDataUrls);
+              finalQuestions = finalQuestions.map((fq, fIdx) => {
+                const pos = inlineIndices.indexOf(fIdx);
+                return pos >= 0 && packed[pos] ? { ...fq, imageUrl: packed[pos] } : fq;
+              });
+            }
+          }
+
+          basePayload.questions = finalQuestions;
           basePayload.durationMinutes = Number(examDurationMinutes) || 15;
           basePayload.targetPercentage = Number(examTargetPercentage) || 90;
         }
@@ -8118,7 +8112,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
                           />
                           {q.imageUrl && (
                             <div className="mt-2 max-w-lg rounded-xl border border-slate-700 overflow-hidden bg-slate-950">
-                              <img
+                              <ExamQuestionImage
                                 src={q.imageUrl}
                                 alt={`سؤال ${qIdx + 1}`}
                                 className="max-h-72 w-full object-contain bg-white p-1"
