@@ -2318,10 +2318,39 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onExit, systemSettings }
         if (isExternalExam) {
           basePayload.url = itemUrl.trim();
         } else {
+          // Persist any local /uploads/ exam images into a compact Firestore bundle (~1 write) so images never break across servers/restarts
+          let bundleUrlMap: Record<string, string> = {};
+          const localImageUrls = Array.from(
+            new Set(
+              examQuestions
+                .map((q) => (q.imageUrl || '').trim())
+                .filter((u) => u.startsWith('/uploads/'))
+            )
+          );
+          if (localImageUrls.length > 0) {
+            try {
+              const bundleResp = await fetch('/api/persist-exam-images-bundle', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ examId: targetId, imageUrls: localImageUrls }),
+              });
+              const bundleText = await bundleResp.text();
+              if (bundleText.trim().startsWith('{')) {
+                const bundleData = JSON.parse(bundleText);
+                if (bundleData?.success && bundleData?.urlMap && typeof bundleData.urlMap === 'object') {
+                  bundleUrlMap = bundleData.urlMap;
+                }
+              }
+            } catch (bundleErr) {
+              console.warn('Bundle persistence warning (keeping local urls):', bundleErr);
+            }
+          }
+
           // Process ALL questions: ensure questions are preserved even if only image or choices were added
           const cleanQuestions: ExamQuestion[] = examQuestions.map((q, idx) => {
             const text = (q.questionText || '').trim();
-            const image = (q.imageUrl || '').trim();
+            const rawImage = (q.imageUrl || '').trim();
+            const image = bundleUrlMap[rawImage] || rawImage;
             const opts = (Array.isArray(q.options) && q.options.length > 0)
               ? q.options.map((opt, oIdx) => (opt || '').trim() || `الخيار ${['أ', 'ب', 'ج', 'د'][oIdx] || oIdx + 1}`)
               : ['الخيار أ', 'الخيار ب', 'الخيار ج', 'الخيار د'];

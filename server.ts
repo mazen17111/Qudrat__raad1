@@ -54,11 +54,19 @@ try {
 } catch {}
 
 const VIDEO_EXT_REGEX = /\.(mp4|mov|mkv|webm|avi|m4v|wmv|flv|3gp|ts|mpeg|mpg)$/i;
+const IMAGE_EXT_REGEX = /\.(png|jpg|jpeg|webp|gif|svg|bmp)$/i;
 
 function isVideoFile(mimetype?: string, filename?: string): boolean {
   const mime = (mimetype || '').toLowerCase();
   if (mime.startsWith('video/')) return true;
   if (filename && VIDEO_EXT_REGEX.test(filename)) return true;
+  return false;
+}
+
+function isImageFile(mimetype?: string, filename?: string): boolean {
+  const mime = (mimetype || '').toLowerCase();
+  if (mime.startsWith('image/')) return true;
+  if (filename && IMAGE_EXT_REGEX.test(filename)) return true;
   return false;
 }
 
@@ -121,7 +129,7 @@ const storage = multer.diskStorage({
   destination: (_req, file, cb) => {
     if (isVideoFile(file.mimetype, file.originalname)) {
       cb(null, videosDir);
-    } else if ((file.mimetype || '').toLowerCase().startsWith('image/')) {
+    } else if (isImageFile(file.mimetype, file.originalname)) {
       cb(null, imagesDir);
     } else {
       cb(null, filesDir);
@@ -756,7 +764,7 @@ app.post('/api/upload', upload.single('file'), async (req: Request, res: Respons
 
     const file = req.file;
     const isVideo = isVideoFile(file.mimetype, file.originalname);
-    const isImage = !isVideo && (file.mimetype || '').toLowerCase().startsWith('image/');
+    const isImage = !isVideo && isImageFile(file.mimetype, file.originalname);
     const subfolder = isVideo ? 'videos' : isImage ? 'images' : 'files';
 
     let finalFilePath = file.path;
@@ -848,7 +856,8 @@ app.post('/api/upload-exam-images', (req: Request, res: Response) => {
       }
 
       const items = uploadedFiles.map((file) => {
-        const relativeUrl = `/uploads/images/${file.filename}`;
+        const actualSubfolder = path.basename(path.dirname(file.path)) || 'images';
+        const relativeUrl = `/uploads/${actualSubfolder}/${file.filename}`;
         return {
           url: relativeUrl,
           fileName: file.originalname,
@@ -867,6 +876,234 @@ app.post('/api/upload-exam-images', (req: Request, res: Response) => {
       res.status(500).json({ success: false, error: err.message || 'حدث خطأ أثناء رفع صور الاختبار' });
     }
   });
+});
+
+// 1.2 Bundle all cropped exam images into minimal Firestore doc(s) (1 write for <=650KB) upon Save
+app.post('/api/persist-exam-images-bundle', async (req: Request, res: Response) => {
+  try {
+    const rawUrls = Array.isArray(req.body?.imageUrls) ? req.body.imageUrls : [];
+    const examId = String(req.body?.examId || `exam_${Date.now()}`).replace(/[^a-zA-Z0-9_-]/g, '_');
+
+    const localUrls: string[] = Array.from(
+      new Set(
+        rawUrls
+          .filter((u: unknown): u is string => typeof u === 'string')
+          .map((u: string) => u.trim())
+          .filter((u: string) => u.startsWith('/uploads/'))
+      )
+    );
+
+    if (localUrls.length === 0 || !telegramDb) {
+      res.json({ success: true, bundleId: null, firestoreWrites: 0, urlMap: {} });
+      return;
+    }
+
+    const bundleId = `bnd_${examId}_${Date.now().toString(36)}`;
+    const filesMap: Record<string, { mimeType: string; data: string }> = {};
+    const urlMap: Record<string, string> = {};
+    let totalBase64Bytes = 0;
+
+    for (const localUrl of localUrls) {
+      const cleanRel = localUrl.replace(/^\/uploads\//, '').split('?')[0];
+      const parts = cleanRel.split('/').filter(Boolean);
+      const sub = parts[0];
+      const fname = parts[parts.length - 1];
+      if (!sub || !fname || !['images', 'files', 'cached'].includes(sub)) continue;
+
+      const diskPath = path.join(uploadBaseDir, sub, path.basename(fname));
+      if (!fs.existsSync(diskPath) || !fs.statSync(diskPath).isFile()) continue;
+
+      const buf = fs.readFileSync(diskPath);
+      const b64 = buf.toString('base64');
+      const mimeType = normalizeServedMimeType('', diskPath);
+      const safeKey = path.basename(fname);
+
+      filesMap[safeKey] = { mimeType, data: b64 };
+      totalBase64Bytes += b64.length + safeKey.length + 40;
+
+      // Mirror immediately to cachedDir so /api/exam-bundle serves locally with 0 Firestore reads
+      try {
+        const cachedCopyPath = path.join(cachedDir, `bundle_${bundleId}_${safeKey}`);
+        fs.writeFileSync(cachedCopyPath, buf);
+      } catch {}
+
+      urlMap[localUrl] = `/api/exam-bundle/${bundleId}/${safeKey}`;
+    }
+
+    const fileKeys = Object.keys(filesMap);
+    if (fileKeys.length === 0) {
+      res.json({ success: true, bundleId: null, firestoreWrites: 0, urlMap: {} });
+      return;
+    }
+
+    let firestoreWrites = 0;
+    const SINGLE_DOC_LIMIT = 650 * 1024; // Safe under Firestore's 1 MiB document cap
+
+    if (totalBase64Bytes <= SINGLE_DOC_LIMIT) {
+      await setDoc(doc(telegramDb, 'exam_bundles', bundleId), {
+        id: bundleId,
+        examId,
+        isSingleDoc: true,
+        totalFiles: fileKeys.length,
+        files: filesMap,
+        createdAt: new Date().toISOString(),
+      });
+      firestoreWrites = 1;
+      recordServerFirestoreOp('write', 1, 'حفظ حزمة صور الاختبار في فايربيس');
+    } else {
+      // Pack multiple images into minimal <= 620KB chunk documents
+      const chunks: Record<string, { mimeType: string; data: string }>[] = [];
+      let currentChunk: Record<string, { mimeType: string; data: string }> = {};
+      let currentSize = 0;
+      const CHUNK_LIMIT = 620 * 1024;
+
+      for (const key of fileKeys) {
+        const entry = filesMap[key];
+        const entrySize = entry.data.length + key.length + 40;
+        if (Object.keys(currentChunk).length > 0 && currentSize + entrySize > CHUNK_LIMIT) {
+          chunks.push(currentChunk);
+          currentChunk = {};
+          currentSize = 0;
+        }
+        currentChunk[key] = entry;
+        currentSize += entrySize;
+      }
+      if (Object.keys(currentChunk).length > 0) {
+        chunks.push(currentChunk);
+      }
+
+      await Promise.all(
+        chunks.map((chunkFiles, idx) =>
+          setDoc(doc(telegramDb, 'exam_bundles', bundleId, 'chunks', String(idx)), {
+            index: idx,
+            files: chunkFiles,
+          })
+        )
+      );
+      await setDoc(doc(telegramDb, 'exam_bundles', bundleId), {
+        id: bundleId,
+        examId,
+        isSingleDoc: false,
+        totalChunks: chunks.length,
+        totalFiles: fileKeys.length,
+        createdAt: new Date().toISOString(),
+      });
+      firestoreWrites = chunks.length + 1;
+      recordServerFirestoreOp('write', firestoreWrites, 'حفظ حزم صور الاختبار في فايربيس');
+    }
+
+    res.json({
+      success: true,
+      bundleId,
+      firestoreWrites,
+      urlMap,
+    });
+  } catch (err: any) {
+    console.warn('[Persist Exam Bundle] Warning:', err?.message || err);
+    res.status(200).json({
+      success: false,
+      bundleId: null,
+      firestoreWrites: 0,
+      urlMap: {},
+      error: err?.message || 'تعذر حفظ حزمة الصور',
+    });
+  }
+});
+
+// 1.3 Serve bundled exam images (0 Firestore reads when cached locally; 1 single read hydrates all images in bundle!)
+const inFlightBundleHydrations = new Map<string, Promise<void>>();
+
+async function hydrateExamBundleToDisk(bundleId: string): Promise<void> {
+  if (!telegramDb) return;
+  const existing = inFlightBundleHydrations.get(bundleId);
+  if (existing) {
+    await existing;
+    return;
+  }
+
+  const job = (async () => {
+    try {
+      const snap = await getDoc(doc(telegramDb, 'exam_bundles', bundleId));
+      recordServerFirestoreOp('read', 1, 'قراءة حزمة صور اختبار للكاش');
+      if (!snap.exists()) return;
+      const data = snap.data() as any;
+
+      const writeFilesMap = (filesObj: Record<string, { mimeType?: string; data?: string }>) => {
+        if (!filesObj || typeof filesObj !== 'object') return;
+        for (const [key, entry] of Object.entries(filesObj)) {
+          if (!entry?.data) continue;
+          const safeKey = path.basename(key);
+          const outPath = path.join(cachedDir, `bundle_${bundleId}_${safeKey}`);
+          if (!fs.existsSync(outPath)) {
+            fs.writeFileSync(outPath, Buffer.from(entry.data, 'base64'));
+          }
+        }
+      };
+
+      if (data.isSingleDoc && data.files) {
+        writeFilesMap(data.files);
+      } else if (data.totalChunks > 0) {
+        const indices = Array.from({ length: data.totalChunks }, (_, i) => i);
+        const chunkSnaps = await Promise.all(
+          indices.map((idx) => getDoc(doc(telegramDb, 'exam_bundles', bundleId, 'chunks', String(idx))))
+        );
+        recordServerFirestoreOp('read', chunkSnaps.length, 'قراءة أجزاء حزمة صور اختبار');
+        for (const cSnap of chunkSnaps) {
+          if (cSnap.exists()) {
+            writeFilesMap((cSnap.data() as any).files);
+          }
+        }
+      }
+    } catch (err: any) {
+      console.warn(`[Exam Bundle Hydrate] Error for ${bundleId}:`, err?.message || err);
+    } finally {
+      inFlightBundleHydrations.delete(bundleId);
+    }
+  })();
+
+  inFlightBundleHydrations.set(bundleId, job);
+  await job;
+}
+
+app.get('/api/exam-bundle/:bundleId/:fileKey', async (req: Request, res: Response) => {
+  try {
+    const rawBundle = Array.isArray(req.params.bundleId) ? req.params.bundleId[0] : req.params.bundleId;
+    const rawKey = Array.isArray(req.params.fileKey) ? req.params.fileKey[0] : req.params.fileKey;
+    const bundleId = path.basename(rawBundle || '');
+    const fileKey = path.basename(rawKey || '');
+    if (!bundleId || !fileKey) {
+      res.status(400).send('Invalid image reference');
+      return;
+    }
+
+    // 0-read fast path: cached bundle file on local disk
+    const cachedFile = path.join(cachedDir, `bundle_${bundleId}_${fileKey}`);
+    if (fs.existsSync(cachedFile) && fs.statSync(cachedFile).isFile()) {
+      streamLocalFile(cachedFile, normalizeServedMimeType('', cachedFile), req, res);
+      return;
+    }
+
+    // Secondary 0-read fast path: original uploaded image on disk
+    const directUploadFile = path.join(imagesDir, fileKey);
+    if (fs.existsSync(directUploadFile) && fs.statSync(directUploadFile).isFile()) {
+      streamLocalFile(directUploadFile, normalizeServedMimeType('', directUploadFile), req, res);
+      return;
+    }
+
+    // Hydrate entire bundle once from Firestore and serve from local cache
+    await hydrateExamBundleToDisk(bundleId);
+    if (fs.existsSync(cachedFile) && fs.statSync(cachedFile).isFile()) {
+      streamLocalFile(cachedFile, normalizeServedMimeType('', cachedFile), req, res);
+      return;
+    }
+
+    res.status(404).send('Exam image not found');
+  } catch (err: any) {
+    console.error('[Exam Bundle Serve Error]:', err);
+    if (!res.headersSent) {
+      res.status(500).send('Error loading exam image');
+    }
+  }
 });
 
 // Track active disk cache jobs so simultaneous byte-range requests don't re-read Firestore chunks

@@ -377,6 +377,11 @@ export const PdfExamCropImporter: React.FC<PdfExamCropImporterProps> = ({
     setProgressInfo({ current: 0, total, stage: 'جاري تجهيز الصفحات والقص بنفس المقاس...' });
 
     try {
+      try {
+        renderTaskRef.current?.cancel();
+      } catch {}
+      await new Promise((r) => setTimeout(r, 40));
+
       const renderCanvas = document.createElement('canvas');
       const cropCanvas = document.createElement('canvas');
       const renderCtx = renderCanvas.getContext('2d');
@@ -398,11 +403,11 @@ export const PdfExamCropImporter: React.FC<PdfExamCropImporterProps> = ({
 
         const page = await pdfDoc.getPage(pageNum);
         const baseViewport = page.getViewport({ scale: 1 });
-        const scale = clamp(1150 / Math.max(baseViewport.width, 1), 1.1, 1.8);
+        const scale = clamp(1100 / Math.max(baseViewport.width, 1), 1.05, 1.75);
         const viewport = page.getViewport({ scale });
 
-        renderCanvas.width = Math.round(viewport.width);
-        renderCanvas.height = Math.round(viewport.height);
+        renderCanvas.width = Math.max(1, Math.round(viewport.width));
+        renderCanvas.height = Math.max(1, Math.round(viewport.height));
         renderCtx.fillStyle = '#ffffff';
         renderCtx.fillRect(0, 0, renderCanvas.width, renderCanvas.height);
 
@@ -414,12 +419,12 @@ export const PdfExamCropImporter: React.FC<PdfExamCropImporterProps> = ({
 
         page.cleanup();
 
-        const sx = Math.max(0, Math.round(crop.x * renderCanvas.width));
-        const sy = Math.max(0, Math.round(crop.y * renderCanvas.height));
-        const sw = Math.max(20, Math.round(crop.width * renderCanvas.width));
-        const sh = Math.max(20, Math.round(crop.height * renderCanvas.height));
+        const sx = clamp(Math.round(crop.x * renderCanvas.width), 0, Math.max(0, renderCanvas.width - 20));
+        const sy = clamp(Math.round(crop.y * renderCanvas.height), 0, Math.max(0, renderCanvas.height - 20));
+        const sw = clamp(Math.round(crop.width * renderCanvas.width), 20, renderCanvas.width - sx);
+        const sh = clamp(Math.round(crop.height * renderCanvas.height), 20, renderCanvas.height - sy);
 
-        const maxCropDim = 1100;
+        const maxCropDim = 1050;
         const downscale = Math.min(1, maxCropDim / Math.max(sw, sh));
         const targetW = Math.max(20, Math.round(sw * downscale));
         const targetH = Math.max(20, Math.round(sh * downscale));
@@ -430,20 +435,20 @@ export const PdfExamCropImporter: React.FC<PdfExamCropImporterProps> = ({
         cropCtx.fillRect(0, 0, targetW, targetH);
         cropCtx.drawImage(renderCanvas, sx, sy, sw, sh, 0, 0, targetW, targetH);
 
-        let compressed = await canvasToCompressedBlob(cropCanvas, 0.78);
-        if (compressed.blob.size > 450 * 1024) {
-          compressed = await canvasToCompressedBlob(cropCanvas, 0.65);
+        let compressed = await canvasToCompressedBlob(cropCanvas, 0.76);
+        if (compressed.blob.size > 320 * 1024) {
+          compressed = await canvasToCompressedBlob(cropCanvas, 0.62);
         }
         croppedBlobs.push({ pageNumber: pageNum, blob: compressed.blob, ext: compressed.ext });
       }
 
-      // Build small byte-capped batches (max 500 KB and max 5 images per request) so reverse proxies never reject payload size
+      // Build small byte-capped batches (max 350 KB and max 4 images per request)
       type CroppedItem = { pageNumber: number; blob: Blob; ext: string };
       const batches: CroppedItem[][] = [];
       let currentBatch: CroppedItem[] = [];
       let currentBytes = 0;
-      const MAX_BATCH_BYTES = 500 * 1024;
-      const MAX_BATCH_COUNT = 5;
+      const MAX_BATCH_BYTES = 350 * 1024;
+      const MAX_BATCH_COUNT = 4;
 
       for (const item of croppedBlobs) {
         if (
@@ -462,30 +467,35 @@ export const PdfExamCropImporter: React.FC<PdfExamCropImporterProps> = ({
       }
 
       const uploadSingleImageFallback = async (item: CroppedItem): Promise<string> => {
-        // 1. Try /api/upload-exam-images with single image
-        try {
-          const singleBulkForm = new FormData();
-          singleBulkForm.append('files', item.blob, `pdf_q_p${item.pageNumber}.${item.ext}`);
-          const r1 = await fetch('/api/upload-exam-images', { method: 'POST', body: singleBulkForm });
-          const p1 = await safeParseJsonResponse(r1);
-          if (p1.ok && p1.data?.success && Array.isArray(p1.data.urls) && p1.data.urls[0]) {
-            return p1.data.urls[0];
-          }
-        } catch {}
+        for (let tryNum = 0; tryNum < 2; tryNum++) {
+          // 1. Try /api/upload-exam-images with single image
+          try {
+            const singleBulkForm = new FormData();
+            singleBulkForm.append('files', item.blob, `pdf_q_p${item.pageNumber}.${item.ext}`);
+            const r1 = await fetch('/api/upload-exam-images', { method: 'POST', body: singleBulkForm });
+            const p1 = await safeParseJsonResponse(r1);
+            if (p1.ok && p1.data?.success && Array.isArray(p1.data.urls) && p1.data.urls[0]) {
+              return p1.data.urls[0];
+            }
+          } catch {}
 
-        // 2. Fallback to standard /api/upload?skipFirebase=1 (still 0 Firestore writes!)
-        const singleForm = new FormData();
-        singleForm.append('file', item.blob, `pdf_q_p${item.pageNumber}.${item.ext}`);
-        const r2 = await fetch('/api/upload?skipFirebase=1', { method: 'POST', body: singleForm });
-        const p2 = await safeParseJsonResponse(r2);
-        const resolvedUrl = p2.data?.localUrl || p2.data?.url;
-        if (p2.ok && p2.data?.success && resolvedUrl) {
-          return resolvedUrl;
+          // 2. Fallback to standard /api/upload?skipFirebase=1
+          try {
+            const singleForm = new FormData();
+            singleForm.append('file', item.blob, `pdf_q_p${item.pageNumber}.${item.ext}`);
+            const r2 = await fetch('/api/upload?skipFirebase=1', { method: 'POST', body: singleForm });
+            const p2 = await safeParseJsonResponse(r2);
+            const resolvedUrl = p2.data?.localUrl || p2.data?.url;
+            if (p2.ok && p2.data?.success && resolvedUrl) {
+              return resolvedUrl;
+            }
+          } catch {}
+
+          await new Promise((r) => setTimeout(r, 300));
         }
 
         throw new Error(
-          p2.data?.error ||
-            `تعذر رفع صورة الصفحة ${item.pageNumber}. تأكد من تحديث الصفحة والمحاولة مرة أخرى.`
+          `تعذر رفع صورة الصفحة ${item.pageNumber}. تأكد من تحديث الصفحة والمحاولة مرة أخرى.`
         );
       };
 
@@ -581,7 +591,7 @@ export const PdfExamCropImporter: React.FC<PdfExamCropImporterProps> = ({
                 رفع وقص أسئلة الاختبار تلقائياً من ملف PDF 📄✂️
               </span>
               <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-bold">
-                توفير فايربيس 100% (حفظ مضغوط مباشر)
+                توفير فايربيس (تُثبّت بحزمة واحدة عند الحفظ)
               </span>
             </div>
             <p className="text-[10px] text-slate-400 mt-0.5">
