@@ -56,7 +56,10 @@ function clamp(val: number, min: number, max: number) {
   return Math.max(min, Math.min(max, val));
 }
 
-function canvasToCompressedBlob(canvas: HTMLCanvasElement): Promise<{ blob: Blob; ext: string }> {
+function canvasToCompressedBlob(
+  canvas: HTMLCanvasElement,
+  quality = 0.78
+): Promise<{ blob: Blob; ext: string }> {
   return new Promise((resolve, reject) => {
     canvas.toBlob(
       (webpBlob) => {
@@ -73,13 +76,27 @@ function canvasToCompressedBlob(canvas: HTMLCanvasElement): Promise<{ blob: Blob
             }
           },
           'image/jpeg',
-          0.86
+          Math.min(0.84, quality + 0.04)
         );
       },
       'image/webp',
-      0.84
+      quality
     );
   });
+}
+
+async function safeParseJsonResponse(resp: Response): Promise<{ ok: boolean; data: any; rawText: string }> {
+  const rawText = await resp.text();
+  const trimmed = rawText.trim();
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      return { ok: resp.ok, data: parsed, rawText };
+    } catch {
+      return { ok: false, data: null, rawText };
+    }
+  }
+  return { ok: false, data: null, rawText };
 }
 
 export const PdfExamCropImporter: React.FC<PdfExamCropImporterProps> = ({
@@ -381,7 +398,7 @@ export const PdfExamCropImporter: React.FC<PdfExamCropImporterProps> = ({
 
         const page = await pdfDoc.getPage(pageNum);
         const baseViewport = page.getViewport({ scale: 1 });
-        const scale = clamp(1350 / Math.max(baseViewport.width, 1), 1.2, 2.0);
+        const scale = clamp(1150 / Math.max(baseViewport.width, 1), 1.1, 1.8);
         const viewport = page.getViewport({ scale });
 
         renderCanvas.width = Math.round(viewport.width);
@@ -402,43 +419,128 @@ export const PdfExamCropImporter: React.FC<PdfExamCropImporterProps> = ({
         const sw = Math.max(20, Math.round(crop.width * renderCanvas.width));
         const sh = Math.max(20, Math.round(crop.height * renderCanvas.height));
 
-        cropCanvas.width = sw;
-        cropCanvas.height = sh;
-        cropCtx.fillStyle = '#ffffff';
-        cropCtx.fillRect(0, 0, sw, sh);
-        cropCtx.drawImage(renderCanvas, sx, sy, sw, sh, 0, 0, sw, sh);
+        const maxCropDim = 1100;
+        const downscale = Math.min(1, maxCropDim / Math.max(sw, sh));
+        const targetW = Math.max(20, Math.round(sw * downscale));
+        const targetH = Math.max(20, Math.round(sh * downscale));
 
-        const { blob, ext } = await canvasToCompressedBlob(cropCanvas);
-        croppedBlobs.push({ pageNumber: pageNum, blob, ext });
+        cropCanvas.width = targetW;
+        cropCanvas.height = targetH;
+        cropCtx.fillStyle = '#ffffff';
+        cropCtx.fillRect(0, 0, targetW, targetH);
+        cropCtx.drawImage(renderCanvas, sx, sy, sw, sh, 0, 0, targetW, targetH);
+
+        let compressed = await canvasToCompressedBlob(cropCanvas, 0.78);
+        if (compressed.blob.size > 450 * 1024) {
+          compressed = await canvasToCompressedBlob(cropCanvas, 0.65);
+        }
+        croppedBlobs.push({ pageNumber: pageNum, blob: compressed.blob, ext: compressed.ext });
       }
 
-      // Upload in batches of 15 directly to disk (/api/upload-exam-images) — ZERO Firestore writes!
-      const batchSize = 15;
-      const totalBatches = Math.ceil(croppedBlobs.length / batchSize);
-      const uploadedUrls: string[] = [];
+      // Build small byte-capped batches (max 500 KB and max 5 images per request) so reverse proxies never reject payload size
+      type CroppedItem = { pageNumber: number; blob: Blob; ext: string };
+      const batches: CroppedItem[][] = [];
+      let currentBatch: CroppedItem[] = [];
+      let currentBytes = 0;
+      const MAX_BATCH_BYTES = 500 * 1024;
+      const MAX_BATCH_COUNT = 5;
 
-      for (let b = 0; b < totalBatches; b++) {
-        const chunk = croppedBlobs.slice(b * batchSize, (b + 1) * batchSize);
-        setProgressInfo({
-          current: Math.min((b + 1) * batchSize, total),
-          total,
-          stage: `جاري رفع الدفعة ${b + 1} من ${totalBatches} مضغوطة (بدون استهلاك فايربيس)...`,
-        });
-
-        const formData = new FormData();
-        chunk.forEach((item) => {
-          formData.append('files', item.blob, `pdf_q_p${item.pageNumber}.${item.ext}`);
-        });
-
-        const resp = await fetch('/api/upload-exam-images', {
-          method: 'POST',
-          body: formData,
-        });
-        const data = await resp.json();
-        if (!resp.ok || !data?.success || !Array.isArray(data.urls)) {
-          throw new Error(data?.error || 'فشل رفع الصور المقصوصة إلى الخادم');
+      for (const item of croppedBlobs) {
+        if (
+          currentBatch.length > 0 &&
+          (currentBatch.length >= MAX_BATCH_COUNT || currentBytes + item.blob.size > MAX_BATCH_BYTES)
+        ) {
+          batches.push(currentBatch);
+          currentBatch = [];
+          currentBytes = 0;
         }
-        uploadedUrls.push(...data.urls);
+        currentBatch.push(item);
+        currentBytes += item.blob.size;
+      }
+      if (currentBatch.length > 0) {
+        batches.push(currentBatch);
+      }
+
+      const uploadSingleImageFallback = async (item: CroppedItem): Promise<string> => {
+        // 1. Try /api/upload-exam-images with single image
+        try {
+          const singleBulkForm = new FormData();
+          singleBulkForm.append('files', item.blob, `pdf_q_p${item.pageNumber}.${item.ext}`);
+          const r1 = await fetch('/api/upload-exam-images', { method: 'POST', body: singleBulkForm });
+          const p1 = await safeParseJsonResponse(r1);
+          if (p1.ok && p1.data?.success && Array.isArray(p1.data.urls) && p1.data.urls[0]) {
+            return p1.data.urls[0];
+          }
+        } catch {}
+
+        // 2. Fallback to standard /api/upload?skipFirebase=1 (still 0 Firestore writes!)
+        const singleForm = new FormData();
+        singleForm.append('file', item.blob, `pdf_q_p${item.pageNumber}.${item.ext}`);
+        const r2 = await fetch('/api/upload?skipFirebase=1', { method: 'POST', body: singleForm });
+        const p2 = await safeParseJsonResponse(r2);
+        const resolvedUrl = p2.data?.localUrl || p2.data?.url;
+        if (p2.ok && p2.data?.success && resolvedUrl) {
+          return resolvedUrl;
+        }
+
+        throw new Error(
+          p2.data?.error ||
+            `تعذر رفع صورة الصفحة ${item.pageNumber}. تأكد من تحديث الصفحة والمحاولة مرة أخرى.`
+        );
+      };
+
+      const uploadedUrls: string[] = [];
+      let processedCount = 0;
+
+      for (let b = 0; b < batches.length; b++) {
+        const chunk = batches[b];
+        setProgressInfo({
+          current: Math.min(processedCount + chunk.length, total),
+          total,
+          stage: `جاري رفع الصور (${Math.min(processedCount + chunk.length, total)} من ${total}) بتوفير فايربيس...`,
+        });
+
+        let batchUrls: string[] | null = null;
+
+        // Try batch upload up to 2 times
+        for (let attempt = 0; attempt < 2 && !batchUrls; attempt++) {
+          try {
+            const formData = new FormData();
+            chunk.forEach((item) => {
+              formData.append('files', item.blob, `pdf_q_p${item.pageNumber}.${item.ext}`);
+            });
+
+            const resp = await fetch('/api/upload-exam-images', {
+              method: 'POST',
+              body: formData,
+            });
+            const parsed = await safeParseJsonResponse(resp);
+            if (
+              parsed.ok &&
+              parsed.data?.success &&
+              Array.isArray(parsed.data.urls) &&
+              parsed.data.urls.length === chunk.length
+            ) {
+              batchUrls = parsed.data.urls;
+              break;
+            }
+          } catch {}
+          if (!batchUrls && attempt === 0) {
+            await new Promise((r) => setTimeout(r, 250));
+          }
+        }
+
+        // Fallback: upload items in this batch one-by-one safely
+        if (!batchUrls) {
+          batchUrls = [];
+          for (const item of chunk) {
+            const singleUrl = await uploadSingleImageFallback(item);
+            batchUrls.push(singleUrl);
+          }
+        }
+
+        uploadedUrls.push(...batchUrls);
+        processedCount += chunk.length;
       }
 
       const baseTimestamp = Date.now();

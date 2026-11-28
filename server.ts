@@ -776,6 +776,11 @@ app.post('/api/upload', upload.single('file'), async (req: Request, res: Respons
     const sizeMb = (updatedSize / (1024 * 1024)).toFixed(2);
     const mediaId = `med_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
 
+    const skipFirebase =
+      req.query.skipFirebase === '1' ||
+      req.query.skipFirebase === 'true' ||
+      req.headers['x-skip-firebase'] === '1';
+
     // Always index locally BEFORE Firebase attempt so quota exhaustion never breaks local playback
     persistLocalMediaEntry({
       id: mediaId,
@@ -787,14 +792,16 @@ app.post('/api/upload', upload.single('file'), async (req: Request, res: Respons
       createdAt: new Date().toISOString(),
     });
 
-    // Persist file into Firebase Firestore so it survives restarts and plays from anywhere
-    const savedInFirebase = await saveMediaToFirebase(
-      mediaId,
-      finalFilePath,
-      file.originalname,
-      finalMimeType,
-      relativeUrl
-    );
+    // Persist file into Firebase Firestore unless skipFirebase is explicitly requested (e.g. exam cropped images)
+    const savedInFirebase = skipFirebase
+      ? false
+      : await saveMediaToFirebase(
+          mediaId,
+          finalFilePath,
+          file.originalname,
+          finalMimeType,
+          relativeUrl
+        );
 
     const finalPlayUrl = savedInFirebase ? `/api/media/${mediaId}` : relativeUrl;
 
@@ -815,33 +822,51 @@ app.post('/api/upload', upload.single('file'), async (req: Request, res: Respons
 });
 
 // 1.1 Zero-Firestore Bulk Exam Cropped Images Upload (saves directly to disk /uploads/images/ to preserve Firebase quota)
-app.post('/api/upload-exam-images', upload.array('files', 100), (req: Request, res: Response) => {
-  try {
-    const uploadedFiles = Array.isArray(req.files) ? req.files : [];
-    if (uploadedFiles.length === 0) {
-      res.status(400).json({ success: false, error: 'لم يتم استلام أي صور' });
+app.options('/api/upload-exam-images', (_req: Request, res: Response) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.status(204).end();
+});
+
+app.post('/api/upload-exam-images', (req: Request, res: Response) => {
+  upload.array('files', 100)(req, res, (multerErr: any) => {
+    if (multerErr) {
+      console.error('Bulk Exam Image Multer Error:', multerErr);
+      res.status(400).json({
+        success: false,
+        error: multerErr?.message || 'تعذر استقبال ملفات الصور',
+      });
       return;
     }
 
-    const items = uploadedFiles.map((file) => {
-      const relativeUrl = `/uploads/images/${file.filename}`;
-      return {
-        url: relativeUrl,
-        fileName: file.originalname,
-        size: file.size,
-      };
-    });
+    try {
+      const uploadedFiles = Array.isArray(req.files) ? req.files : [];
+      if (uploadedFiles.length === 0) {
+        res.status(400).json({ success: false, error: 'لم يتم استلام أي صور' });
+        return;
+      }
 
-    res.json({
-      success: true,
-      urls: items.map((i) => i.url),
-      items,
-      savedFirebaseOps: items.length * 2,
-    });
-  } catch (err: any) {
-    console.error('Bulk Exam Image Upload Error:', err);
-    res.status(500).json({ success: false, error: err.message || 'حدث خطأ أثناء رفع صور الاختبار' });
-  }
+      const items = uploadedFiles.map((file) => {
+        const relativeUrl = `/uploads/images/${file.filename}`;
+        return {
+          url: relativeUrl,
+          fileName: file.originalname,
+          size: file.size,
+        };
+      });
+
+      res.json({
+        success: true,
+        urls: items.map((i) => i.url),
+        items,
+        savedFirebaseOps: items.length * 2,
+      });
+    } catch (err: any) {
+      console.error('Bulk Exam Image Upload Error:', err);
+      res.status(500).json({ success: false, error: err.message || 'حدث خطأ أثناء رفع صور الاختبار' });
+    }
+  });
 });
 
 // Track active disk cache jobs so simultaneous byte-range requests don't re-read Firestore chunks
